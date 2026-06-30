@@ -104,6 +104,24 @@ async function googleBooks(query: string): Promise<any[]> {
   return (await response.json()).items || [];
 }
 
+async function openLibrary(input: { isbn?: string; title?: string; authors?: string[] }): Promise<any[]> {
+  const url = new URL('https://openlibrary.org/search.json');
+  if (input.isbn) url.searchParams.set('isbn', input.isbn);
+  else {
+    url.searchParams.set('title', input.title || '');
+    if (input.authors?.[0]) url.searchParams.set('author', input.authors[0]);
+  }
+  url.searchParams.set('limit', '5');
+  url.searchParams.set('fields', 'key,title,author_name,first_publish_year,isbn,language');
+  const response = await fetch(url, { headers: { 'User-Agent': 'Seshat/0.1 (https://seshat.zztt.org)' } });
+  if (!response.ok) throw new Error(`Open Library ${response.status}`);
+  return ((await response.json()).docs || []).map((doc:any) => ({ id: doc.key, provider: 'open-library', volumeInfo: {
+    title: doc.title, authors: doc.author_name || [], publishedDate: doc.first_publish_year ? String(doc.first_publish_year) : undefined,
+    industryIdentifiers: (doc.isbn || []).map((identifier:string) => ({ type: identifier.length === 13 ? 'ISBN_13' : 'ISBN_10', identifier })),
+    language: doc.language?.[0],
+  }}));
+}
+
 async function ollamaCandidate(text: string): Promise<{title:string;authors:string[];year:number|null;confidence:number}> {
   const format = { type:'object', properties:{ title:{type:'string'}, authors:{type:'array',items:{type:'string'}}, year:{type:['integer','null']}, confidence:{type:'number'} }, required:['title','authors','year','confidence'] };
   const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(60_000), body:JSON.stringify({
@@ -121,12 +139,19 @@ async function identify(job: Claimed) {
   const text = new TextDecoder().decode(await objectBytes(markdown.object_key));
   const explicit = explicitIsbns(text);
   let items: any[] = [];
-  for (const isbn of explicit) { items = await googleBooks(`isbn:${isbn}`); if (items.length) break; }
+  for (const isbn of explicit) {
+    try { items = await googleBooks(`isbn:${isbn}`); }
+    catch { items = await openLibrary({ isbn }); }
+    if (!items.length) items = await openLibrary({ isbn });
+    if (items.length) break;
+  }
   let inference: any = null;
   if (!items.length) {
     inference = await ollamaCandidate(text);
     const query = [`intitle:${inference.title}`, ...(inference.authors || []).slice(0,2).map((a:string)=>`inauthor:${a}`)].join(' ');
-    items = await googleBooks(query);
+    try { items = await googleBooks(query); }
+    catch { items = await openLibrary({ title: inference.title, authors: inference.authors }); }
+    if (!items.length) items = await openLibrary({ title: inference.title, authors: inference.authors });
   }
   const volume = items[0]?.volumeInfo;
   if (!volume) { await complete(job, 'summarize', { status:'unresolved', explicit }); return; }
@@ -135,8 +160,8 @@ async function identify(job: Claimed) {
     identifiers=$5::jsonb, language=COALESCE($6,language), source=source || $7::jsonb, updated_at=now() WHERE id=$1`,
     [job.reference_id, volume.title || reference.title, JSON.stringify((volume.authors || []).map((literal:string)=>({literal,role:'author'}))),
       JSON.stringify(volume.publishedDate ? {year:Number(String(volume.publishedDate).slice(0,4))||undefined} : null),
-      JSON.stringify({isbn:isbns}), volume.language || null, JSON.stringify({identification:{provider:'google-books',volumeId:items[0].id,inference}})]);
-  await complete(job, 'summarize', { provider:'google-books', volumeId:items[0].id, explicit });
+      JSON.stringify({isbn:isbns}), volume.language || null, JSON.stringify({identification:{provider:items[0].provider || 'google-books',volumeId:items[0].id,inference}})]);
+  await complete(job, 'summarize', { provider:items[0].provider || 'google-books', volumeId:items[0].id, explicit });
 }
 
 async function tick() {
