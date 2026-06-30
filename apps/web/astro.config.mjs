@@ -6,7 +6,7 @@ export default defineConfig({
   output: 'server',
   adapter: node({ mode: 'standalone' }),
   site: process.env.AUTH_URL || process.env.SITE_URL || 'http://localhost:4331',
-  integrations: [auth()],
+  integrations: [auth({ injectEndpoints: false })],
   security: {
     checkOrigin: false,
   },
