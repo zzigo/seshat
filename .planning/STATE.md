@@ -26,7 +26,13 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
 - The local web surface now has isolated Auth.js sessions backed by the shared Authentik and
   Google identity providers, a page-wide drop layer, IndexedDB batch preservation across login,
   mixed document/BibTeX routing, and server-side BibTeX parsing. Production identity-provider
-  callback registration and R2-backed document jobs remain pending.
+  callbacks and R2-backed document cataloging are operational.
+- Production now runs `seshat-worker` with concurrency one. Docling 2.107 uses a CPU-only
+  PyTorch environment, persists JSON/Markdown/chunks to R2, and advances extraction jobs.
+- ISBN identification uses checksum-valid text candidates first, then bounded local
+  `qwen3:1.7b` inference for title/author, Google Books, and Open Library fallback. The first
+  two production documents completed extraction and identification; both remained unresolved
+  rather than accepting an unsupported match, and advanced to the summary queue.
 
 ## Accumulated Context
 

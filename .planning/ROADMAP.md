@@ -12,6 +12,10 @@ Completed 2026-06-30 with tested `@seshat/core` and `@seshat/zotero` packages.
 Add the Docling service, ephemeral R2 downloads, structured derivatives, provenance,
 and safe upload of generated artifacts back to R2.
 
+Docling worker transport and bounded ISBN identification are operational in production.
+Remaining Phase 2 work: extraction quality/OCR retry policy, summaries, corpus-relative tags,
+and curator review/retry controls.
+
 ## Phase 3 — First Curatorial Surface
 
 Build the web application for browsing records, health issues, originals, and parsed
