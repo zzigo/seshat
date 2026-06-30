@@ -69,9 +69,15 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
         </aside>
         <section class="workspace-stage dockview-theme-light" data-dockview-host aria-label="Document workspace"></section>
       </div>
+      <footer class="workspace-console" data-workspace-console>
+        <button type="button" class="console-toggle" data-console-toggle aria-expanded="false"><span class="console-pulse">●</span><strong>Activity</strong></button>
+        <div class="console-current" data-console-current>Ready · drop PDF, DOCX, TXT, EPUB or BIB anywhere</div>
+        <span class="console-count" data-console-count>0 jobs</span>
+        <div class="console-drawer" data-console-drawer hidden><ol data-console-log></ol></div>
+      </footer>
     </div>
     <script is:inline type="application/json" id="seshat-workspace-data" set:html={serialized}></script>
-    <DropLayer authenticated={true} />
+    <DropLayer authenticated={true} workspace={true} />
     <script>
       import { mountSeshatWorkspace } from '../scripts/workspace';
       const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');

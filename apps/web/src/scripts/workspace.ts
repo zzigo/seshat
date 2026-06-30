@@ -12,10 +12,31 @@ type ReferenceRow = {
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number };
 type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[] };
 type ToolKind = 'analysis' | 'annotation' | 'agent';
+type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
 const readPayload = (): WorkspacePayload => JSON.parse(document.getElementById('seshat-workspace-data')?.textContent || '{"references":[],"libraries":[]}');
 const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+const rowFromCatalogReference = (reference: any): ReferenceRow => ({
+  id: reference.id,
+  citeKey: reference.citeKey,
+  type: reference.type,
+  title: reference.title,
+  authors: (reference.contributors || []).map((contributor:any) => contributor.literal
+    || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('; '),
+  year: reference.issued?.year || '',
+  isbn: (reference.identifiers?.isbn || []).join('; '),
+  language: reference.language || '',
+  tags: (reference.tags || []).join(', '),
+  abstract: reference.abstract || '',
+  format: String(reference.source?.originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
+  filename: String(reference.source?.originalFilename || reference.title),
+  libraryIds: reference.libraryIds || [],
+  status: (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued')?.stage
+    || (reference.jobs || []).find((job:any) => job.status === 'failed')?.status || 'catalogued',
+  hasStructure: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'structure'),
+  hasText: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown'),
+});
 
 export function mountSeshatWorkspace(root: HTMLElement): void {
   const payload = readPayload();
@@ -24,7 +45,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const tree = root.querySelector<HTMLElement>('[data-library-tree]');
   const search = root.querySelector<HTMLInputElement>('[data-tree-search]');
   const saveState = root.querySelector<HTMLElement>('[data-save-state]');
-  if (!host || !tree || !search || !saveState) return;
+  const consoleRoot = root.querySelector<HTMLElement>('[data-workspace-console]');
+  const consoleCurrent = root.querySelector<HTMLElement>('[data-console-current]');
+  const consoleCount = root.querySelector<HTMLElement>('[data-console-count]');
+  const consoleDrawer = root.querySelector<HTMLElement>('[data-console-drawer]');
+  const consoleLog = root.querySelector<HTMLOListElement>('[data-console-log]');
+  const consoleToggle = root.querySelector<HTMLButtonElement>('[data-console-toggle]');
+  if (!host || !tree || !search || !saveState || !consoleRoot || !consoleCurrent || !consoleCount || !consoleDrawer || !consoleLog || !consoleToggle) return;
 
   let api: DockviewApi;
   let catalogTable: Handsontable | null = null;
@@ -32,6 +59,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let activeReference: string | null = payload.references[0]?.id || null;
   const committed = new Map(payload.references.map((reference) => [reference.id, { ...reference }]));
   const saveTimers = new Map<string, number>();
+  const activities: Activity[] = [];
 
   const filteredRows = () => payload.references.filter((reference) => !activeLibrary || reference.libraryIds.includes(activeLibrary));
   const refreshTable = () => catalogTable?.loadData(filteredRows());
@@ -39,6 +67,32 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const setSaveState = (state: string, tone: 'ready' | 'saving' | 'error' = 'ready') => {
     saveState.textContent = state;
     saveState.dataset.tone = tone;
+  };
+
+  const renderActivities = () => {
+    const active = activities.filter((activity) => activity.state === 'working');
+    const latest = activities[activities.length - 1];
+    consoleRoot.dataset.state = active.length ? 'working' : latest?.state || 'idle';
+    consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB or BIB anywhere';
+    consoleCount.textContent = `${active.length} ${active.length === 1 ? 'job' : 'jobs'}`;
+    consoleLog.replaceChildren();
+    [...activities].reverse().slice(0, 30).forEach((activity) => {
+      const item = document.createElement('li'); item.dataset.state = activity.state;
+      const mark = document.createElement('span'); mark.textContent = activity.state === 'working' ? '●' : activity.state === 'complete' ? '✓' : '×';
+      const message = document.createElement('span'); message.textContent = activity.message; item.append(mark, message);
+      if (activity.mapReady && activity.referenceId) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Open map';
+        button.addEventListener('click', () => controller.openDerivative(activity.referenceId!, 'structure')); item.appendChild(button);
+      }
+      consoleLog.appendChild(item);
+    });
+  };
+
+  const updateActivity = (id: string, patch: Partial<Activity>) => {
+    const activity = activities.find((item) => item.id === id);
+    if (activity) Object.assign(activity, patch);
+    else activities.push({ id, message: patch.message || 'Working…', state: patch.state || 'working', referenceId: patch.referenceId, mapReady: patch.mapReady });
+    renderActivities();
   };
 
   const saveReference = async (row: ReferenceRow) => {
@@ -206,6 +260,30 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     } };
   };
 
+  const bibliographyRenderer = (batchId: string): IContentRenderer => {
+    const element = panel('bibliography-pod');
+    return { element, init() {
+      const data = JSON.parse(window.sessionStorage.getItem(`seshat.bibliography.${batchId}`) || '{"entries":[],"errors":[]}');
+      const header = document.createElement('header'); header.className = 'bibliography-pod-head';
+      const title = document.createElement('h2'); title.textContent = `${data.entries.length} parsed references`;
+      const health = document.createElement('span'); health.textContent = data.errors.length ? `${data.errors.length} issues` : 'syntax healthy';
+      header.append(title, health); element.appendChild(header);
+      const list = document.createElement('div'); list.className = 'bibliography-pod-list';
+      for (const entry of data.entries) {
+        const row = document.createElement('article');
+        const kind = document.createElement('span'); kind.textContent = entry.type || 'entry';
+        const copy = document.createElement('div');
+        const heading = document.createElement('strong'); heading.textContent = entry.fields?.title || 'Untitled reference';
+        const author = document.createElement('small');
+        author.textContent = (entry.fields?.author || []).map((person:any) => [person.lastName, person.firstName].filter(Boolean).join(', ')).join(' · ') || 'Author missing';
+        copy.append(heading, author);
+        const key = document.createElement('code'); key.textContent = `@${entry.key || 'missing-key'}`;
+        row.append(kind, copy, key); list.appendChild(row);
+      }
+      element.appendChild(list);
+    } };
+  };
+
   api = createDockview(host, {
     className: 'seshat-dockview',
     createComponent: (options) => {
@@ -224,6 +302,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const [, kind, referenceId] = name.split(':');
         return toolRenderer(kind as ToolKind, referenceId || undefined);
       }
+      if (name.startsWith('bibliography:')) return bibliographyRenderer(name.slice('bibliography:'.length));
       return toolRenderer('analysis');
     },
   });
@@ -240,6 +319,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     openDocument(referenceId: string) { activeReference = referenceId; const ref = references.get(referenceId); if (ref) addPanel(`document-${referenceId}`, `document:${referenceId}`, ref.title, 'right'); },
     openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
     openTool(kind: ToolKind, referenceId = activeReference || undefined) { const suffix = referenceId || 'global'; addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1), 'right'); },
+    openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
   };
 
   const resize = new ResizeObserver(([entry]) => api.layout(entry.contentRect.width, entry.contentRect.height));
@@ -296,6 +376,97 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     children().forEach((library) => appendLibrary(library, tree));
   };
+
+  const upsertRow = (next: ReferenceRow) => {
+    const current = references.get(next.id);
+    if (current) Object.assign(current, next);
+    else { payload.references.unshift(next); references.set(next.id, next); }
+    committed.set(next.id, { ...(references.get(next.id) as ReferenceRow) });
+    refreshTable();
+    renderTree(search.value);
+  };
+
+  const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const stageMessage: Record<string, string> = {
+    extract: 'Extracting text and structure',
+    identify: 'Identifying title, author and year',
+    summarize: 'Preparing summary',
+    relate: 'Relating document to the corpus',
+  };
+
+  const followPipeline = async (referenceId: string, activityId: string, filename: string) => {
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      const response = await fetch(`/api/library/${referenceId}/status`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('Could not read processing state.');
+      const status = await response.json();
+      upsertRow(status.reference as ReferenceRow);
+      if (status.failed) {
+        updateActivity(activityId, { state: 'error', message: `${filename} · ${status.failed}` });
+        return;
+      }
+      if (status.ready) {
+        updateActivity(activityId, { state: 'complete', message: `${status.reference.title} · text and structure ready`, referenceId, mapReady: status.reference.hasStructure });
+        return;
+      }
+      const active = status.pipeline.find((job:any) => job.status === 'running' || job.status === 'queued');
+      updateActivity(activityId, { message: `${filename} · ${stageMessage[active?.stage] || 'Waiting for worker'}`, referenceId });
+      await wait(4000);
+    }
+    updateActivity(activityId, { state: 'error', message: `${filename} · processing timed out` });
+  };
+
+  const ingestDocument = async (file: File) => {
+    const activityId = `document-${crypto.randomUUID()}`;
+    updateActivity(activityId, { state: 'working', message: `${file.name} · uploading` });
+    const form = new FormData(); form.set('file', file, file.name);
+    if (activeLibrary) form.set('libraryId', activeLibrary);
+    try {
+      const response = await fetch('/api/intake/documents', { method: 'POST', body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Upload failed.');
+      const row = rowFromCatalogReference(result.reference);
+      upsertRow(row);
+      updateActivity(activityId, { message: `${file.name} · ${result.duplicate ? 'already catalogued' : 'Extracting text and structure'}`, referenceId: row.id });
+      void followPipeline(row.id, activityId, file.name).catch((error) => {
+        updateActivity(activityId, { state: 'error', message: `${file.name} · ${error instanceof Error ? error.message : 'status unavailable'}` });
+      });
+    } catch (error) {
+      updateActivity(activityId, { state: 'error', message: `${file.name} · ${error instanceof Error ? error.message : 'upload failed'}` });
+    }
+  };
+
+  const inspectBibliography = async (files: File[]) => {
+    const activityId = `bibliography-${crypto.randomUUID()}`;
+    updateActivity(activityId, { state: 'working', message: `${files.length} bibliography file${files.length === 1 ? '' : 's'} · parsing` });
+    const form = new FormData(); files.forEach((file) => form.append('files', file, file.name));
+    try {
+      const response = await fetch('/api/bibliography/parse', { method: 'POST', body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not parse bibliography.');
+      window.sessionStorage.setItem(`seshat.bibliography.${activityId}`, JSON.stringify(result));
+      controller.openBibliography(activityId, files.length === 1 ? files[0].name : 'Bibliography import');
+      updateActivity(activityId, { state: 'complete', message: `${result.entries.length} references parsed · opened as pod` });
+    } catch (error) {
+      updateActivity(activityId, { state: 'error', message: error instanceof Error ? error.message : 'Bibliography parse failed' });
+    }
+  };
+
+  window.addEventListener('seshat:workspace-drop', (event) => {
+    const detail = (event as CustomEvent<{ files: File[]; rejected: number }>).detail;
+    const bibliographies = detail.files.filter((file) => file.name.toLowerCase().endsWith('.bib'));
+    const documents = detail.files.filter((file) => !file.name.toLowerCase().endsWith('.bib'));
+    if (detail.rejected) updateActivity(`rejected-${Date.now()}`, { state: 'error', message: `${detail.rejected} unsupported file${detail.rejected === 1 ? '' : 's'} omitted` });
+    if (bibliographies.length) void inspectBibliography(bibliographies);
+    void (async () => {
+      for (const file of documents) await ingestDocument(file);
+    })();
+  });
+
+  consoleToggle.addEventListener('click', () => {
+    const expanded = consoleDrawer.hidden;
+    consoleDrawer.hidden = !expanded;
+    consoleToggle.setAttribute('aria-expanded', String(expanded));
+  });
 
   search.addEventListener('input', () => renderTree(search.value));
   root.querySelector<HTMLButtonElement>('[data-new-library]')?.addEventListener('click', async () => {

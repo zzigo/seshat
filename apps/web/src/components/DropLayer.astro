@@ -1,9 +1,9 @@
 ---
-interface Props { authenticated: boolean }
-const { authenticated } = Astro.props;
+interface Props { authenticated: boolean; workspace?: boolean }
+const { authenticated, workspace = false } = Astro.props;
 ---
 
-<div class="drop-layer" data-drop-layer data-authenticated={String(authenticated)} aria-hidden="true">
+<div class="drop-layer" data-drop-layer data-authenticated={String(authenticated)} data-workspace={String(workspace)} aria-hidden="true">
   <div class="drop-glyph">𓆓</div>
   <strong>Release into Seshat</strong>
   <span>PDF · DOCX · TXT · EPUB · BIB</span>
@@ -85,6 +85,10 @@ const { authenticated } = Astro.props;
     const rejected = incoming.length - files.length;
     if (!files.length) {
       showToast('No compatible files found. Use PDF, DOCX, TXT, EPUB or BIB.');
+      return;
+    }
+    if (layer?.dataset.workspace === 'true') {
+      window.dispatchEvent(new CustomEvent('seshat:workspace-drop', { detail: { files, rejected } }));
       return;
     }
     const batch = crypto.randomUUID();

@@ -9,6 +9,7 @@ The authenticated surface is a dense desktop workspace, not a marketing page. Th
 - 44px top bar: identity, global actions, save/worker state.
 - 248px resizable-looking left rail: search, All references, hierarchical libraries/folders, documents.
 - Remaining viewport: mutable Dockview host.
+- 28px bottom activity HUD: upload, Docling, identification and errors without leaving the workspace.
 - Desktop-first. Below 760px the tree becomes an overlay and Dockview shows one active group.
 
 ## Catalog pod
@@ -18,6 +19,7 @@ The authenticated surface is a dense desktop workspace, not a marketing page. Th
 - Editable fields: title, authors, year, type, ISBN, language, tags, citekey, abstract.
 - Cell changes autosave per row with visible saving/saved/error state and rollback on error.
 - Double-clicking a row opens the document pod.
+- Dropped files are inserted into the table immediately; processing continues in the HUD and never navigates to intake.
 
 ## Tree contract
 
