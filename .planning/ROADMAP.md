@@ -1,9 +1,11 @@
 # Roadmap: Seshat
 
-## Phase 1 — Portable Bibliographic Spine
+## Phase 1 — Portable Bibliographic Spine ✓
 
 Build and test `@seshat/core` plus the Zotero provider. Produce normalized records,
 stable identities, health reports, and storage-neutral document links.
+
+Completed 2026-06-30 with tested `@seshat/core` and `@seshat/zotero` packages.
 
 ## Phase 2 — Structured Document Ingestion
 
@@ -19,4 +21,3 @@ documents. Deploy it at `seshatt.zztt.org` from `/opt/packages/seshat`.
 
 Integrate the versioned packages into Musiki AR, then validate the same contract from
 Musiki CH and SO PhD without sharing data.
-

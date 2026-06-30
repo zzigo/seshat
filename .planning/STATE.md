@@ -5,7 +5,7 @@
 See: `.planning/PROJECT.md` (updated 2026-06-30)
 
 **Core value:** Keep references, documents, parsed meaning, and citation health connected.
-**Current focus:** Phase 1 — Portable Bibliographic Spine.
+**Current focus:** Phase 2 — R2 transport and structured ingestion.
 
 ## Current Status
 
@@ -17,3 +17,5 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
 - Docling 2.107 completed a real 30-page PDF conversion into structured JSON, Markdown,
   and page-aware chunks; born-digital text quality still needs evaluation before deciding
   whether OCR should be retried.
+- Phase 1 implementation is committed as `9f49fcd`; Docling ingestion is committed as
+  `214f8b0`.
