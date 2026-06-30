@@ -27,3 +27,9 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
   Google identity providers, a page-wide drop layer, IndexedDB batch preservation across login,
   mixed document/BibTeX routing, and server-side BibTeX parsing. Production identity-provider
   callback registration and R2-backed document jobs remain pending.
+
+## Accumulated Context
+
+### Pending Todos
+
+- 1 pending: localize the web surface in Spanish, English, and French.
