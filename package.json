@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:packages && npm run build --workspace @seshat/web",
+    "build": "npm run build:packages && npm run build --workspace @seshat/web && npm run build --workspace @seshat/worker",
     "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero && npm run build --workspace @seshat/catalog",
     "test": "npm run build:packages && npm run test:packages && npm run test:python",
     "test:packages": "npm run test --workspaces --if-present",

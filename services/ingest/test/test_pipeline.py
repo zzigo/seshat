@@ -63,15 +63,24 @@ class IngestPipelineTest(unittest.TestCase):
 
     def test_rejects_unsupported_sources_before_docling(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "source.docx"
+            source = Path(directory) / "source.zip"
             source.write_bytes(b"not supported yet")
-            with self.assertRaisesRegex(ValueError, "PDF and EPUB"):
+            with self.assertRaisesRegex(ValueError, "PDF, EPUB, DOCX, and TXT"):
                 ingest_document(IngestRequest(
                     reference_id="ref:1",
                     original_artifact_id="artifact:1",
                     source_path=source,
                     output_dir=Path(directory) / "output",
                 ), converter=FakeConverter())
+
+    def test_plain_text_ingestion_without_docling(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.txt"
+            source.write_text("ISBN 978-0-19-515194-7\n\nSecond paragraph.", encoding="utf-8")
+            result = ingest_document(IngestRequest("ref:1", "artifact:1", source, root / "out"))
+            self.assertEqual(result.parser, "plain-text")
+            self.assertIn("978-0-19", (root / "out" / "document.md").read_text())
 
     def test_ocr_is_opt_in(self) -> None:
         request = IngestRequest(

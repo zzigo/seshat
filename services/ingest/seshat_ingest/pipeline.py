@@ -126,22 +126,23 @@ def ingest_document(
     source = request.source_path.resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Document not found: {source}")
-    if source.suffix.lower() not in {".pdf", ".epub"}:
-        raise ValueError("Seshat ingestion currently accepts PDF and EPUB documents.")
+    if source.suffix.lower() not in {".pdf", ".epub", ".docx", ".txt"}:
+        raise ValueError("Seshat ingestion accepts PDF, EPUB, DOCX, and TXT documents.")
 
     output_dir = request.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    conversion = (converter or _default_converter(ocr=request.ocr)).convert(source)
-    document = conversion.document
-
-    json_bytes = json.dumps(
-        document.export_to_dict(),
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    ).encode("utf-8")
-    markdown_bytes = document.export_to_markdown().encode("utf-8")
-    chunk_rows = list((chunker or _default_chunks)(document))
+    if source.suffix.lower() == ".txt":
+        text = source.read_text(encoding="utf-8", errors="replace")
+        json_bytes = json.dumps({"schema": "seshat-plain-text", "text": text}, ensure_ascii=False, indent=2).encode("utf-8")
+        markdown_bytes = text.encode("utf-8")
+        paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+        chunk_rows = [{"id": index, "text": part, "metadata": {}} for index, part in enumerate(paragraphs)]
+    else:
+        conversion = (converter or _default_converter(ocr=request.ocr)).convert(source)
+        document = conversion.document
+        json_bytes = json.dumps(document.export_to_dict(), ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+        markdown_bytes = document.export_to_markdown().encode("utf-8")
+        chunk_rows = list((chunker or _default_chunks)(document))
     chunk_bytes = b"".join(
         json.dumps(row, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
         for row in chunk_rows
@@ -159,7 +160,7 @@ def ingest_document(
         original_artifact_id=request.original_artifact_id,
         source_sha256=_sha256(source),
         source_size_bytes=source.stat().st_size,
-        parser="docling",
+        parser="plain-text" if source.suffix.lower() == ".txt" else "docling",
         parser_version=request.parser_version,
         created_at=timestamp,
         artifacts=artifacts,

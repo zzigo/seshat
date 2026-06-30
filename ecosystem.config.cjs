@@ -24,5 +24,12 @@ module.exports = {
     },
     max_memory_restart: '500M',
     time: true,
+  }, {
+    name: 'seshat-worker',
+    cwd: '/opt/packages/seshat',
+    script: 'apps/worker/dist/index.js',
+    env: { ...fileEnv, NODE_ENV: 'production', SESHAT_PYTHON: '/opt/packages/seshat/.venv/bin/python', OLLAMA_MODEL: 'deepseek-r1:8b' },
+    max_memory_restart: '2G',
+    time: true,
   }],
 };
