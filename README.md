@@ -12,7 +12,6 @@ each deployment owns its own data and credentials.
 - `packages/core`: canonical bibliography model, identifiers, health checks.
 - `packages/zotero`: Zotero Web API adapter and CSL normalization.
 - `services/ingest`: Docling-based document ingestion service.
-- `apps/web`: the Seshat web surface for `seshatt.zztt.org`.
+- `apps/web`: the Seshat web surface for `seshat.zztt.org`.
 
 Production convention: `/opt/packages/seshat`.
-

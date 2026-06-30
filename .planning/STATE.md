@@ -19,3 +19,4 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
   whether OCR should be retried.
 - Phase 1 implementation is committed as `9f49fcd`; Docling ingestion is committed as
   `214f8b0`.
+- The first Astro web surface executes `@seshat/core` directly and exposes a health API.

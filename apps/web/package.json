@@ -1,0 +1,21 @@
+{
+  "name": "@seshat/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 0.0.0.0",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/node": "^10.0.6",
+    "@seshat/core": "*",
+    "astro": "^6.2.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9"
+  }
+}
+

@@ -26,9 +26,9 @@
 
 ### Web Surface
 
-- [ ] **WEB-01**: A user can inspect bibliographic records and their health status.
+- [x] **WEB-01**: A user can inspect bibliographic records and their health status.
 - [ ] **WEB-02**: A user can inspect attached originals and parsed derivatives.
-- [ ] **WEB-03**: The application is deployable at `seshatt.zztt.org` from `/opt/packages/seshat`.
+- [ ] **WEB-03**: The application is deployable at `seshat.zztt.org` from `/opt/packages/seshat`.
 
 ## v2 Requirements
 
@@ -59,9 +59,10 @@
 | ZOT-01..03 | Phase 1 | Complete |
 | ING-01, ING-03 | Phase 2 | Pending |
 | ING-02 | Phase 2 | Complete |
-| WEB-01..03 | Phase 3 | Pending |
+| WEB-01 | Phase 3 | Complete |
+| WEB-02..03 | Phase 3 | Pending |
 
-**Coverage:** 13 v1 requirements; 13 mapped; 0 unmapped. 8 verified complete.
+**Coverage:** 13 v1 requirements; 13 mapped; 0 unmapped. 9 verified complete.
 
 ---
 *Requirements defined: 2026-06-30*

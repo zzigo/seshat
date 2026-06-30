@@ -15,7 +15,7 @@ and safe upload of generated artifacts back to R2.
 ## Phase 3 — First Curatorial Surface
 
 Build the web application for browsing records, health issues, originals, and parsed
-documents. Deploy it at `seshatt.zztt.org` from `/opt/packages/seshat`.
+documents. Deploy it at `seshat.zztt.org` from `/opt/packages/seshat`.
 
 ## Phase 4 — Application Adapters
 

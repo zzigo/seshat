@@ -25,7 +25,7 @@ connected through stable identities and portable interfaces.
 - [ ] Parse PDF and EPUB documents locally with Docling while retaining structure.
 - [ ] Detect incomplete or malformed bibliographic metadata.
 - [ ] Expose the same capabilities to multiple applications through versioned packages.
-- [ ] Provide a web surface at `seshatt.zztt.org`.
+- [ ] Provide a web surface at `seshat.zztt.org`.
 
 ### Out of Scope
 
@@ -43,7 +43,7 @@ adapter, not as its domain model.
 
 The development repository lives at `/Users/zztt/projects/packages/seshat`. Production
 will mirror it at `/opt/packages/seshat` on the existing VPS. The public hostname is
-`seshatt.zztt.org`; the doubled `t` belongs only to the hostname.
+`seshat.zztt.org`.
 
 ## Constraints
 
@@ -65,4 +65,3 @@ will mirror it at `/opt/packages/seshat` on the existing VPS. The public hostnam
 
 ---
 *Last updated: 2026-06-30 after initialization*
-

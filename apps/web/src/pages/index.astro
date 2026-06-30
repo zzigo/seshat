@@ -1,0 +1,134 @@
+---
+import { evaluateReferenceHealth, type BibliographicItem } from '@seshat/core';
+import '../styles/global.css';
+
+const sample: BibliographicItem = {
+  id: 'demo:seshat',
+  citeKey: 'clarke2005ways',
+  type: 'book',
+  title: 'Ways of Listening',
+  contributors: [{ family: 'Clarke', given: 'Eric', role: 'author' }],
+  issued: { year: 2005 },
+  publisher: 'Oxford University Press',
+  identifiers: { isbn: ['9780195151947'] },
+  tags: ['listening', 'ecology'],
+  source: {
+    provider: 'zotero',
+    libraryId: 'demo',
+    itemKey: 'CLARKE05',
+    version: 7,
+    importedAt: new Date().toISOString(),
+  },
+  artifacts: [{
+    id: 'demo:original',
+    kind: 'original',
+    storage: {
+      provider: 'r2',
+      objectKey: 'demo/clarke2005/original.pdf',
+      mimeType: 'application/pdf',
+    },
+    createdAt: new Date().toISOString(),
+  }],
+  createdAt: '2026-06-30T00:00:00.000Z',
+  updatedAt: '2026-06-30T00:00:00.000Z',
+};
+const report = evaluateReferenceHealth(sample);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="Seshat cultivates bibliographies that understand their documents." />
+    <title>Seshat — cultivate what you read</title>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="wordmark" href="/" aria-label="Seshat home">
+        <span class="sigil" aria-hidden="true">𓋇</span>
+        <span>Seshat</span>
+      </a>
+      <div class="status"><span></span> system germinating · v0.1.0</div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow">An intelligent bibliography system</div>
+        <h1>References should<br /><em>know what they contain.</em></h1>
+        <p class="lede">
+          Seshat keeps each citation connected to its document, structure,
+          provenance and state of care—ready for humans, courses and local agents.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#specimen">Inspect a specimen</a>
+          <a class="button quiet" href="/api/health.json">API health ↗</a>
+        </div>
+      </section>
+
+      <section class="pipeline" aria-label="Seshat processing pipeline">
+        <div class="pipeline-step"><b>01</b><span>Zotero / DOI / ISBN</span><small>collect</small></div>
+        <i>→</i>
+        <div class="pipeline-step"><b>02</b><span>R2 original</span><small>preserve</small></div>
+        <i>→</i>
+        <div class="pipeline-step"><b>03</b><span>Docling structure</span><small>understand</small></div>
+        <i>→</i>
+        <div class="pipeline-step"><b>04</b><span>Evidence graph</span><small>cultivate</small></div>
+      </section>
+
+      <section class="specimen" id="specimen">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Live package output</div>
+            <h2>A bibliographic specimen</h2>
+          </div>
+          <div class:list={['health-orbit', report.status]}>
+            <strong>{report.score}</strong>
+            <span>health</span>
+          </div>
+        </div>
+
+        <article class="record-card">
+          <div class="record-main">
+            <div class="record-type">{sample.type}</div>
+            <h3>{sample.title}</h3>
+            <p>{sample.contributors[0].family}, {sample.contributors[0].given} · {sample.issued?.year}</p>
+            <div class="tags">
+              {sample.tags.map((tag) => <span>{tag}</span>)}
+            </div>
+          </div>
+          <dl class="record-meta">
+            <div><dt>Citekey</dt><dd>@{sample.citeKey}</dd></div>
+            <div><dt>Fingerprint</dt><dd>{report.fingerprint}</dd></div>
+            <div><dt>Source</dt><dd>Zotero · revision {sample.source.version}</dd></div>
+            <div><dt>Original</dt><dd>Cloudflare R2 · linked</dd></div>
+          </dl>
+        </article>
+      </section>
+
+      <section class="principles">
+        <article>
+          <span>Ⅰ</span>
+          <h3>Source-aware</h3>
+          <p>Zotero is an adapter, not a prison. Stable identities survive migrations.</p>
+        </article>
+        <article>
+          <span>Ⅱ</span>
+          <h3>Evidence-first</h3>
+          <p>Every chunk retains its page, heading, geometry, parser and original.</p>
+        </article>
+        <article>
+          <span>Ⅲ</span>
+          <h3>Actively curated</h3>
+          <p>Metadata health becomes observable, explainable and eventually self-healing.</p>
+        </article>
+      </section>
+    </main>
+
+    <footer>
+      <span>Seshat · House of Books</span>
+      <span>writing / memory / measurement</span>
+    </footer>
+  </body>
+</html>
+
