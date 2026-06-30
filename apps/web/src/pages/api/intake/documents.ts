@@ -45,7 +45,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const ownerKey = ownerKeyFor(email);
   const catalog = getCatalog();
   const duplicate = await catalog.findBySha256(ownerKey, sha256);
-  if (duplicate) return Response.json({ ok: true, duplicate: true, reference: duplicate });
+  if (duplicate) {
+    await catalog.addToLibrary(ownerKey, duplicate.id, String(form?.get('libraryId') || '') || undefined);
+    return Response.json({ ok: true, duplicate: true, reference: duplicate });
+  }
 
   const referenceId = randomUUID();
   const artifactId = randomUUID();
@@ -72,6 +75,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       citeKey: generateCiteKey({ title }),
       title,
       originalSha256: sha256,
+      libraryId: String(form?.get('libraryId') || '') || undefined,
       source: {
         provider: 'upload',
         itemKey: referenceId,

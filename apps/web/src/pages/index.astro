@@ -1,6 +1,7 @@
 ---
 import { evaluateReferenceHealth, type BibliographicItem } from '@seshat/core';
 import Shell from '../components/Shell.astro';
+import { getCatalog, ownerKeyFor } from '../lib/catalog';
 
 const sample: BibliographicItem = {
   id: 'demo:seshat',
@@ -33,9 +34,58 @@ const sample: BibliographicItem = {
   updatedAt: '2026-06-30T00:00:00.000Z',
 };
 const report = evaluateReferenceHealth(sample);
+const email = String((Astro.locals.session as any)?.user?.email || '');
+const library = email
+  ? await getCatalog().list(ownerKeyFor(email), 60).catch((error) => {
+      console.error('[seshat:library]', error);
+      return [];
+    })
+  : [];
+const libraries = email ? await getCatalog().listLibraries(ownerKeyFor(email)).catch(() => []) : [];
+const libraryNames = new Map(libraries.map((item) => [item.id, item.name]));
+const stageLabel: Record<string, string> = {
+  extract: 'extracting text',
+  identify: 'identifying reference',
+  summarize: 'writing summary',
+  relate: 'relating corpus',
+};
 ---
 
 <Shell>
+      {email && (
+        <section class="library-home" id="library">
+          <div class="section-heading library-heading">
+            <div><div class="eyebrow">Your Seshat catalog</div><h2>The reading room</h2></div>
+            <a class="button quiet" href="#drop">Drop anywhere</a>
+          </div>
+          <div class="library-shelves">
+            {libraries.map((item) => <span><b>{item.name}</b>{item.itemCount} {item.itemCount === 1 ? 'item' : 'items'}</span>)}
+          </div>
+          {library.length ? (
+            <div class="library-grid">
+              {library.map((reference) => {
+                const active = reference.jobs.find((job) => job.status === 'running' || job.status === 'queued')
+                  ?? reference.jobs.find((job) => job.status === 'failed');
+                const original = reference.artifacts.find((artifact) => artifact.kind === 'original');
+                return (
+                  <article class="library-card">
+                    <div class="file-kind">{String((reference.source as any).originalFilename || 'document').split('.').pop()}</div>
+                    <h3><a href={`/library/${reference.id}`}>{reference.title}</a></h3>
+                    <p>@{reference.citeKey}</p>
+                    <div class="card-libraries">{reference.libraryIds.map((id) => <span>{libraryNames.get(id) || 'Library'}</span>)}</div>
+                    <div class="library-card-foot">
+                      <span class:list={['catalog-state', active?.status]}>{active ? stageLabel[active.stage] || active.stage : 'catalogued'}</span>
+                      {original && <a href={`/api/library/${reference.id}/original`} target="_blank">open original ↗</a>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div class="library-empty"><span>𓅓</span><p>Your catalog is empty. Drop a document anywhere on this page.</p></div>
+          )}
+        </section>
+      )}
       <section class="hero">
         <div class="eyebrow">An intelligent bibliography system</div>
         <h1>References should<br /><em>know what they contain.</em></h1>

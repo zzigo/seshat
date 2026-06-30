@@ -44,6 +44,16 @@ export interface CatalogReference {
   jobs: CatalogJob[];
   createdAt: string;
   updatedAt: string;
+  libraryIds: string[];
+}
+
+export interface CatalogLibrary {
+  id: string;
+  ownerKey: string;
+  name: string;
+  description?: string;
+  itemCount: number;
+  createdAt: string;
 }
 
 export interface CatalogDocumentInput {
@@ -54,6 +64,7 @@ export interface CatalogDocumentInput {
   source: Record<string, unknown>;
   originalSha256: string;
   artifact: Omit<CatalogArtifact, 'createdAt'>;
+  libraryId?: string;
 }
 
 export function buildInitialJobs(_referenceId: string, id: () => string = () => crypto.randomUUID()): CatalogJob[] {
@@ -117,6 +128,28 @@ const schema = `
     UNIQUE (reference_id, stage)
   );
   CREATE INDEX IF NOT EXISTS catalog_jobs_queue_idx ON catalog_jobs (status, created_at);
+
+  CREATE TABLE IF NOT EXISTS catalog_libraries (
+    id text PRIMARY KEY,
+    owner_key text NOT NULL,
+    name text NOT NULL,
+    description text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (owner_key, name)
+  );
+  CREATE TABLE IF NOT EXISTS catalog_library_items (
+    library_id text NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    added_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (library_id, reference_id)
+  );
+  INSERT INTO catalog_libraries (id, owner_key, name, description)
+    SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
+    FROM catalog_references
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO catalog_library_items (library_id, reference_id)
+    SELECT 'inbox:' || owner_key, id FROM catalog_references
+    ON CONFLICT DO NOTHING;
 `;
 
 const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: CatalogJob[] = []): CatalogReference => ({
@@ -137,6 +170,7 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   jobs,
   createdAt: new Date(row.created_at).toISOString(),
   updatedAt: new Date(row.updated_at).toISOString(),
+  libraryIds: row.library_ids ?? [],
 });
 
 export class PostgresCatalog {
@@ -174,10 +208,45 @@ export class PostgresCatalog {
   async list(ownerKey: string, limit = 50): Promise<CatalogReference[]> {
     await this.ensureSchema();
     const result = await this.pool.query(
-      'SELECT * FROM catalog_references WHERE owner_key = $1 ORDER BY updated_at DESC LIMIT $2',
+      `SELECT r.*, COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
+       FROM catalog_references r LEFT JOIN catalog_library_items li ON li.reference_id = r.id
+       WHERE r.owner_key = $1 GROUP BY r.id ORDER BY r.updated_at DESC LIMIT $2`,
       [ownerKey, Math.max(1, Math.min(200, limit))],
     );
     return Promise.all(result.rows.map((row) => this.hydrate(row)));
+  }
+
+  async listLibraries(ownerKey: string): Promise<CatalogLibrary[]> {
+    await this.ensureSchema();
+    await this.ensureInbox(ownerKey);
+    const result = await this.pool.query(
+      `SELECT l.*, count(li.reference_id)::int AS item_count
+       FROM catalog_libraries l LEFT JOIN catalog_library_items li ON li.library_id = l.id
+       WHERE l.owner_key = $1 GROUP BY l.id ORDER BY l.created_at`, [ownerKey],
+    );
+    return result.rows.map((row) => ({ id: row.id, ownerKey: row.owner_key, name: row.name,
+      description: row.description ?? undefined, itemCount: row.item_count,
+      createdAt: new Date(row.created_at).toISOString() }));
+  }
+
+  async ensureInbox(ownerKey: string): Promise<string> {
+    const id = `inbox:${ownerKey}`;
+    await this.pool.query(
+      `INSERT INTO catalog_libraries (id, owner_key, name, description) VALUES ($1,$2,'Inbox','Documents awaiting cultivation') ON CONFLICT (id) DO NOTHING`,
+      [id, ownerKey],
+    );
+    return id;
+  }
+
+  async addToLibrary(ownerKey: string, referenceId: string, libraryId?: string): Promise<void> {
+    await this.ensureSchema();
+    const target = libraryId || await this.ensureInbox(ownerKey);
+    await this.pool.query(
+      `INSERT INTO catalog_library_items (library_id, reference_id)
+       SELECT l.id, r.id FROM catalog_libraries l, catalog_references r
+       WHERE l.id=$1 AND l.owner_key=$2 AND r.id=$3 AND r.owner_key=$2 ON CONFLICT DO NOTHING`,
+      [target, ownerKey, referenceId],
+    );
   }
 
   async catalogDocument(input: CatalogDocumentInput): Promise<CatalogReference> {
@@ -200,6 +269,9 @@ export class PostgresCatalog {
           input.artifact.sizeBytes, input.artifact.sha256, input.artifact.etag],
       );
       for (const job of buildInitialJobs(input.id)) await this.insertJob(client, input.id, job);
+      const libraryId = input.libraryId || `inbox:${input.ownerKey}`;
+      await client.query(`INSERT INTO catalog_libraries (id, owner_key, name, description) VALUES ($1,$2,'Inbox','Documents awaiting cultivation') ON CONFLICT (id) DO NOTHING`, [libraryId, input.ownerKey]);
+      await client.query('INSERT INTO catalog_library_items (library_id, reference_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [libraryId, input.id]);
       await client.query('COMMIT');
       return (await this.get(input.ownerKey, input.id))!;
     } catch (error) {

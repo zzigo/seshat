@@ -26,6 +26,10 @@ identifier discovery (ISBN string first, Google Books fallback from title/author
 summary, then corpus-relative tags. Local Ollama agents may execute stages, but never own
 the catalog or overwrite provenance.
 
+Libraries are first-class corpora above references. A document keeps one stable identity
+and may belong to several libraries; summaries describe the document, while relational
+tags and similarity are evaluated within a selected library.
+
 ## Phase 4 — Application Adapters
 
 Integrate the versioned packages into Musiki AR, then validate the same contract from

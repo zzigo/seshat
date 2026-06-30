@@ -81,6 +81,25 @@ h2 { margin: 11px 0 0; font: 400 clamp(38px, 5vw, 66px)/1 Georgia, serif; letter
 .principles p { max-width: 290px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 footer { min-height: 150px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font: 10px monospace; text-transform: uppercase; letter-spacing: .1em; }
 
+.library-home { padding: 82px 0 94px; border-bottom: 1px solid var(--line); }
+.library-heading { align-items: center; }
+.library-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--ink); border-left: 1px solid var(--ink); }
+.library-shelves { display: flex; gap: 8px; margin: -10px 0 28px; }
+.library-shelves span, .card-libraries span { display: inline-flex; gap: 8px; padding: 7px 9px; border: 1px solid var(--line); color: var(--muted); font: 9px monospace; text-transform: uppercase; }
+.library-shelves b { color: var(--ink); font-weight: 600; }
+.library-card { min-height: 245px; display: flex; flex-direction: column; padding: 28px; border-right: 1px solid var(--ink); border-bottom: 1px solid var(--ink); background: rgba(255,255,255,.14); }
+.library-card h3 { margin: 31px 0 8px; font: 400 25px/1.12 Georgia, serif; overflow-wrap: anywhere; }
+.library-card h3 a { text-decoration: none; }
+.library-card p { margin: 0; color: var(--muted); font: 10px monospace; }
+.card-libraries { display: flex; gap: 5px; margin-top: 16px; }
+.library-card-foot { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 30px; font: 9px monospace; text-transform: uppercase; letter-spacing: .07em; }
+.library-card-foot a { color: var(--green); }
+.catalog-state { color: var(--muted); }
+.catalog-state.queued, .catalog-state.running { color: var(--gold); }
+.catalog-state.failed { color: #8b3628; }
+.library-empty { min-height: 210px; display: grid; place-content: center; justify-items: center; border: 1px solid var(--line); color: var(--muted); text-align: center; }
+.library-empty span { color: var(--gold); font-size: 34px; }
+
 .drop-hint { position: fixed; right: 22px; bottom: 20px; z-index: 2; padding: 9px 12px; border: 1px solid var(--line); color: var(--muted); background: rgba(241,239,230,.88); backdrop-filter: blur(8px); font: 9px monospace; letter-spacing: .08em; text-transform: uppercase; }
 .drop-layer { position: fixed; z-index: 100; inset: 12px; display: grid; place-content: center; gap: 13px; border: 1px solid rgba(241,239,230,.55); color: var(--paper); background: rgba(23,35,29,.94); text-align: center; opacity: 0; visibility: hidden; transform: scale(.992); transition: opacity .16s ease, transform .16s ease, visibility .16s; pointer-events: none; }
 .drop-layer.visible { opacity: 1; visibility: visible; transform: scale(1); }
@@ -160,4 +179,6 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
   .bib-row { grid-template-columns: 54px minmax(0, 1fr); gap: 13px; }
   .bib-row code, .bib-row .health-mark { grid-column: 2; justify-self: start; }
   .catalog-record { grid-template-columns: 1fr; gap: 20px; }
+  .library-grid { grid-template-columns: 1fr; }
+  .library-heading .button { display: none; }
 }
