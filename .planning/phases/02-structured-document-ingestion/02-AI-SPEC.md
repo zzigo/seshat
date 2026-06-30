@@ -48,7 +48,7 @@ not supported there. Validate every response and cap evidence context.
 
 ## 4. Implementation Guidance
 
-Use local `qwen3:4b`, temperature 0, at most 12k characters from the beginning/end of the
+Use local `qwen3:1.7b`, temperature 0, at most 4k characters from the beginning/end of the
 extracted text. Pipeline state and provenance remain in PostgreSQL. Tools are Docling, Google Books
 Volumes API, ISBN checksum validation, R2, and Ollama. Each job is claimed with `SKIP LOCKED` and
 transitions atomically.
