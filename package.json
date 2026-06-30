@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:packages && npm run test:python",
+    "test:packages": "npm run test --workspaces --if-present",
+    "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
@@ -21,4 +23,3 @@
   },
   "packageManager": "npm@10.9.3"
 }
-

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seshat-ingest"
+version = "0.1.0"
+description = "Structured PDF and EPUB ingestion for Seshat using Docling."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "docling>=2.102,<3",
+]
+
+[project.scripts]
+seshat-ingest = "seshat_ingest.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["seshat_ingest"]
+
