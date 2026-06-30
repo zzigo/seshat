@@ -1,0 +1,103 @@
+---
+interface Props { authenticated: boolean }
+const { authenticated } = Astro.props;
+---
+
+<div class="drop-layer" data-drop-layer data-authenticated={String(authenticated)} aria-hidden="true">
+  <div class="drop-glyph">𓆓</div>
+  <strong>Release into Seshat</strong>
+  <span>PDF · DOCX · TXT · EPUB · BIB</span>
+</div>
+<div class="drop-toast" data-drop-toast role="status" aria-live="polite"></div>
+
+<script>
+  const layer = document.querySelector<HTMLElement>('[data-drop-layer]');
+  const toast = document.querySelector<HTMLElement>('[data-drop-toast]');
+  const accepted = new Set(['pdf', 'docx', 'txt', 'epub', 'bib']);
+  let dragDepth = 0;
+
+  const extension = (name: string) => name.toLowerCase().split('.').pop() || '';
+  const showToast = (message: string) => {
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('visible');
+    window.setTimeout(() => toast.classList.remove('visible'), 4200);
+  };
+
+  const database = () => new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('seshat-intake', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('files', { keyPath: 'id' });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+  const preserve = async (files: File[], batch: string) => {
+    const db = await database();
+    await Promise.all(files.map((file, index) => new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('files', 'readwrite');
+      transaction.objectStore('files').put({
+        id: `${batch}:${index}`,
+        batch,
+        name: file.name,
+        extension: extension(file.name),
+        size: file.size,
+        type: file.type,
+        lastModified: file.lastModified,
+        file,
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    })));
+    db.close();
+  };
+
+  const routeFor = (files: File[], batch: string) => {
+    const kinds = files.map((file) => extension(file.name));
+    const mixed = kinds.includes('bib') && kinds.some((kind) => kind !== 'bib');
+    const path = mixed || !kinds.every((kind) => kind === 'bib') ? '/intake' : '/bibliography/import';
+    return `${path}?batch=${encodeURIComponent(batch)}`;
+  };
+
+  window.addEventListener('dragenter', (event) => {
+    if (!event.dataTransfer?.types.includes('Files')) return;
+    event.preventDefault();
+    dragDepth += 1;
+    layer?.classList.add('visible');
+    layer?.setAttribute('aria-hidden', 'false');
+  });
+  window.addEventListener('dragover', (event) => {
+    if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+  });
+  window.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      layer?.classList.remove('visible');
+      layer?.setAttribute('aria-hidden', 'true');
+    }
+  });
+  window.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    layer?.classList.remove('visible');
+    layer?.setAttribute('aria-hidden', 'true');
+    const incoming = Array.from(event.dataTransfer?.files || []);
+    const files = incoming.filter((file) => accepted.has(extension(file.name)));
+    const rejected = incoming.length - files.length;
+    if (!files.length) {
+      showToast('No compatible files found. Use PDF, DOCX, TXT, EPUB or BIB.');
+      return;
+    }
+    const batch = crypto.randomUUID();
+    try {
+      await preserve(files, batch);
+      const destination = routeFor(files, batch);
+      if (rejected) sessionStorage.setItem('seshat-drop-note', `${rejected} unsupported file${rejected === 1 ? '' : 's'} omitted.`);
+      const authenticated = layer?.dataset.authenticated === 'true';
+      location.href = authenticated
+        ? destination
+        : `/login?redirect=${encodeURIComponent(destination)}`;
+    } catch {
+      showToast('The browser could not stage this batch. Try fewer or smaller files.');
+    }
+  });
+</script>

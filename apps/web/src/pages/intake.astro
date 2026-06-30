@@ -1,0 +1,46 @@
+---
+import Shell from '../components/Shell.astro';
+import { stagedFilesScript } from '../lib/staged-files';
+const batch = Astro.url.searchParams.get('batch') || '';
+---
+
+<Shell title="Intake — Seshat">
+  <section class="workspace-head">
+    <div class="eyebrow">Intake batch</div>
+    <h1>A new shelf<br /><em>is taking root.</em></h1>
+    <p>Documents enter the processing queue. Bibliographies are separated for inspection and repair.</p>
+  </section>
+  <section class="intake-board" data-intake data-batch={batch}>
+    <div class="intake-summary">
+      <span data-total>0 files</span>
+      <span data-state>reading local batch…</span>
+    </div>
+    <div class="intake-list" data-list></div>
+  </section>
+  <script is:inline set:html={`${stagedFilesScript}
+    (() => {
+      const board = document.querySelector('[data-intake]');
+      const list = board?.querySelector('[data-list]');
+      const total = board?.querySelector('[data-total]');
+      const state = board?.querySelector('[data-state]');
+      const format = (bytes) => bytes < 1048576 ? Math.max(1, Math.round(bytes / 1024)) + ' KB' : (bytes / 1048576).toFixed(1) + ' MB';
+      const render = async () => {
+        const rows = await readSeshatBatch(board?.dataset.batch || '');
+        total.textContent = rows.length + (rows.length === 1 ? ' file' : ' files');
+        state.textContent = rows.length ? 'ready for server intake' : 'no staged files found';
+        list.innerHTML = '';
+        rows.forEach((row) => {
+          const bib = row.extension === 'bib';
+          const article = document.createElement('article');
+          article.className = 'intake-row';
+          article.innerHTML = '<span class="file-kind">' + row.extension.toUpperCase() + '</span><div><strong></strong><small></small></div><span class="route-badge">' + (bib ? 'curate' : 'process') + '</span>';
+          article.querySelector('strong').textContent = row.name;
+          article.querySelector('small').textContent = format(row.size);
+          if (bib) article.addEventListener('click', () => location.href = '/bibliography/import?batch=' + encodeURIComponent(row.batch));
+          list.appendChild(article);
+        });
+      };
+      render().catch(() => { state.textContent = 'could not read this batch'; });
+    })();
+  `} />
+</Shell>

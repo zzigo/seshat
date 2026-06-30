@@ -11,7 +11,6 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
 
 - Repository initialized at `/Users/zztt/projects/packages/seshat`.
 - VPS destination agreed as `/opt/packages/seshat`.
-- DNS is proxied through Cloudflare; no Seshat runtime or Caddy route exists yet.
 - `gsd-sdk` was unavailable, so initialization artifacts were created manually.
 - `@seshat/core` and `@seshat/zotero` compile and pass nine package tests.
 - Docling 2.107 completed a real 30-page PDF conversion into structured JSON, Markdown,
@@ -24,3 +23,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
 - Production web: `https://seshat.zztt.org`, deployed from `/opt/packages/seshat`
   under PM2 (`seshat-web`) and Caddy on port 4331.
 - Desktop and 390px mobile layouts were verified in the in-app browser with no console errors.
+- The local web surface now has isolated Auth.js sessions backed by the shared Authentik and
+  Google identity providers, a page-wide drop layer, IndexedDB batch preservation across login,
+  mixed document/BibTeX routing, and server-side BibTeX parsing. Production identity-provider
+  callback registration and R2-backed document jobs remain pending.

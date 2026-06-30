@@ -11,11 +11,14 @@
   },
   "dependencies": {
     "@astrojs/node": "^10.0.6",
+    "@auth/core": "^0.37.4",
+    "@retorquere/bibtex-parser": "^9.0.29",
     "@seshat/core": "*",
-    "astro": "^6.2.1"
+    "astro": "^6.2.1",
+    "auth-astro": "^4.2.0"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.9"
+    "@astrojs/check": "^0.9.9",
+    "@types/node": "^26.0.1"
   }
 }
-

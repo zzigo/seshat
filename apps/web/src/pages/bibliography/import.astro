@@ -1,0 +1,51 @@
+---
+import Shell from '../../components/Shell.astro';
+import { stagedFilesScript } from '../../lib/staged-files';
+const batch = Astro.url.searchParams.get('batch') || '';
+---
+
+<Shell title="Organize bibliography — Seshat">
+  <section class="workspace-head compact">
+    <div class="eyebrow">Bibliographic nursery</div>
+    <h1>Inspect before<br /><em>you cultivate.</em></h1>
+    <p>Seshat parses each entry without importing it yet, exposing malformed records and duplicate citekeys.</p>
+  </section>
+  <section class="bib-board" data-bib-board data-batch={batch}>
+    <div class="intake-summary"><span data-summary>Opening bibliography…</span><span data-errors></span></div>
+    <div class="bib-list" data-bib-list></div>
+  </section>
+  <script is:inline set:html={`${stagedFilesScript}
+    (() => {
+      const board = document.querySelector('[data-bib-board]');
+      const list = board.querySelector('[data-bib-list]');
+      const summary = board.querySelector('[data-summary]');
+      const errors = board.querySelector('[data-errors]');
+      const authorText = (fields) => (fields.author || []).map((person) => [person.lastName, person.firstName].filter(Boolean).join(', ')).join(' · ');
+      const run = async () => {
+        const rows = (await readSeshatBatch(board.dataset.batch || '')).filter((row) => row.extension === 'bib');
+        const form = new FormData();
+        rows.forEach((row) => form.append('files', row.file, row.name));
+        if (!rows.length) throw new Error('No .bib file found in this batch.');
+        const response = await fetch('/api/bibliography/parse', { method: 'POST', body: form });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not parse bibliography.');
+        summary.textContent = result.entries.length + (result.entries.length === 1 ? ' reference' : ' references') + ' · ' + rows.length + (rows.length === 1 ? ' source' : ' sources');
+        errors.textContent = result.errors.length ? result.errors.length + ' issues need attention' : 'syntax healthy';
+        const seen = new Set();
+        result.entries.forEach((entry) => {
+          const duplicate = seen.has(entry.key); seen.add(entry.key);
+          const row = document.createElement('article');
+          row.className = 'bib-row' + (duplicate ? ' has-warning' : '');
+          const title = entry.fields.title || 'Untitled reference';
+          row.innerHTML = '<span class="file-kind">' + entry.type + '</span><div class="bib-copy"><strong></strong><p></p><small></small></div><code></code><span class="health-mark">' + (duplicate ? 'duplicate key' : 'ready') + '</span>';
+          row.querySelector('strong').textContent = title;
+          row.querySelector('p').textContent = authorText(entry.fields) || 'Author missing';
+          row.querySelector('small').textContent = entry.fields.year || 'Year missing';
+          row.querySelector('code').textContent = '@' + entry.key;
+          list.appendChild(row);
+        });
+      };
+      run().catch((error) => { summary.textContent = error.message; errors.textContent = 'import stopped'; });
+    })();
+  `} />
+</Shell>

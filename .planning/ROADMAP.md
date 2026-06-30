@@ -17,6 +17,10 @@ and safe upload of generated artifacts back to R2.
 Build the web application for browsing records, health issues, originals, and parsed
 documents. Deploy it at `seshat.zztt.org` from `/opt/packages/seshat`.
 
+The first intake slice now includes ecosystem authentication, page-wide file drop,
+mixed-batch routing, and a parsed BibTeX inspection surface. R2-backed document jobs
+remain part of Phase 2 before intake can be considered durable.
+
 ## Phase 4 — Application Adapters
 
 Integrate the versioned packages into Musiki AR, then validate the same contract from

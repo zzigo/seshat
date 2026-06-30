@@ -1,0 +1,50 @@
+---
+import { SignOut } from 'auth-astro/components';
+import DropLayer from './DropLayer.astro';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'Seshat — cultivate what you read',
+  description = 'Seshat cultivates bibliographies that understand their documents.',
+} = Astro.props;
+const session = Astro.locals.session as any;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="wordmark" href="/" aria-label="Seshat home">
+        <span class="sigil" aria-hidden="true">𓋇</span>
+        <span>Seshat</span>
+      </a>
+      <div class="identity">
+        {session?.user?.email ? (
+          <>
+            <a href="/intake" class="identity-name">{session.user.name || session.user.email}</a>
+            <SignOut><span class="identity-action">sign out</span></SignOut>
+          </>
+        ) : (
+          <a class="identity-action" href="/login">sign in to cultivate</a>
+        )}
+      </div>
+    </header>
+    <main><slot /></main>
+    <footer>
+      <span>Seshat · House of Books</span>
+      <span>writing / memory / measurement</span>
+    </footer>
+    <DropLayer authenticated={Boolean(session?.user?.email)} />
+  </body>
+</html>

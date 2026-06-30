@@ -1,6 +1,6 @@
 ---
 import { evaluateReferenceHealth, type BibliographicItem } from '@seshat/core';
-import '../styles/global.css';
+import Shell from '../components/Shell.astro';
 
 const sample: BibliographicItem = {
   id: 'demo:seshat',
@@ -35,24 +35,7 @@ const sample: BibliographicItem = {
 const report = evaluateReferenceHealth(sample);
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width" />
-    <meta name="description" content="Seshat cultivates bibliographies that understand their documents." />
-    <title>Seshat — cultivate what you read</title>
-  </head>
-  <body>
-    <header class="masthead">
-      <a class="wordmark" href="/" aria-label="Seshat home">
-        <span class="sigil" aria-hidden="true">𓋇</span>
-        <span>Seshat</span>
-      </a>
-      <div class="status"><span></span> system germinating · v0.1.0</div>
-    </header>
-
-    <main>
+<Shell>
       <section class="hero">
         <div class="eyebrow">An intelligent bibliography system</div>
         <h1>References should<br /><em>know what they contain.</em></h1>
@@ -123,12 +106,5 @@ const report = evaluateReferenceHealth(sample);
           <p>Metadata health becomes observable, explainable and eventually self-healing.</p>
         </article>
       </section>
-    </main>
-
-    <footer>
-      <span>Seshat · House of Books</span>
-      <span>writing / memory / measurement</span>
-    </footer>
-  </body>
-</html>
-
+      <div class="drop-hint" aria-hidden="true">Drop a document anywhere to begin</div>
+</Shell>
