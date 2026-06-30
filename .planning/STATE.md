@@ -20,3 +20,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-30)
 - Phase 1 implementation is committed as `9f49fcd`; Docling ingestion is committed as
   `214f8b0`.
 - The first Astro web surface executes `@seshat/core` directly and exposes a health API.
+- GitHub authority: `https://github.com/zzigo/seshat`, branch `main`.
+- Production web: `https://seshat.zztt.org`, deployed from `/opt/packages/seshat`
+  under PM2 (`seshat-web`) and Caddy on port 4331.
+- Desktop and 390px mobile layouts were verified in the in-app browser with no console errors.
