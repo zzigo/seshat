@@ -19,6 +19,7 @@ The authenticated surface is a dense desktop workspace, not a marketing page. Th
 - Editable fields: title, authors, year, type, ISBN, language, tags, citekey, abstract.
 - Cell changes autosave per row with visible saving/saved/error state and rollback on error.
 - Double-clicking a row opens the document pod.
+- The leading `×` deletes the entry immediately, including every original and derivative in R2; no confirmation dialog.
 - Dropped files are inserted into the table immediately; processing continues in the HUD and never navigates to intake.
 
 ## Tree contract

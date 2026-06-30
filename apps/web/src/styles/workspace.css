@@ -88,6 +88,8 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .catalog-pod .handsontable td { padding: 2px 5px; }
 .catalog-pod .handsontable th { color: var(--muted); font-weight: 600; text-transform: uppercase; }
 .catalog-pod .handsontable .wtBorder { background-color: var(--green) !important; }
+.catalog-delete { width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; color: #8b3628; background: transparent; font: 17px/1 monospace; cursor: pointer; opacity: .45; }
+.catalog-delete:hover { opacity: 1; background: rgba(139,54,40,.08); }
 
 @media (max-width: 760px) {
   .workspace-bar { grid-template-columns: 52px 1fr auto; }

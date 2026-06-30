@@ -136,6 +136,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     catalogTable = new Handsontable(element, {
       data: filteredRows(),
       columns: [
+        { data: '__delete', title: '', readOnly: true, width: 34, renderer: (_instance, td) => {
+          Handsontable.dom.empty(td);
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'catalog-delete';
+          button.textContent = '×'; button.title = 'Delete reference and stored files'; button.setAttribute('aria-label', 'Delete reference and stored files');
+          td.appendChild(button);
+        } },
         { data: 'title', title: 'Title', width: 300 },
         { data: 'authors', title: 'Authors', width: 220 },
         { data: 'year', title: 'Year', type: 'numeric', width: 72 },
@@ -154,7 +160,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       width: '100%',
       height: '100%',
       stretchH: 'none',
-      fixedColumnsStart: 2,
+      fixedColumnsStart: 3,
       filters: true,
       dropdownMenu: true,
       multiColumnSorting: true,
@@ -176,10 +182,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         touched.forEach((id) => { const row = references.get(id); if (row) scheduleSave(row); });
       },
       afterOnCellMouseDown: (event, coords) => {
-        if (event.detail !== 2 || coords.row < 0) return;
+        if (coords.row < 0) return;
         const physicalRow = catalogTable?.toPhysicalRow(coords.row) ?? coords.row;
         const row = catalogTable?.getSourceDataAtRow(physicalRow) as ReferenceRow | undefined;
-        if (row) controller.openDocument(row.id);
+        if (!row) return;
+        const property = catalogTable?.colToProp(coords.col);
+        if (property === '__delete') { event.preventDefault(); void deleteReference(row.id); return; }
+        if (event.detail === 2) controller.openDocument(row.id);
       },
     });
   };
@@ -320,6 +329,36 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
     openTool(kind: ToolKind, referenceId = activeReference || undefined) { const suffix = referenceId || 'global'; addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1), 'right'); },
     openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
+  };
+
+  const deleteReference = async (referenceId: string) => {
+    const reference = references.get(referenceId);
+    if (!reference) return;
+    const timer = saveTimers.get(referenceId);
+    if (timer) window.clearTimeout(timer);
+    saveTimers.delete(referenceId);
+    const activityId = `delete-${referenceId}`;
+    updateActivity(activityId, { state: 'working', message: `${reference.title} · deleting catalog entry and R2 files` });
+    setSaveState('deleting…', 'saving');
+    try {
+      const response = await fetch(`/api/library/${referenceId}`, { method: 'DELETE' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Delete failed');
+      api.panels.filter((item) => item.id.includes(referenceId)).forEach((item) => item.api.close());
+      references.delete(referenceId);
+      committed.delete(referenceId);
+      const index = payload.references.findIndex((item) => item.id === referenceId);
+      if (index >= 0) payload.references.splice(index, 1);
+      if (activeReference === referenceId) activeReference = null;
+      refreshTable();
+      renderTree(search.value);
+      updateActivity(activityId, { state: 'complete', message: `${reference.title} · deleted from catalog and R2` });
+      setSaveState('deleted');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Delete failed';
+      updateActivity(activityId, { state: 'error', message: `${reference.title} · ${message}` });
+      setSaveState(message, 'error');
+    }
   };
 
   const resize = new ResizeObserver(([entry]) => api.layout(entry.contentRect.width, entry.contentRect.height));

@@ -302,6 +302,25 @@ export class PostgresCatalog {
     return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }
 
+  async cancelJobsForDeletion(ownerKey: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE catalog_jobs j SET status='failed', error='deleted by curator', updated_at=now()
+       FROM catalog_references r WHERE j.reference_id=r.id AND r.owner_key=$1 AND r.id=$2`,
+      [ownerKey, id],
+    );
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteReference(ownerKey: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'DELETE FROM catalog_references WHERE owner_key=$1 AND id=$2',
+      [ownerKey, id],
+    );
+    return result.rowCount === 1;
+  }
+
   async catalogDocument(input: CatalogDocumentInput): Promise<CatalogReference> {
     await this.ensureSchema();
     const client = await this.pool.connect();

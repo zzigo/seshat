@@ -34,6 +34,11 @@ async function fail(job: Claimed, error: unknown) {
     [job.id, String((error as any)?.message || error).slice(0, 2000)]);
 }
 
+async function assertJobRunning(job: Claimed) {
+  const result = await catalog.pool.query('SELECT status FROM catalog_jobs WHERE id=$1', [job.id]);
+  if (result.rows[0]?.status !== 'running') throw new Error('JOB_CANCELLED');
+}
+
 async function objectBytes(key: string): Promise<Uint8Array> {
   const result = await r2.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!result.Body) throw new Error(`R2 object missing: ${key}`);
@@ -74,6 +79,7 @@ async function extract(job: Claimed) {
       '--artifact-id', original.id, '--output', output], { env: { ...process.env, PYTHONPATH: join(process.cwd(), 'services/ingest') }, maxBuffer: 10 * 1024 * 1024 });
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
     for (const item of manifest.artifacts) {
+      await assertJobRunning(job);
       const bytes = await readFile(join(output, item.filename));
       const key = `seshat/${reference.owner_key}/${job.reference_id}/derived/docling/${item.filename}`;
       const stored = await r2.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: item.media_type, CacheControl: 'private, no-store' }));
