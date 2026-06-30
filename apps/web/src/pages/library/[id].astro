@@ -1,0 +1,39 @@
+---
+import Shell from '../../components/Shell.astro';
+import { getCatalog, ownerKeyFor } from '../../lib/catalog';
+
+const email = String((Astro.locals.session as any)?.user?.email || '');
+const reference = await getCatalog().get(ownerKeyFor(email), Astro.params.id || '');
+if (!reference) return new Response('Reference not found', { status: 404 });
+const original = reference.artifacts.find((artifact) => artifact.kind === 'original');
+const labels: Record<string, string> = {
+  extract: 'Extract text and structure',
+  identify: 'Find ISBN, title and authors',
+  summarize: 'Create an initial summary',
+  relate: 'Relate tags to the corpus',
+};
+---
+
+<Shell title={`${reference.title} — Seshat`}>
+  <section class="workspace-head compact record-head">
+    <div class="eyebrow">Catalogued document</div>
+    <h1>{reference.title}</h1>
+    <p>The original is safe. Enrichment advances in explicit, inspectable stages.</p>
+  </section>
+  <section class="catalog-record">
+    <dl class="catalog-facts">
+      <div><dt>Citekey</dt><dd>@{reference.citeKey}</dd></div>
+      <div><dt>SHA-256</dt><dd>{reference.originalSha256}</dd></div>
+      <div><dt>Original</dt><dd>{original ? `${Math.round(original.sizeBytes / 1024)} KB · R2` : 'missing'}</dd></div>
+      <div><dt>ISBN</dt><dd>{(reference.identifiers.isbn as string[] | undefined)?.join(', ') || 'pending identification'}</dd></div>
+    </dl>
+    <div class="job-pipeline">
+      {reference.jobs.map((job, index) => (
+        <article class:list={['job-card', job.status]}>
+          <span>{String(index + 1).padStart(2, '0')}</span>
+          <div><strong>{labels[job.stage] || job.stage}</strong><small>{job.status}</small></div>
+        </article>
+      ))}
+    </div>
+  </section>
+</Shell>

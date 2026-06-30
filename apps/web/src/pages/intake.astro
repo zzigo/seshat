@@ -27,16 +27,47 @@ const batch = Astro.url.searchParams.get('batch') || '';
       const render = async () => {
         const rows = await readSeshatBatch(board?.dataset.batch || '');
         total.textContent = rows.length + (rows.length === 1 ? ' file' : ' files');
-        state.textContent = rows.length ? 'ready for server intake' : 'no staged files found';
+        state.textContent = rows.length ? 'ready to catalogue' : 'no staged files found';
         list.innerHTML = '';
+        const upload = async (row, article) => {
+          const action = article.querySelector('[data-process]');
+          const detail = article.querySelector('small');
+          action.disabled = true;
+          action.textContent = 'uploading…';
+          detail.textContent = format(row.size) + ' · calculating checksum and preserving original';
+          const form = new FormData();
+          form.append('file', row.file, row.name);
+          try {
+            const response = await fetch('/api/intake/documents', { method: 'POST', body: form });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Cataloguing failed.');
+            article.classList.add('catalogued');
+            detail.textContent = format(row.size) + (result.duplicate ? ' · already in your catalog' : ' · original preserved in R2');
+            const link = document.createElement('a');
+            link.className = 'route-badge';
+            link.href = '/library/' + encodeURIComponent(result.reference.id);
+            link.textContent = result.duplicate ? 'open existing' : 'open record';
+            action.replaceWith(link);
+          } catch (error) {
+            action.disabled = false;
+            action.textContent = 'retry';
+            detail.textContent = error.message;
+            article.classList.add('has-error');
+          }
+        };
         rows.forEach((row) => {
           const bib = row.extension === 'bib';
           const article = document.createElement('article');
           article.className = 'intake-row';
-          article.innerHTML = '<span class="file-kind">' + row.extension.toUpperCase() + '</span><div><strong></strong><small></small></div><span class="route-badge">' + (bib ? 'curate' : 'process') + '</span>';
+          article.innerHTML = '<span class="file-kind">' + row.extension.toUpperCase() + '</span><div><strong></strong><small></small></div>' + (bib ? '<a class="route-badge">curate</a>' : '<button class="route-badge" data-process>catalogue</button>');
           article.querySelector('strong').textContent = row.name;
           article.querySelector('small').textContent = format(row.size);
-          if (bib) article.addEventListener('click', () => location.href = '/bibliography/import?batch=' + encodeURIComponent(row.batch));
+          if (bib) {
+            const link = article.querySelector('a');
+            link.href = '/bibliography/import?batch=' + encodeURIComponent(row.batch);
+          } else {
+            article.querySelector('[data-process]').addEventListener('click', () => upload(row, article));
+          }
           list.appendChild(article);
         });
       };

@@ -101,12 +101,15 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .intake-board, .bib-board { margin-bottom: 90px; border: 1px solid var(--ink); background: rgba(255,255,255,.18); }
 .intake-summary { display: flex; justify-content: space-between; gap: 20px; padding: 18px 22px; border-bottom: 1px solid var(--line); color: var(--muted); font: 10px monospace; letter-spacing: .1em; text-transform: uppercase; }
 .intake-list, .bib-list { display: grid; }
-.intake-row { display: grid; grid-template-columns: 62px 1fr auto; gap: 20px; align-items: center; min-height: 88px; padding: 17px 22px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.intake-row { display: grid; grid-template-columns: 62px 1fr auto; gap: 20px; align-items: center; min-height: 88px; padding: 17px 22px; border-bottom: 1px solid var(--line); }
 .intake-row:last-child, .bib-row:last-child { border-bottom: 0; }
+.intake-row.catalogued { background: rgba(61,122,88,.08); }
+.intake-row.has-error { background: rgba(139,54,40,.07); }
 .file-kind { color: var(--gold); font: 700 10px monospace; text-transform: uppercase; letter-spacing: .08em; }
 .intake-row strong { display: block; font: 400 19px Georgia, serif; }
 .intake-row small { display: block; margin-top: 6px; color: var(--muted); font: 10px monospace; }
-.route-badge, .health-mark { padding: 7px 9px; border: 1px solid var(--line); color: var(--green); font: 9px monospace; letter-spacing: .08em; text-transform: uppercase; }
+.route-badge, .health-mark { padding: 7px 9px; border: 1px solid var(--line); color: var(--green); background: transparent; font: 9px monospace; letter-spacing: .08em; text-decoration: none; text-transform: uppercase; cursor: pointer; }
+.route-badge:disabled { color: var(--muted); cursor: wait; }
 
 .bib-row { display: grid; grid-template-columns: 78px minmax(240px, 1fr) minmax(130px, auto) 110px; gap: 20px; align-items: center; min-height: 120px; padding: 22px; border-bottom: 1px solid var(--line); }
 .bib-copy strong { font: 400 21px/1.2 Georgia, serif; }
@@ -115,6 +118,21 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .bib-row code { overflow-wrap: anywhere; color: var(--green); font: 11px monospace; }
 .bib-row.has-warning { background: rgba(167,127,54,.09); }
 .bib-row.has-warning .health-mark { color: #8b5e1c; border-color: rgba(139,94,28,.35); }
+
+.record-head h1 { max-width: 1000px; font-size: clamp(52px, 8vw, 100px); overflow-wrap: anywhere; }
+.catalog-record { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.2fr); gap: 45px; margin-bottom: 100px; }
+.catalog-facts { margin: 0; border: 1px solid var(--ink); }
+.catalog-facts div { padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.catalog-facts div:last-child { border-bottom: 0; }
+.catalog-facts dt { margin-bottom: 8px; color: var(--muted); font: 9px monospace; letter-spacing: .1em; text-transform: uppercase; }
+.catalog-facts dd { margin: 0; overflow-wrap: anywhere; font: 12px/1.45 monospace; }
+.job-pipeline { display: grid; gap: 10px; }
+.job-card { display: grid; grid-template-columns: 48px 1fr; align-items: center; min-height: 82px; padding: 16px 20px; border: 1px solid var(--line); }
+.job-card > span { color: var(--gold); font: 10px monospace; }
+.job-card strong { display: block; font: 400 18px Georgia, serif; }
+.job-card small { display: block; margin-top: 7px; color: var(--muted); font: 9px monospace; letter-spacing: .1em; text-transform: uppercase; }
+.job-card.queued { border-color: var(--green-bright); background: rgba(61,122,88,.06); }
+.job-card.blocked { opacity: .62; }
 
 @media (max-width: 760px) {
   .masthead, main, footer { width: min(100% - 28px, 1180px); }
@@ -141,4 +159,5 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
   .intake-row .route-badge { grid-column: 2; justify-self: start; }
   .bib-row { grid-template-columns: 54px minmax(0, 1fr); gap: 13px; }
   .bib-row code, .bib-row .health-mark { grid-column: 2; justify-self: start; }
+  .catalog-record { grid-template-columns: 1fr; gap: 20px; }
 }

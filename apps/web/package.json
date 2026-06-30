@@ -12,7 +12,9 @@
   "dependencies": {
     "@astrojs/node": "^10.0.6",
     "@auth/core": "^0.37.4",
+    "@aws-sdk/client-s3": "^3.1077.0",
     "@retorquere/bibtex-parser": "^9.0.29",
+    "@seshat/catalog": "^0.1.0",
     "@seshat/core": "*",
     "astro": "^6.2.1",
     "auth-astro": "^4.2.0",

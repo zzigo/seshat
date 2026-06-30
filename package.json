@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build --workspace @seshat/web",
-    "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero",
+    "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero && npm run build --workspace @seshat/catalog",
     "test": "npm run build:packages && npm run test:packages && npm run test:python",
     "test:packages": "npm run test --workspaces --if-present",
     "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",

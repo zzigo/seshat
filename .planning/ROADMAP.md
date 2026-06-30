@@ -21,6 +21,11 @@ The first intake slice now includes ecosystem authentication, page-wide file dro
 mixed-batch routing, and a parsed BibTeX inspection surface. R2-backed document jobs
 remain part of Phase 2 before intake can be considered durable.
 
+Document enrichment proceeds through four persisted stages: structure/text extraction,
+identifier discovery (ISBN string first, Google Books fallback from title/author), initial
+summary, then corpus-relative tags. Local Ollama agents may execute stages, but never own
+the catalog or overwrite provenance.
+
 ## Phase 4 — Application Adapters
 
 Integrate the versioned packages into Musiki AR, then validate the same contract from
