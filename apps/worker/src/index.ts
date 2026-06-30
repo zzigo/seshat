@@ -101,8 +101,8 @@ async function googleBooks(query: string): Promise<any[]> {
 
 async function ollamaCandidate(text: string): Promise<{title:string;authors:string[];year:number|null;confidence:number}> {
   const format = { type:'object', properties:{ title:{type:'string'}, authors:{type:'array',items:{type:'string'}}, year:{type:['integer','null']}, confidence:{type:'number'} }, required:['title','authors','year','confidence'] };
-  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({
-    model: process.env.OLLAMA_MODEL || 'deepseek-r1:8b', stream:false, format, options:{temperature:0},
+  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(120_000), body:JSON.stringify({
+    model: process.env.OLLAMA_MODEL || 'qwen3:4b', stream:false, think:false, format, options:{temperature:0,num_predict:256,num_ctx:8192},
     messages:[{role:'system',content:'Extract bibliographic search terms only from the supplied document evidence. Never invent an ISBN.'},{role:'user',content:text.slice(0,9000)+'\n\n[END]\n'+text.slice(-3000)}]
   }) });
   if (!response.ok) throw new Error(`Ollama ${response.status}`);
@@ -148,5 +148,5 @@ async function run() {
 
 await catalog.ensureSchema();
 await catalog.pool.query(`UPDATE catalog_jobs SET status='queued', error='worker restart recovery', updated_at=now() WHERE status='running'`);
-console.log(`[seshat-worker] online concurrency=1 model=${process.env.OLLAMA_MODEL || 'deepseek-r1:8b'}`);
+console.log(`[seshat-worker] online concurrency=1 model=${process.env.OLLAMA_MODEL || 'qwen3:4b'}`);
 void run();
