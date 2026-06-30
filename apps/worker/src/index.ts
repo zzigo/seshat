@@ -95,7 +95,12 @@ async function googleBooks(query: string): Promise<any[]> {
   const url = new URL('https://www.googleapis.com/books/v1/volumes');
   url.searchParams.set('q', query); url.searchParams.set('maxResults', '5'); url.searchParams.set('printType', 'books');
   if (process.env.GOOGLE_API_KEY) url.searchParams.set('key', process.env.GOOGLE_API_KEY);
-  const response = await fetch(url); if (!response.ok) throw new Error(`Google Books ${response.status}`);
+  let response = await fetch(url);
+  if (response.status === 403 && url.searchParams.has('key')) {
+    url.searchParams.delete('key');
+    response = await fetch(url);
+  }
+  if (!response.ok) throw new Error(`Google Books ${response.status}`);
   return (await response.json()).items || [];
 }
 
