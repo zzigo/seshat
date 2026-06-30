@@ -149,8 +149,8 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .metadata-form label { display: grid; gap: 8px; }
 .metadata-form label > span { color: var(--muted); font: 9px monospace; letter-spacing: .1em; text-transform: uppercase; }
 .metadata-form label small { letter-spacing: 0; text-transform: none; }
-.metadata-form input, .metadata-form textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 0; color: var(--ink); background: rgba(255,255,255,.24); font: 15px/1.4 Georgia, serif; resize: vertical; }
-.metadata-form input:focus, .metadata-form textarea:focus { outline: 1px solid var(--green-bright); border-color: var(--green-bright); }
+.metadata-form input, .metadata-form textarea, .metadata-form select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 0; color: var(--ink); background: rgba(255,255,255,.24); font: 15px/1.4 Georgia, serif; resize: vertical; }
+.metadata-form input:focus, .metadata-form textarea:focus, .metadata-form select:focus { outline: 1px solid var(--green-bright); border-color: var(--green-bright); }
 .metadata-pair { display: grid; grid-template-columns: 120px 1fr; gap: 16px; }
 .metadata-actions { display: flex; align-items: center; gap: 16px; }
 .metadata-actions button { cursor: pointer; }

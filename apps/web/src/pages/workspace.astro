@@ -1,0 +1,81 @@
+---
+import { SignOut } from 'auth-astro/components';
+import DropLayer from '../components/DropLayer.astro';
+import { getCatalog, ownerKeyFor } from '../lib/catalog';
+import '../styles/global.css';
+import '../styles/workspace.css';
+import 'dockview-core/dist/styles/dockview.css';
+import 'handsontable/styles/handsontable.css';
+import 'handsontable/styles/ht-theme-main.css';
+
+const email = String((Astro.locals.session as any)?.user?.email || '');
+const ownerKey = ownerKeyFor(email);
+const catalog = getCatalog();
+const [references, libraries] = await Promise.all([catalog.list(ownerKey, 200), catalog.listLibraries(ownerKey)]);
+const payload = {
+  references: references.map((reference) => ({
+    id: reference.id,
+    citeKey: reference.citeKey,
+    type: reference.type,
+    title: reference.title,
+    authors: reference.contributors.map((contributor: any) => contributor.literal
+      || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('; '),
+    year: (reference.issued as any)?.year || '',
+    isbn: ((reference.identifiers.isbn as string[] | undefined) || []).join('; '),
+    language: reference.language || '',
+    tags: reference.tags.join(', '),
+    abstract: reference.abstract || '',
+    format: String((reference.source as any).originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
+    filename: String((reference.source as any).originalFilename || reference.title),
+    libraryIds: reference.libraryIds,
+    status: reference.jobs.find((job) => job.status === 'running' || job.status === 'queued')?.stage
+      || reference.jobs.find((job) => job.status === 'failed')?.status || 'catalogued',
+    hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
+    hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+  })),
+  libraries,
+};
+const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="Seshat curatorial workspace" />
+    <title>Workspace — Seshat</title>
+  </head>
+  <body class="workspace-body">
+    <div class="workspace-app" data-seshat-workspace>
+      <header class="workspace-bar">
+        <a class="workspace-brand" href="/" aria-label="Seshat home"><span>𓋇</span><strong>Seshat</strong></a>
+        <div class="workspace-context"><span>Curatorial workspace</span><b>{references.length} references</b></div>
+        <nav class="workspace-tools" aria-label="Workspace tools">
+          <button type="button" data-open-tool="analysis">Analysis</button>
+          <button type="button" data-open-tool="annotation">Annotation</button>
+          <button type="button" data-open-tool="agent">AI agent</button>
+        </nav>
+        <div class="workspace-session"><span data-save-state>ready</span><span>{(Astro.locals.session as any)?.user?.name || email}</span><SignOut><span>sign out</span></SignOut></div>
+      </header>
+      <div class="workspace-shell">
+        <aside class="workspace-sidebar">
+          <div class="tree-toolbar">
+            <input type="search" placeholder="Search catalog…" data-tree-search aria-label="Search catalog" />
+            <button type="button" data-new-library title="New library or folder">＋</button>
+          </div>
+          <div class="library-tree" data-library-tree></div>
+          <div class="tree-footer"><span>Drop files anywhere</span><a href="/intake">Intake ↗</a></div>
+        </aside>
+        <section class="workspace-stage dockview-theme-light" data-dockview-host aria-label="Document workspace"></section>
+      </div>
+    </div>
+    <script is:inline type="application/json" id="seshat-workspace-data" set:html={serialized}></script>
+    <DropLayer authenticated={true} />
+    <script>
+      import { mountSeshatWorkspace } from '../scripts/workspace';
+      const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');
+      if (root) mountSeshatWorkspace(root);
+    </script>
+  </body>
+</html>

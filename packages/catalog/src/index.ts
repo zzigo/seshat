@@ -52,6 +52,7 @@ export interface CatalogLibrary {
   ownerKey: string;
   name: string;
   description?: string;
+  parentId?: string;
   itemCount: number;
   createdAt: string;
 }
@@ -69,9 +70,14 @@ export interface CatalogDocumentInput {
 
 export interface CatalogMetadataUpdate {
   title: string;
+  citeKey: string;
+  type: string;
   contributors: unknown[];
   issued?: Record<string, unknown>;
   identifiers: Record<string, unknown>;
+  tags: string[];
+  abstract?: string;
+  language?: string;
   manualFields: string[];
 }
 
@@ -151,6 +157,8 @@ const schema = `
     added_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (library_id, reference_id)
   );
+  ALTER TABLE catalog_libraries
+    ADD COLUMN IF NOT EXISTS parent_id text REFERENCES catalog_libraries(id) ON DELETE CASCADE;
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
@@ -233,8 +241,24 @@ export class PostgresCatalog {
        WHERE l.owner_key = $1 GROUP BY l.id ORDER BY l.created_at`, [ownerKey],
     );
     return result.rows.map((row) => ({ id: row.id, ownerKey: row.owner_key, name: row.name,
-      description: row.description ?? undefined, itemCount: row.item_count,
+      description: row.description ?? undefined, parentId: row.parent_id ?? undefined, itemCount: row.item_count,
       createdAt: new Date(row.created_at).toISOString() }));
+  }
+
+  async createLibrary(ownerKey: string, name: string, parentId?: string): Promise<CatalogLibrary> {
+    await this.ensureSchema();
+    const id = crypto.randomUUID();
+    const result = await this.pool.query(
+      `INSERT INTO catalog_libraries (id, owner_key, name, parent_id)
+       SELECT $1,$2,$3,p.id FROM catalog_libraries p WHERE p.id=$4 AND p.owner_key=$2
+       UNION ALL SELECT $1,$2,$3,NULL WHERE $4 IS NULL
+       RETURNING *`,
+      [id, ownerKey, name, parentId || null],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error('PARENT_LIBRARY_NOT_FOUND');
+    return { id: row.id, ownerKey: row.owner_key, name: row.name,
+      parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString() };
   }
 
   async ensureInbox(ownerKey: string): Promise<string> {
@@ -265,13 +289,15 @@ export class PostgresCatalog {
     };
     const result = await this.pool.query(
       `UPDATE catalog_references
-       SET title=$3, contributors=$4::jsonb, issued=$5::jsonb, identifiers=$6::jsonb,
-           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $7::jsonb, true),
+       SET title=$3, cite_key=$4, type=$5, contributors=$6::jsonb, issued=$7::jsonb,
+           identifiers=$8::jsonb, tags=$9::text[], abstract=$10, language=$11,
+           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $12::jsonb, true),
            updated_at=now()
        WHERE owner_key=$1 AND id=$2
        RETURNING *`,
-      [ownerKey, id, input.title, JSON.stringify(input.contributors),
-        JSON.stringify(input.issued ?? null), JSON.stringify(input.identifiers), JSON.stringify(curation)],
+      [ownerKey, id, input.title, input.citeKey, input.type, JSON.stringify(input.contributors),
+        JSON.stringify(input.issued ?? null), JSON.stringify(input.identifiers), input.tags,
+        input.abstract || null, input.language || null, JSON.stringify(curation)],
     );
     return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }
@@ -318,9 +344,10 @@ export class PostgresCatalog {
   }
 
   private async hydrate(row: any): Promise<CatalogReference> {
-    const [artifactRows, jobRows] = await Promise.all([
+    const [artifactRows, jobRows, libraryRows] = await Promise.all([
       this.pool.query('SELECT * FROM catalog_artifacts WHERE reference_id = $1 ORDER BY created_at', [row.id]),
       this.pool.query('SELECT * FROM catalog_jobs WHERE reference_id = $1 ORDER BY created_at', [row.id]),
+      this.pool.query('SELECT library_id FROM catalog_library_items WHERE reference_id = $1 ORDER BY added_at', [row.id]),
     ]);
     const artifacts = artifactRows.rows.map((artifact): CatalogArtifact => ({
       id: artifact.id,
@@ -343,6 +370,6 @@ export class PostgresCatalog {
       createdAt: new Date(job.created_at).toISOString(),
       updatedAt: new Date(job.updated_at).toISOString(),
     }));
-    return mapReference(row, artifacts, jobs);
+    return mapReference({ ...row, library_ids: libraryRows.rows.map((item) => item.library_id) }, artifacts, jobs);
   }
 }

@@ -53,6 +53,17 @@ const labels: Record<string, string> = {
           <label><span>Year</span><input name="year" value={year} inputmode="numeric" pattern="[0-9]{1,4}" /></label>
           <label><span>ISBN <small>one per line</small></span><textarea name="isbns" rows="3">{isbns.join('\n')}</textarea></label>
         </div>
+        <div class="metadata-pair">
+          <label><span>Type</span><select name="type">
+            {['document','article','article-journal','book','chapter','paper-conference','report','thesis'].map((type) => <option value={type} selected={reference.type === type}>{type}</option>)}
+          </select></label>
+          <label><span>Citekey</span><input name="citeKey" value={reference.citeKey} maxlength="160" /></label>
+        </div>
+        <div class="metadata-pair">
+          <label><span>Language</span><input name="language" value={reference.language || ''} maxlength="32" /></label>
+          <label><span>Tags</span><input name="tags" value={reference.tags.join(', ')} /></label>
+        </div>
+        <label><span>Abstract</span><textarea name="abstract" rows="5">{reference.abstract || ''}</textarea></label>
         <div class="metadata-actions">
           <button class="button primary" type="submit">Save record</button>
           <output data-form-status aria-live="polite"></output>

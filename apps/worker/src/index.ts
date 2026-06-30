@@ -133,6 +133,38 @@ async function ollamaCandidate(text: string): Promise<{title:string;authors:stri
   return JSON.parse((await response.json()).message.content);
 }
 
+const evidenceText = (value: string): string => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+async function persistInference(job: Claimed, reference: any, inference: any, text: string): Promise<boolean> {
+  const manual = new Set<string>(reference.source?.curation?.manualFields || []);
+  const evidence = evidenceText(text.slice(0, 16_000));
+  const candidateTitle = String(inference?.title || '').trim();
+  const titleEvidence = evidenceText(candidateTitle);
+  const titleAccepted = !manual.has('title') && titleEvidence.length >= 8 && evidence.includes(titleEvidence);
+  const candidateAuthors = Array.isArray(inference?.authors) ? inference.authors.map((value:any)=>String(value).trim()).filter(Boolean) : [];
+  const acceptedAuthors = candidateAuthors.filter((author:string) => {
+    const parts = evidenceText(author).split(' ').filter(Boolean);
+    return parts.length > 0 && evidence.includes(parts[parts.length - 1]);
+  }).slice(0, 20);
+  const numericYear = Number(inference?.year);
+  const yearAccepted = !manual.has('issued') && Number.isInteger(numericYear)
+    && numericYear >= 1000 && numericYear <= new Date().getFullYear() + 1 && evidence.includes(String(numericYear));
+  const authorsAccepted = !manual.has('contributors') && acceptedAuthors.length > 0;
+  if (!titleAccepted && !authorsAccepted && !yearAccepted) return false;
+  const confidence = Math.max(0, Math.min(1, Number(inference?.confidence) || 0));
+  await catalog.pool.query(`UPDATE catalog_references SET title=$2, contributors=$3::jsonb, issued=$4::jsonb,
+    source=source || $5::jsonb, updated_at=now() WHERE id=$1`, [job.reference_id,
+    titleAccepted ? candidateTitle : reference.title,
+    JSON.stringify(authorsAccepted ? acceptedAuthors.map((literal:string)=>({literal,role:'author'})) : reference.contributors),
+    JSON.stringify(yearAccepted ? {year:numericYear} : reference.issued),
+    JSON.stringify({identification:{provider:'docling-ollama',status:'inferred',confidence,
+      accepted:{title:titleAccepted,authors:authorsAccepted,year:yearAccepted},inference}})]);
+  await complete(job, 'summarize', { status:'inferred', provider:'docling-ollama', confidence,
+    accepted:{title:titleAccepted,authors:authorsAccepted,year:yearAccepted} });
+  return true;
+}
+
 async function identify(job: Claimed) {
   const { reference, artifacts } = await referenceData(job.reference_id);
   const markdown = artifacts.find((item) => item.kind === 'markdown');
@@ -154,8 +186,22 @@ async function identify(job: Claimed) {
     catch { items = await openLibrary({ title: inference.title, authors: inference.authors }); }
     if (!items.length) items = await openLibrary({ title: inference.title, authors: inference.authors });
   }
-  const volume = items[0]?.volumeInfo;
-  if (!volume) { await complete(job, 'summarize', { status:'unresolved', explicit }); return; }
+  const normalizedEvidence = evidenceText(text.slice(0, 16_000));
+  const matchedItem = items.find((item:any) => {
+    const volume = item?.volumeInfo;
+    const providerIsbns = (volume?.industryIdentifiers || []).map((identifier:any) => normalizeIsbn(identifier.identifier)).filter(Boolean);
+    if (explicit.some((isbn) => providerIsbns.includes(isbn))) return true;
+    const providerTitle = evidenceText(String(volume?.title || ''));
+    if (providerTitle.length < 8 || !normalizedEvidence.includes(providerTitle)) return false;
+    const authors = (volume?.authors || []).map((author:string) => evidenceText(author).split(' ').filter(Boolean).at(-1)).filter(Boolean);
+    return !authors.length || authors.some((surname:string) => normalizedEvidence.includes(surname));
+  });
+  const volume = matchedItem?.volumeInfo;
+  if (!volume) {
+    if (inference && await persistInference(job, reference, inference, text)) return;
+    await complete(job, 'summarize', { status:'unresolved', explicit, inference });
+    return;
+  }
   const isbns = (volume.industryIdentifiers || []).map((item:any)=>normalizeIsbn(item.identifier)).filter((value:any)=>value && isValidIsbn(value));
   const manual = new Set<string>(reference.source?.curation?.manualFields || []);
   const title = manual.has('title') ? reference.title : (volume.title || reference.title);
@@ -167,8 +213,8 @@ async function identify(job: Claimed) {
   await catalog.pool.query(`UPDATE catalog_references SET title=$2, contributors=$3::jsonb, issued=$4::jsonb,
     identifiers=$5::jsonb, language=COALESCE($6,language), source=source || $7::jsonb, updated_at=now() WHERE id=$1`,
     [job.reference_id, title, JSON.stringify(contributors), JSON.stringify(issued),
-      JSON.stringify(identifiers), volume.language || null, JSON.stringify({identification:{provider:items[0].provider || 'google-books',volumeId:items[0].id,inference}})]);
-  await complete(job, 'summarize', { provider:items[0].provider || 'google-books', volumeId:items[0].id, explicit });
+      JSON.stringify(identifiers), volume.language || null, JSON.stringify({identification:{provider:matchedItem.provider || 'google-books',volumeId:matchedItem.id,inference}})]);
+  await complete(job, 'summarize', { provider:matchedItem.provider || 'google-books', volumeId:matchedItem.id, explicit });
 }
 
 async function tick() {

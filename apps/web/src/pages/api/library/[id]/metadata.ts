@@ -37,12 +37,27 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const ownerKey = ownerKeyFor(email);
   const current = await catalog.get(ownerKey, params.id || '');
   if (!current) return Response.json({ error: 'not_found' }, { status: 404 });
+  const citeKey = text(form.get('citeKey')) || current.citeKey;
+  if (!/^[A-Za-z0-9:_-]{1,160}$/.test(citeKey)) {
+    return Response.json({ error: 'Citekey may use letters, numbers, colon, underscore and hyphen.' }, { status: 400 });
+  }
+  const type = text(form.get('type')) || current.type;
+  const allowedTypes = new Set(['article', 'article-journal', 'book', 'chapter', 'document', 'paper-conference', 'report', 'thesis']);
+  if (!allowedTypes.has(type)) return Response.json({ error: 'Unsupported reference type.' }, { status: 400 });
+  const tags = [...new Set(text(form.get('tags')).split(/[,;\n]+/).map((tag) => tag.trim()).filter(Boolean))].slice(0, 100);
+  const language = text(form.get('language')).slice(0, 32);
+  const abstract = text(form.get('abstract')).slice(0, 20_000);
   const reference = await catalog.updateMetadata(ownerKey, current.id, {
     title,
+    citeKey,
+    type,
     contributors: authors.map((literal) => ({ literal, role: 'author' })),
     issued: year === null ? undefined : { year },
     identifiers: { ...current.identifiers, isbn: isbns },
-    manualFields: ['title', 'contributors', 'issued', 'identifiers'],
+    tags,
+    abstract: abstract || undefined,
+    language: language || undefined,
+    manualFields: ['title', 'citeKey', 'type', 'contributors', 'issued', 'identifiers', 'tags', 'abstract', 'language'],
   });
   return Response.json({ ok: true, reference });
 };

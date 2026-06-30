@@ -1,7 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { getSession } from 'auth-astro/server';
 
-const protectedPaths = ['/intake', '/library', '/bibliography', '/api/intake', '/api/library', '/api/bibliography'];
+const protectedPaths = ['/workspace', '/intake', '/library', '/bibliography', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   let session = null;

@@ -18,6 +18,8 @@
     "@seshat/core": "*",
     "astro": "^6.2.1",
     "auth-astro": "^4.2.0",
+    "dockview-core": "^5.2.0",
+    "handsontable": "^17.1.0",
     "set-cookie-parser": "^2.7.2"
   },
   "devDependencies": {
