@@ -8,11 +8,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test:packages && npm run test:python",
+    "build": "npm run build:packages && npm run build --workspace @seshat/web",
+    "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero",
+    "test": "npm run build:packages && npm run test:packages && npm run test:python",
     "test:packages": "npm run test --workspaces --if-present",
     "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
     "tsx": "^4.20.6",
