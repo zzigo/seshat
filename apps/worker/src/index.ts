@@ -140,5 +140,13 @@ async function tick() {
   catch (error) { console.error(`[worker:${job.stage}]`, error); await fail(job, error); }
 }
 
-console.log(`[seshat-worker] online model=${process.env.OLLAMA_MODEL || 'deepseek-r1:8b'}`);
-setInterval(() => void tick(), pollMs); void tick();
+async function run() {
+  try { await tick(); }
+  catch (error) { console.error('[worker:loop]', error); }
+  setTimeout(() => void run(), pollMs);
+}
+
+await catalog.ensureSchema();
+await catalog.pool.query(`UPDATE catalog_jobs SET status='queued', error='worker restart recovery', updated_at=now() WHERE status='running'`);
+console.log(`[seshat-worker] online concurrency=1 model=${process.env.OLLAMA_MODEL || 'deepseek-r1:8b'}`);
+void run();
