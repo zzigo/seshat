@@ -12,11 +12,12 @@ export const GET: APIRoute = async ({ locals, params }) => {
   const object = await getR2Client().send(new GetObjectCommand({ Bucket: artifact.bucket, Key: artifact.objectKey }));
   if (!object.Body) return new Response('Not found', { status: 404 });
   const filename = String((reference.source as any).originalFilename || reference.title).replace(/["\r\n]/g, '');
+  const asciiFilename = filename.normalize('NFKD').replace(/[^\x20-\x7E]/g, '_').replace(/[\\;]/g, '_');
   return new Response(object.Body.transformToWebStream(), {
     headers: {
       'Content-Type': object.ContentType || artifact.mimeType || 'application/octet-stream',
       'Content-Length': String(object.ContentLength || artifact.sizeBytes),
-      'Content-Disposition': `inline; filename="${filename}"`,
+      'Content-Disposition': `inline; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       'Cache-Control': 'private, no-store',
     },
   });
