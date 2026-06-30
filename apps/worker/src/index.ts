@@ -157,11 +157,17 @@ async function identify(job: Claimed) {
   const volume = items[0]?.volumeInfo;
   if (!volume) { await complete(job, 'summarize', { status:'unresolved', explicit }); return; }
   const isbns = (volume.industryIdentifiers || []).map((item:any)=>normalizeIsbn(item.identifier)).filter((value:any)=>value && isValidIsbn(value));
+  const manual = new Set<string>(reference.source?.curation?.manualFields || []);
+  const title = manual.has('title') ? reference.title : (volume.title || reference.title);
+  const contributors = manual.has('contributors') ? reference.contributors
+    : (volume.authors || []).map((literal:string)=>({literal,role:'author'}));
+  const issued = manual.has('issued') ? reference.issued
+    : (volume.publishedDate ? {year:Number(String(volume.publishedDate).slice(0,4))||undefined} : null);
+  const identifiers = manual.has('identifiers') ? reference.identifiers : { ...reference.identifiers, isbn: isbns };
   await catalog.pool.query(`UPDATE catalog_references SET title=$2, contributors=$3::jsonb, issued=$4::jsonb,
     identifiers=$5::jsonb, language=COALESCE($6,language), source=source || $7::jsonb, updated_at=now() WHERE id=$1`,
-    [job.reference_id, volume.title || reference.title, JSON.stringify((volume.authors || []).map((literal:string)=>({literal,role:'author'}))),
-      JSON.stringify(volume.publishedDate ? {year:Number(String(volume.publishedDate).slice(0,4))||undefined} : null),
-      JSON.stringify({isbn:isbns}), volume.language || null, JSON.stringify({identification:{provider:items[0].provider || 'google-books',volumeId:items[0].id,inference}})]);
+    [job.reference_id, title, JSON.stringify(contributors), JSON.stringify(issued),
+      JSON.stringify(identifiers), volume.language || null, JSON.stringify({identification:{provider:items[0].provider || 'google-books',volumeId:items[0].id,inference}})]);
   await complete(job, 'summarize', { provider:items[0].provider || 'google-books', volumeId:items[0].id, explicit });
 }
 

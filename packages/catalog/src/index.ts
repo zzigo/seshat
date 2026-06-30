@@ -67,6 +67,14 @@ export interface CatalogDocumentInput {
   libraryId?: string;
 }
 
+export interface CatalogMetadataUpdate {
+  title: string;
+  contributors: unknown[];
+  issued?: Record<string, unknown>;
+  identifiers: Record<string, unknown>;
+  manualFields: string[];
+}
+
 export function buildInitialJobs(_referenceId: string, id: () => string = () => crypto.randomUUID()): CatalogJob[] {
   const timestamp = new Date().toISOString();
   return (['extract', 'identify', 'summarize', 'relate'] as const).map((stage, index) => ({
@@ -247,6 +255,25 @@ export class PostgresCatalog {
        WHERE l.id=$1 AND l.owner_key=$2 AND r.id=$3 AND r.owner_key=$2 ON CONFLICT DO NOTHING`,
       [target, ownerKey, referenceId],
     );
+  }
+
+  async updateMetadata(ownerKey: string, id: string, input: CatalogMetadataUpdate): Promise<CatalogReference | null> {
+    await this.ensureSchema();
+    const curation = {
+      manualFields: input.manualFields,
+      updatedAt: new Date().toISOString(),
+    };
+    const result = await this.pool.query(
+      `UPDATE catalog_references
+       SET title=$3, contributors=$4::jsonb, issued=$5::jsonb, identifiers=$6::jsonb,
+           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $7::jsonb, true),
+           updated_at=now()
+       WHERE owner_key=$1 AND id=$2
+       RETURNING *`,
+      [ownerKey, id, input.title, JSON.stringify(input.contributors),
+        JSON.stringify(input.issued ?? null), JSON.stringify(input.identifiers), JSON.stringify(curation)],
+    );
+    return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }
 
   async catalogDocument(input: CatalogDocumentInput): Promise<CatalogReference> {

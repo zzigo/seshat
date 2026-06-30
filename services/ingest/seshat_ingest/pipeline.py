@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,12 +79,44 @@ def _write(path: Path, content: bytes) -> GeneratedArtifact:
             "document.json": "docling-json",
             "document.md": "markdown",
             "chunks.jsonl": "chunks",
+            "structure.json": "structure",
         }.get(path.name, "derived"),
         filename=path.name,
         media_type=media_type,
         sha256=_sha256(path),
         size_bytes=path.stat().st_size,
     )
+
+
+def _markdown_structure(markdown: str) -> dict[str, Any]:
+    sections: list[dict[str, Any]] = []
+    parents: list[tuple[int, str]] = []
+    in_fence = False
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if not match:
+            continue
+        level = len(match.group(1))
+        title = re.sub(r"[*_`]+", "", match.group(2)).strip()
+        if not title:
+            continue
+        while parents and parents[-1][0] >= level:
+            parents.pop()
+        section_id = f"section-{len(sections) + 1}"
+        sections.append({
+            "id": section_id,
+            "level": level,
+            "title": title,
+            "parentId": parents[-1][1] if parents else None,
+            "sourceLine": line_number,
+        })
+        parents.append((level, section_id))
+    return {"schemaVersion": 1, "sections": sections}
 
 
 def _default_converter(*, ocr: bool) -> Converter:
@@ -147,11 +180,17 @@ def ingest_document(
         json.dumps(row, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
         for row in chunk_rows
     )
+    structure_bytes = json.dumps(
+        _markdown_structure(markdown_bytes.decode("utf-8")),
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
 
     artifacts = (
         _write(output_dir / "document.json", json_bytes),
         _write(output_dir / "document.md", markdown_bytes),
         _write(output_dir / "chunks.jsonl", chunk_bytes),
+        _write(output_dir / "structure.json", structure_bytes),
     )
     timestamp = (now or (lambda: datetime.now(UTC).isoformat()))()
     manifest = IngestManifest(

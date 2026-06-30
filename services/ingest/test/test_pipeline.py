@@ -52,12 +52,15 @@ class IngestPipelineTest(unittest.TestCase):
 
             self.assertEqual(manifest.reference_id, "ref:1")
             self.assertEqual([item.kind for item in manifest.artifacts], [
-                "docling-json", "markdown", "chunks",
+                "docling-json", "markdown", "chunks", "structure",
             ])
             self.assertTrue((output / "document.json").exists())
             self.assertIn("cultivated", (output / "document.md").read_text())
             chunk = json.loads((output / "chunks.jsonl").read_text())
             self.assertEqual(chunk["metadata"]["page"], 1)
+            structure = json.loads((output / "structure.json").read_text())
+            self.assertEqual(structure["sections"][0]["title"], "A cultivated text")
+            self.assertEqual(structure["sections"][0]["level"], 1)
             persisted = json.loads((output / "manifest.json").read_text())
             self.assertEqual(persisted["source_sha256"], manifest.source_sha256)
 

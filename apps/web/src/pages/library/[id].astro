@@ -1,11 +1,33 @@
 ---
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import Shell from '../../components/Shell.astro';
 import { getCatalog, ownerKeyFor } from '../../lib/catalog';
+import { getR2Client } from '../../lib/r2';
 
 const email = String((Astro.locals.session as any)?.user?.email || '');
 const reference = await getCatalog().get(ownerKeyFor(email), Astro.params.id || '');
 if (!reference) return new Response('Reference not found', { status: 404 });
 const original = reference.artifacts.find((artifact) => artifact.kind === 'original');
+const structureArtifact = reference.artifacts.find((artifact) => artifact.kind === 'structure');
+type Section = { id: string; level: number; title: string; parentId?: string | null; sourceLine?: number };
+let sections: Section[] = [];
+if (structureArtifact?.bucket) {
+  try {
+    const object = await getR2Client().send(new GetObjectCommand({
+      Bucket: structureArtifact.bucket,
+      Key: structureArtifact.objectKey,
+    }));
+    const structure = JSON.parse(await object.Body!.transformToString()) as { sections?: Section[] };
+    sections = (structure.sections || []).slice(0, 500);
+  } catch (error) {
+    console.error('[seshat:structure]', error);
+  }
+}
+const authorName = (contributor: any): string => contributor.literal
+  || [contributor.family, contributor.given].filter(Boolean).join(', ');
+const authors = reference.contributors.map(authorName).filter(Boolean);
+const year = String((reference.issued as any)?.year || '');
+const isbns = (reference.identifiers.isbn as string[] | undefined) || [];
 const labels: Record<string, string> = {
   extract: 'Extract text and structure',
   identify: 'Find ISBN, title and authors',
@@ -17,23 +39,84 @@ const labels: Record<string, string> = {
 <Shell title={`${reference.title} — Seshat`}>
   <section class="workspace-head compact record-head">
     <div class="eyebrow">Catalogued document</div>
-    <h1>{reference.title}</h1>
+    <h1 data-record-title>{reference.title}</h1>
     <p>The original is safe. Enrichment advances in explicit, inspectable stages.</p>
+    {original && <a class="button quiet" href={`/api/library/${reference.id}/original`} target="_blank">Open original ↗</a>}
   </section>
   <section class="catalog-record">
-    <dl class="catalog-facts">
-      <div><dt>Citekey</dt><dd>@{reference.citeKey}</dd></div>
-      <div><dt>SHA-256</dt><dd>{reference.originalSha256}</dd></div>
-      <div><dt>Original</dt><dd>{original ? `${Math.round(original.sizeBytes / 1024)} KB · R2` : 'missing'}</dd></div>
-      <div><dt>ISBN</dt><dd>{(reference.identifiers.isbn as string[] | undefined)?.join(', ') || 'pending identification'}</dd></div>
-    </dl>
-    <div class="job-pipeline">
-      {reference.jobs.map((job, index) => (
-        <article class:list={['job-card', job.status]}>
-          <span>{String(index + 1).padStart(2, '0')}</span>
-          <div><strong>{labels[job.stage] || job.stage}</strong><small>{job.status}</small></div>
-        </article>
-      ))}
+    <div class="record-editor">
+      <div class="panel-heading"><div><div class="eyebrow">Human curation</div><h2>Bibliographic record</h2></div><span>Manual fields are protected</span></div>
+      <form class="metadata-form" data-metadata-form data-reference-id={reference.id}>
+        <label><span>Title</span><input name="title" value={reference.title} maxlength="1000" required /></label>
+        <label><span>Authors <small>one per line</small></span><textarea name="authors" rows="4">{authors.join('\n')}</textarea></label>
+        <div class="metadata-pair">
+          <label><span>Year</span><input name="year" value={year} inputmode="numeric" pattern="[0-9]{1,4}" /></label>
+          <label><span>ISBN <small>one per line</small></span><textarea name="isbns" rows="3">{isbns.join('\n')}</textarea></label>
+        </div>
+        <div class="metadata-actions">
+          <button class="button primary" type="submit">Save record</button>
+          <output data-form-status aria-live="polite"></output>
+        </div>
+      </form>
+      <dl class="catalog-facts compact-facts">
+        <div><dt>Citekey</dt><dd>@{reference.citeKey}</dd></div>
+        <div><dt>SHA-256</dt><dd>{reference.originalSha256}</dd></div>
+        <div><dt>Original</dt><dd>{original ? `${Math.round(original.sizeBytes / 1024)} KB · R2` : 'missing'}</dd></div>
+      </dl>
+    </div>
+    <div>
+      <div class="panel-heading"><div><div class="eyebrow">Enrichment</div><h2>Pipeline</h2></div></div>
+      <div class="job-pipeline">
+        {reference.jobs.map((job, index) => (
+          <article class:list={['job-card', job.status]}>
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <div><strong>{labels[job.stage] || job.stage}</strong><small>{job.status}</small></div>
+          </article>
+        ))}
+      </div>
     </div>
   </section>
+  <section class="structure-panel">
+    <div class="panel-heading">
+      <div><div class="eyebrow">Docling structure</div><h2>Document map</h2></div>
+      <span>{sections.length ? `${sections.length} sections` : structureArtifact ? 'No explicit headings' : 'Waiting for extraction'}</span>
+    </div>
+    {sections.length ? (
+      <ol class="structure-list">
+        {sections.map((section) => (
+          <li style={`--indent:${Math.max(0, section.level - 1) * 24}px;--mobile-indent:${Math.max(0, Math.min(2, section.level - 1)) * 14}px`}>
+            <span>{String(section.level).padStart(2, '0')}</span><strong>{section.title}</strong>
+          </li>
+        ))}
+      </ol>
+    ) : (
+      <div class="structure-empty">The map will appear here as a durable derivative of the document.</div>
+    )}
+  </section>
+
+  <script>
+    const form = document.querySelector<HTMLFormElement>('[data-metadata-form]');
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const status = form.querySelector<HTMLOutputElement>('[data-form-status]');
+      if (!button || !status) return;
+      button.disabled = true;
+      status.value = 'Saving…';
+      try {
+        const id = form.dataset.referenceId;
+        const response = await fetch(`/api/library/${id}/metadata`, { method: 'POST', body: new FormData(form) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'The record could not be saved.');
+        const title = form.elements.namedItem('title') as HTMLInputElement;
+        const heading = document.querySelector<HTMLElement>('[data-record-title]');
+        if (heading) heading.textContent = title.value;
+        status.value = 'Saved · protected from automatic overwrite';
+      } catch (error) {
+        status.value = error instanceof Error ? error.message : 'The record could not be saved.';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
 </Shell>
