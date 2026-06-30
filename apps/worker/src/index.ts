@@ -94,7 +94,8 @@ function explicitIsbns(text: string): string[] {
 async function googleBooks(query: string): Promise<any[]> {
   const url = new URL('https://www.googleapis.com/books/v1/volumes');
   url.searchParams.set('q', query); url.searchParams.set('maxResults', '5'); url.searchParams.set('printType', 'books');
-  if (process.env.GOOGLE_API_KEY) url.searchParams.set('key', process.env.GOOGLE_API_KEY);
+  const apiKey = process.env.GOOGLE_BOOKS_API_KEY || process.env.GOOGLE_API_KEY;
+  if (apiKey) url.searchParams.set('key', apiKey);
   let response = await fetch(url);
   if (response.status === 403 && url.searchParams.has('key')) {
     url.searchParams.delete('key');
