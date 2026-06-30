@@ -3,10 +3,10 @@ import { SignOut } from 'auth-astro/components';
 import DropLayer from '../components/DropLayer.astro';
 import { getCatalog, ownerKeyFor } from '../lib/catalog';
 import '../styles/global.css';
-import '../styles/workspace.css';
 import 'dockview-core/dist/styles/dockview.css';
 import 'handsontable/styles/handsontable.css';
 import 'handsontable/styles/ht-theme-main.css';
+import '../styles/workspace.css';
 
 const email = String((Astro.locals.session as any)?.user?.email || '');
 const ownerKey = ownerKeyFor(email);
