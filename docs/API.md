@@ -38,7 +38,7 @@ Auth.js/Auth Astro handler. It implements provider discovery, sign-in, callback,
 
 ### `GET /api/integrations/citations/search`
 
-Server-to-server citation search for consumers such as Musiki. It requires `Authorization: Bearer <SESHAT_INTEGRATION_TOKEN>` and an `X-Seshat-Owner` header containing the authenticated consumer user's email. Do not call this endpoint directly from browser JavaScript or expose its bearer token through a public environment variable.
+Server-to-server citation search for consumers such as Musiki. It requires `Authorization: Bearer <SESHAT_INTEGRATION_TOKEN>`. By default, `X-Seshat-Owner` contains the authenticated consumer user's email. When `SESHAT_INTEGRATION_OWNER_KEY` is configured, the integration is pinned to that curated catalog instead; this avoids identity-claim differences between applications. Do not call this endpoint directly from browser JavaScript or expose its bearer token through a public environment variable.
 
 Query parameters are `q`, optional `libraryId`, and `limit` (1–50). An empty query returns recently updated references. Results contain the citekey, title, authors, year, identifiers, tags and library membership, but never artifact storage credentials.
 

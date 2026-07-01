@@ -20,7 +20,7 @@ export const GET: APIRoute = async ({ request, url }) => {
 
   try {
     const references = await getCatalog().searchCitations(
-      ownerKeyFor(integration.email), query, limit, libraryId,
+      integration.ownerKey || ownerKeyFor(integration.email || ''), query, limit, libraryId,
     );
     return Response.json({ items: references.map((reference) => ({
       id: reference.id,
