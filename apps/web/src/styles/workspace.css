@@ -22,6 +22,7 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .tree-node, .tree-reference { width: 100%; min-width: 0; display: flex; align-items: center; border: 0; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
 .tree-node { justify-content: space-between; gap: 8px; min-height: 27px; padding: 3px 10px; font: 11px/1.2 monospace; }
 .tree-node:hover, .tree-node.active, .tree-reference:hover { background: rgba(61,122,88,.1); }
+.tree-node.drop-target { outline: 1px solid var(--green-bright); outline-offset: -1px; }
 .tree-node.active { color: var(--green); font-weight: 700; }
 .tree-node b { color: var(--muted); font: 9px monospace; }
 .tree-branch > summary { list-style: none; }
@@ -30,6 +31,13 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .tree-branch > summary .tree-node span::before { content: '▾'; display: inline-block; width: 14px; color: var(--muted); }
 .tree-branch:not([open]) > summary .tree-node span::before { content: '▸'; }
 .tree-children { margin-left: 12px; border-left: 1px solid var(--hairline); }
+.tree-library-row { display: flex; align-items: center; min-width: 0; }
+.tree-library-row > .tree-node { flex: 1; }
+.tree-library-actions { display: none; padding-right: 5px; }
+.tree-library-row:hover .tree-library-actions { display: flex; }
+.tree-library-actions button { width: 22px; height: 22px; padding: 0; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
+.tree-library-actions button:hover { color: var(--green); background: rgba(61,122,88,.1); }
+.tree-shared { flex: 0 0 auto; padding-right: 7px; color: var(--green); font: 8px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing: .08em; text-transform: uppercase; }
 .tree-reference { gap: 7px; min-height: 25px; padding: 3px 9px; color: #4f5952; font: 11px/1.2 Georgia,serif; }
 .tree-reference span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-reference span:first-child { color: var(--gold); font: 10px monospace; }
@@ -71,6 +79,10 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .bibliography-pod-head { display: flex; align-items: end; justify-content: space-between; padding-bottom: 18px; border-bottom: 1px solid var(--ink); }
 .bibliography-pod-head h2 { font-size: clamp(30px,4vw,48px); }
 .bibliography-pod-head span { color: var(--muted); font: 9px monospace; text-transform: uppercase; }
+.bibliography-import-controls { display: grid; grid-template-columns: minmax(180px,260px) minmax(180px,1fr) auto; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.bibliography-import-controls select, .bibliography-import-controls input, .bibliography-import-controls button { height: 32px; border: 1px solid var(--hairline); border-radius: 0; color: var(--ink); background: var(--paper); font: 10px monospace; }
+.bibliography-import-controls input { padding: 0 8px; }
+.bibliography-import-controls button { padding: 0 12px; color: var(--green); cursor: pointer; }
 .bibliography-pod-list article { display: grid; grid-template-columns: 95px minmax(0,1fr) minmax(120px,auto); gap: 14px; align-items: center; min-height: 70px; border-bottom: 1px solid var(--hairline); }
 .bibliography-pod-list article > span { color: var(--gold); font: 9px monospace; text-transform: uppercase; }
 .bibliography-pod-list strong, .bibliography-pod-list small { display: block; }
@@ -85,7 +97,20 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 
 .catalog-pod.ht-theme-main { --ht-cell-background-color: var(--paper); --ht-cell-foreground-color: var(--ink); --ht-accent-color: var(--green); --ht-border-color: var(--hairline); --ht-wrapper-border-color: transparent; --ht-row-header-background-color: var(--chrome-deep); --ht-column-header-background-color: var(--chrome-deep); font: 11px monospace; }
 .catalog-pod .handsontable, .catalog-pod .handsontable table, .catalog-pod .handsontable td, .catalog-pod .handsontable th { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size: 10px; }
-.catalog-pod .handsontable td { padding: 2px 5px; }
+.catalog-pod .handsontable td {
+  height: 28px !important;
+  max-height: 28px !important;
+  padding: 2px 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catalog-pod .handsontable td > * {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .catalog-pod .handsontable th { color: var(--muted); font-weight: 600; text-transform: uppercase; }
 .catalog-pod .handsontable .wtBorder { background-color: var(--green) !important; }
 .catalog-delete { width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; color: #8b3628; background: transparent; font: 17px/1 monospace; cursor: pointer; opacity: .45; }

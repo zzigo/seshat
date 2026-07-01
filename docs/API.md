@@ -42,6 +42,10 @@ Server-to-server citation search for consumers such as Musiki. It requires `Auth
 
 Query parameters are `q`, optional `libraryId`, and `limit` (1–50). An empty query returns recently updated references. Results contain the citekey, title, authors, year, identifiers, tags and library membership, but never artifact storage credentials.
 
+### `GET /api/integrations/citations/resolve`
+
+Resolves up to 100 exact citekeys supplied as repeated `key` parameters or a comma-separated `keys` parameter. It uses the same trusted-integration authentication and returns CSL-JSON records plus a `missing` list, allowing consumers to run Pandoc/citeproc formatting without copying BibTeX into each note.
+
 ## Document intake
 
 ### `POST /api/intake/documents`
@@ -82,7 +86,11 @@ Request: `multipart/form-data`; repeat the `files` field for each `.bib` file. E
 }
 ```
 
-Each returned entry or parse error includes its `sourceFile`. Persistence and reconciliation of imported BibTeX remain future work.
+Each returned entry or parse error includes its `sourceFile`.
+
+### `POST /api/bibliography/import`
+
+Persists one `.bib` file as metadata-only catalog references. Send `file` plus either an existing `libraryId`, or omit it to create a new top-level library named from `libraryName` or the filename. An optional `parentId` nests that new library. The response includes the destination library and imported references.
 
 ## Libraries
 
@@ -109,7 +117,19 @@ Adds a reference to a library.
 }
 ```
 
-The response contains the complete updated `libraryIds` array. Removing a membership is not exposed as an HTTP route yet.
+The response contains the complete updated `libraryIds` array.
+
+### `PUT /api/library/:id/libraries`
+
+Replaces all memberships, enabling true moves in the tree. An empty `libraryIds` array leaves the reference outside folders while retaining it in the catalog.
+
+### `PATCH|DELETE /api/libraries/:id`
+
+`PATCH` renames a library and/or changes `parentId`; cycles are rejected. `DELETE` removes the library subtree but preserves its references. The protected Inbox cannot be renamed or deleted.
+
+### `GET|POST|DELETE /api/libraries/:id/shares`
+
+Owners can list recipients, share with a normalized Musiki-user email, or revoke a recipient using `?email=`. Shared roots include their descendant folders and references. Recipient access is read-only: originals and generated artifacts can be opened, while metadata edits, moves and deletions remain owner-only.
 
 ## Reference metadata
 

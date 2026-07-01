@@ -32,6 +32,7 @@ const payload = {
       || reference.jobs.find((job) => job.status === 'failed')?.status || 'catalogued',
     hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
     hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+    access: reference.access,
   })),
   libraries,
 };

@@ -107,9 +107,11 @@ One row per reference and stage. The ordered stages are:
 
 Statuses are `queued`, `blocked`, `running`, `complete` and `failed`. Only `extract` and `identify` are currently consumed by `apps/worker`; later stages remain queued/blocked for future workers.
 
-### `catalog_libraries` and `catalog_library_items`
+### `catalog_libraries`, `catalog_library_items` and `catalog_library_shares`
 
 Libraries are owner-scoped and can be nested through `parent_id`. References can belong to multiple libraries through the join table. Every owner has an `Inbox` library used as the default target.
+
+A share grants another deterministic email-derived owner key read-only access to one library subtree. Ownership never changes and storage is not duplicated. Catalog reads calculate the accessible subtree recursively; all mutations remain scoped to the original owner.
 
 ## Upload and ingestion data flow
 
@@ -153,8 +155,8 @@ Manual edits store `source.curation.manualFields`. The worker checks these marke
 
 The authenticated `/workspace` is a desktop-oriented shell:
 
-- Stable left tree: search, all references, hierarchical libraries and draggable reference leaves.
-- Handsontable catalog pod: bulk edit title, authors, year, type, ISBN, language, tags, citekey and abstract.
+- Stable left tree: search, all references, hierarchical libraries, drag/drop moves, CRUD and read-only shared subtrees.
+- Handsontable catalog pod: fixed-height rows with truncated cell text, plus bulk edit of title, authors, year, type, ISBN, language, tags, citekey and abstract.
 - Dockview host: catalog, PDF, extracted text, structure, BibTeX inspection, analysis, annotation and agent pods.
 - Bottom activity HUD: upload, extraction, identification, errors and “Open map” action.
 - Dockview layout persists in browser `localStorage`; temporary parsed BibTeX payloads use `sessionStorage`.
@@ -175,7 +177,7 @@ The worker checks that an extraction job is still `running` before each derivati
 ## Security and ownership
 
 - Every protected route derives an opaque `ownerKey` by hashing the authenticated email.
-- Catalog reads/writes include `owner_key`; R2 objects are served only after owner-scoped catalog lookup.
+- Catalog writes include `owner_key`; catalog and R2 reads additionally honor explicit library shares. Shared records are read-only.
 - Session and CSRF cookies are HTTP-only, SameSite Lax and secure in production.
 - Uploads are limited to 256 MiB per document; BibTeX files are limited to 10 MiB.
 - Original and derivative responses use `private, no-store`.

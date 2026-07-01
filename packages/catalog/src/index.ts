@@ -45,6 +45,7 @@ export interface CatalogReference {
   createdAt: string;
   updatedAt: string;
   libraryIds: string[];
+  access: 'owner' | 'viewer';
 }
 
 export interface CatalogLibrary {
@@ -54,6 +55,14 @@ export interface CatalogLibrary {
   description?: string;
   parentId?: string;
   itemCount: number;
+  createdAt: string;
+  access: 'owner' | 'viewer';
+  sharedByEmail?: string;
+}
+
+export interface CatalogLibraryShare {
+  libraryId: string;
+  email: string;
   createdAt: string;
 }
 
@@ -79,6 +88,21 @@ export interface CatalogMetadataUpdate {
   abstract?: string;
   language?: string;
   manualFields: string[];
+}
+
+export interface CatalogBibliographyInput {
+  id: string;
+  citeKey: string;
+  type: string;
+  title: string;
+  contributors: unknown[];
+  issued?: Record<string, unknown>;
+  identifiers: Record<string, unknown>;
+  tags?: string[];
+  abstract?: string;
+  language?: string;
+  source: Record<string, unknown>;
+  originalSha256: string;
 }
 
 export interface CitationSearchResult {
@@ -173,6 +197,16 @@ const schema = `
   );
   ALTER TABLE catalog_libraries
     ADD COLUMN IF NOT EXISTS parent_id text REFERENCES catalog_libraries(id) ON DELETE CASCADE;
+  CREATE TABLE IF NOT EXISTS catalog_library_shares (
+    library_id text NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
+    grantee_owner_key text NOT NULL,
+    grantee_email text NOT NULL,
+    shared_by_email text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (library_id, grantee_owner_key)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_library_shares_grantee_idx
+    ON catalog_library_shares (grantee_owner_key);
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
@@ -201,6 +235,7 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   createdAt: new Date(row.created_at).toISOString(),
   updatedAt: new Date(row.updated_at).toISOString(),
   libraryIds: row.library_ids ?? [],
+  access: row.access === 'viewer' ? 'viewer' : 'owner',
 });
 
 export class PostgresCatalog {
@@ -223,27 +258,51 @@ export class PostgresCatalog {
       'SELECT * FROM catalog_references WHERE owner_key = $1 AND original_sha256 = $2',
       [ownerKey, sha256],
     );
-    return result.rows[0] ? this.hydrate(result.rows[0]) : null;
+    return result.rows[0] ? this.hydrate(result.rows[0], ownerKey) : null;
   }
 
   async get(ownerKey: string, id: string): Promise<CatalogReference | null> {
     await this.ensureSchema();
     const result = await this.pool.query(
-      'SELECT * FROM catalog_references WHERE owner_key = $1 AND id = $2',
+      `WITH RECURSIVE shared_libraries AS (
+         SELECT l.id FROM catalog_library_shares s JOIN catalog_libraries l ON l.id=s.library_id
+         WHERE s.grantee_owner_key=$1
+         UNION SELECT child.id FROM catalog_libraries child JOIN shared_libraries parent ON child.parent_id=parent.id
+       )
+       SELECT r.*, CASE WHEN r.owner_key=$1 THEN 'owner' ELSE 'viewer' END AS access
+       FROM catalog_references r WHERE r.id=$2 AND (
+         r.owner_key=$1 OR EXISTS (
+           SELECT 1 FROM catalog_library_items li JOIN shared_libraries sl ON sl.id=li.library_id
+           WHERE li.reference_id=r.id
+         )
+       )`,
       [ownerKey, id],
     );
-    return result.rows[0] ? this.hydrate(result.rows[0]) : null;
+    return result.rows[0] ? this.hydrate(result.rows[0], ownerKey) : null;
   }
 
   async list(ownerKey: string, limit = 50): Promise<CatalogReference[]> {
     await this.ensureSchema();
     const result = await this.pool.query(
-      `SELECT r.*, COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
-       FROM catalog_references r LEFT JOIN catalog_library_items li ON li.reference_id = r.id
-       WHERE r.owner_key = $1 GROUP BY r.id ORDER BY r.updated_at DESC LIMIT $2`,
+      `WITH RECURSIVE shared_libraries AS (
+         SELECT l.id FROM catalog_library_shares s JOIN catalog_libraries l ON l.id=s.library_id
+         WHERE s.grantee_owner_key=$1
+         UNION SELECT child.id FROM catalog_libraries child JOIN shared_libraries parent ON child.parent_id=parent.id
+       ), accessible_libraries AS (
+         SELECT id FROM catalog_libraries WHERE owner_key=$1 UNION SELECT id FROM shared_libraries
+       )
+       SELECT r.*, CASE WHEN r.owner_key=$1 THEN 'owner' ELSE 'viewer' END AS access,
+         COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
+       FROM catalog_references r
+       LEFT JOIN catalog_library_items li ON li.reference_id=r.id AND li.library_id IN (SELECT id FROM accessible_libraries)
+       WHERE r.owner_key=$1 OR EXISTS (
+         SELECT 1 FROM catalog_library_items visible JOIN shared_libraries sl ON sl.id=visible.library_id
+         WHERE visible.reference_id=r.id
+       )
+       GROUP BY r.id ORDER BY r.updated_at DESC LIMIT $2`,
       [ownerKey, Math.max(1, Math.min(200, limit))],
     );
-    return Promise.all(result.rows.map((row) => this.hydrate(row)));
+    return Promise.all(result.rows.map((row) => this.hydrate(row, ownerKey)));
   }
 
   async searchCitations(
@@ -298,17 +357,60 @@ export class PostgresCatalog {
     }));
   }
 
+  async resolveCitationKeys(ownerKey: string, citeKeys: string[]): Promise<CitationSearchResult[]> {
+    await this.ensureSchema();
+    const keys = [...new Set(citeKeys.map((key) => key.trim()).filter(Boolean))].slice(0, 100);
+    if (!keys.length) return [];
+    const result = await this.pool.query(
+      `SELECT r.id, r.cite_key, r.type, r.title, r.contributors, r.issued,
+              r.identifiers, r.tags, r.language, r.updated_at,
+              COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
+       FROM catalog_references r
+       LEFT JOIN catalog_library_items li ON li.reference_id = r.id
+       WHERE r.owner_key = $1 AND r.cite_key = ANY($2::text[])
+       GROUP BY r.id
+       ORDER BY array_position($2::text[], r.cite_key)`,
+      [ownerKey, keys],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      citeKey: row.cite_key,
+      type: row.type,
+      title: row.title,
+      contributors: row.contributors ?? [],
+      issued: row.issued ?? undefined,
+      identifiers: row.identifiers ?? {},
+      tags: row.tags ?? [],
+      language: row.language ?? undefined,
+      libraryIds: row.library_ids ?? [],
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
+
   async listLibraries(ownerKey: string): Promise<CatalogLibrary[]> {
     await this.ensureSchema();
     await this.ensureInbox(ownerKey);
     const result = await this.pool.query(
-      `SELECT l.*, count(li.reference_id)::int AS item_count
-       FROM catalog_libraries l LEFT JOIN catalog_library_items li ON li.library_id = l.id
-       WHERE l.owner_key = $1 GROUP BY l.id ORDER BY l.created_at`, [ownerKey],
+      `WITH RECURSIVE shared_libraries AS (
+         SELECT l.id, s.shared_by_email FROM catalog_library_shares s JOIN catalog_libraries l ON l.id=s.library_id
+         WHERE s.grantee_owner_key=$1
+         UNION SELECT child.id, parent.shared_by_email FROM catalog_libraries child
+           JOIN shared_libraries parent ON child.parent_id=parent.id
+       )
+       SELECT l.*,
+         CASE WHEN l.owner_key=$1 OR l.parent_id IN (SELECT id FROM shared_libraries) THEN l.parent_id ELSE NULL END AS visible_parent_id,
+         count(li.reference_id)::int AS item_count,
+         CASE WHEN l.owner_key=$1 THEN 'owner' ELSE 'viewer' END AS access,
+         max(sl.shared_by_email) AS shared_by_email
+       FROM catalog_libraries l LEFT JOIN catalog_library_items li ON li.library_id=l.id
+       LEFT JOIN shared_libraries sl ON sl.id=l.id
+       WHERE l.owner_key=$1 OR sl.id IS NOT NULL
+       GROUP BY l.id ORDER BY l.created_at`, [ownerKey],
     );
     return result.rows.map((row) => ({ id: row.id, ownerKey: row.owner_key, name: row.name,
-      description: row.description ?? undefined, parentId: row.parent_id ?? undefined, itemCount: row.item_count,
-      createdAt: new Date(row.created_at).toISOString() }));
+      description: row.description ?? undefined, parentId: row.visible_parent_id ?? undefined, itemCount: row.item_count,
+      createdAt: new Date(row.created_at).toISOString(), access: row.access,
+      sharedByEmail: row.shared_by_email ?? undefined }));
   }
 
   async createLibrary(ownerKey: string, name: string, parentId?: string): Promise<CatalogLibrary> {
@@ -324,7 +426,83 @@ export class PostgresCatalog {
     const row = result.rows[0];
     if (!row) throw new Error('PARENT_LIBRARY_NOT_FOUND');
     return { id: row.id, ownerKey: row.owner_key, name: row.name,
-      parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString() };
+      parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString(), access: 'owner' };
+  }
+
+  async updateLibrary(ownerKey: string, id: string, input: { name?: string; parentId?: string | null }): Promise<CatalogLibrary | null> {
+    await this.ensureSchema();
+    if (id.startsWith('inbox:')) return null;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query('SELECT * FROM catalog_libraries WHERE id=$1 AND owner_key=$2 FOR UPDATE', [id, ownerKey]);
+      if (!current.rows[0]) { await client.query('ROLLBACK'); return null; }
+      const name = input.name === undefined ? current.rows[0].name : input.name;
+      let parentId = input.parentId === undefined ? current.rows[0].parent_id : input.parentId;
+      if (parentId === id) throw new Error('LIBRARY_CYCLE');
+      if (parentId) {
+        const parent = await client.query('SELECT id FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [parentId, ownerKey]);
+        if (!parent.rows[0]) throw new Error('PARENT_LIBRARY_NOT_FOUND');
+        const descendants = await client.query(
+          `WITH RECURSIVE branch AS (
+             SELECT id FROM catalog_libraries WHERE id=$1
+             UNION ALL SELECT l.id FROM catalog_libraries l JOIN branch b ON l.parent_id=b.id
+           ) SELECT 1 FROM branch WHERE id=$2`, [id, parentId],
+        );
+        if (descendants.rowCount) throw new Error('LIBRARY_CYCLE');
+      } else parentId = null;
+      const result = await client.query(
+        'UPDATE catalog_libraries SET name=$3,parent_id=$4 WHERE id=$1 AND owner_key=$2 RETURNING *',
+        [id, ownerKey, name, parentId],
+      );
+      await client.query('COMMIT');
+      const row = result.rows[0];
+      return { id: row.id, ownerKey: row.owner_key, name: row.name, description: row.description ?? undefined,
+        parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString(), access: 'owner' };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async deleteLibrary(ownerKey: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    if (id.startsWith('inbox:')) return false;
+    const result = await this.pool.query('DELETE FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [id, ownerKey]);
+    return result.rowCount === 1;
+  }
+
+  async shareLibrary(ownerKey: string, libraryId: string, granteeOwnerKey: string, granteeEmail: string, sharedByEmail: string): Promise<CatalogLibraryShare | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `INSERT INTO catalog_library_shares (library_id,grantee_owner_key,grantee_email,shared_by_email)
+       SELECT id,$3,$4,$5 FROM catalog_libraries WHERE id=$1 AND owner_key=$2
+       ON CONFLICT (library_id,grantee_owner_key) DO UPDATE SET grantee_email=excluded.grantee_email,shared_by_email=excluded.shared_by_email
+       RETURNING library_id,grantee_email,created_at`,
+      [libraryId, ownerKey, granteeOwnerKey, granteeEmail, sharedByEmail],
+    );
+    const row = result.rows[0];
+    return row ? { libraryId: row.library_id, email: row.grantee_email, createdAt: new Date(row.created_at).toISOString() } : null;
+  }
+
+  async listLibraryShares(ownerKey: string, libraryId: string): Promise<CatalogLibraryShare[] | null> {
+    await this.ensureSchema();
+    const owned = await this.pool.query('SELECT 1 FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [libraryId, ownerKey]);
+    if (!owned.rows[0]) return null;
+    const result = await this.pool.query(
+      'SELECT library_id,grantee_email,created_at FROM catalog_library_shares WHERE library_id=$1 ORDER BY created_at', [libraryId],
+    );
+    return result.rows.map((row) => ({ libraryId: row.library_id, email: row.grantee_email, createdAt: new Date(row.created_at).toISOString() }));
+  }
+
+  async revokeLibraryShare(ownerKey: string, libraryId: string, granteeOwnerKey: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `DELETE FROM catalog_library_shares s USING catalog_libraries l
+       WHERE s.library_id=l.id AND l.owner_key=$1 AND s.library_id=$2 AND s.grantee_owner_key=$3`,
+      [ownerKey, libraryId, granteeOwnerKey],
+    );
+    return result.rowCount === 1;
   }
 
   async ensureInbox(ownerKey: string): Promise<string> {
@@ -345,6 +523,69 @@ export class PostgresCatalog {
        WHERE l.id=$1 AND l.owner_key=$2 AND r.id=$3 AND r.owner_key=$2 ON CONFLICT DO NOTHING`,
       [target, ownerKey, referenceId],
     );
+  }
+
+  async setReferenceLibraries(ownerKey: string, referenceId: string, libraryIds: string[]): Promise<string[]> {
+    await this.ensureSchema();
+    const unique = [...new Set(libraryIds.filter(Boolean))];
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const reference = await client.query('SELECT id FROM catalog_references WHERE id=$1 AND owner_key=$2', [referenceId, ownerKey]);
+      if (!reference.rows[0]) throw new Error('REFERENCE_NOT_FOUND');
+      if (unique.length) {
+        const valid = await client.query('SELECT id FROM catalog_libraries WHERE owner_key=$1 AND id=ANY($2::text[])', [ownerKey, unique]);
+        if (valid.rowCount !== unique.length) throw new Error('LIBRARY_NOT_FOUND');
+      }
+      await client.query('DELETE FROM catalog_library_items WHERE reference_id=$1', [referenceId]);
+      for (const libraryId of unique) {
+        await client.query('INSERT INTO catalog_library_items (library_id,reference_id) VALUES ($1,$2)', [libraryId, referenceId]);
+      }
+      await client.query('COMMIT');
+      return unique;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async importBibliography(ownerKey: string, libraryId: string, entries: CatalogBibliographyInput[]): Promise<CatalogReference[]> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    const importedIds: string[] = [];
+    try {
+      await client.query('BEGIN');
+      const library = await client.query('SELECT id FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [libraryId, ownerKey]);
+      if (!library.rows[0]) throw new Error('LIBRARY_NOT_FOUND');
+      for (const entry of entries.slice(0, 5000)) {
+        const result = await client.query(
+          `INSERT INTO catalog_references
+             (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,source,original_sha256)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::text[],$10,$11,$12::jsonb,$13)
+           ON CONFLICT (owner_key,original_sha256) DO UPDATE SET updated_at=now()
+           RETURNING id`,
+          [entry.id, ownerKey, entry.citeKey, entry.type, entry.title, JSON.stringify(entry.contributors),
+            JSON.stringify(entry.issued ?? null), JSON.stringify(entry.identifiers), entry.tags ?? [],
+            entry.abstract || null, entry.language || null, JSON.stringify(entry.source), entry.originalSha256],
+        );
+        const referenceId = result.rows[0].id;
+        importedIds.push(referenceId);
+        await client.query(
+          'INSERT INTO catalog_library_items (library_id,reference_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+          [libraryId, referenceId],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+    const results: CatalogReference[] = [];
+    for (const id of importedIds) {
+      const reference = await this.get(ownerKey, id);
+      if (reference) results.push(reference);
+    }
+    return results;
   }
 
   async updateMetadata(ownerKey: string, id: string, input: CatalogMetadataUpdate): Promise<CatalogReference | null> {
@@ -428,11 +669,18 @@ export class PostgresCatalog {
     );
   }
 
-  private async hydrate(row: any): Promise<CatalogReference> {
+  private async hydrate(row: any, viewerOwnerKey?: string): Promise<CatalogReference> {
     const [artifactRows, jobRows, libraryRows] = await Promise.all([
       this.pool.query('SELECT * FROM catalog_artifacts WHERE reference_id = $1 ORDER BY created_at', [row.id]),
       this.pool.query('SELECT * FROM catalog_jobs WHERE reference_id = $1 ORDER BY created_at', [row.id]),
-      this.pool.query('SELECT library_id FROM catalog_library_items WHERE reference_id = $1 ORDER BY added_at', [row.id]),
+      viewerOwnerKey ? this.pool.query(
+        `WITH RECURSIVE shared_libraries AS (
+           SELECT l.id FROM catalog_library_shares s JOIN catalog_libraries l ON l.id=s.library_id WHERE s.grantee_owner_key=$2
+           UNION SELECT child.id FROM catalog_libraries child JOIN shared_libraries parent ON child.parent_id=parent.id
+         ) SELECT li.library_id FROM catalog_library_items li JOIN catalog_libraries l ON l.id=li.library_id
+         WHERE li.reference_id=$1 AND (l.owner_key=$2 OR l.id IN (SELECT id FROM shared_libraries)) ORDER BY li.added_at`,
+        [row.id, viewerOwnerKey],
+      ) : this.pool.query('SELECT library_id FROM catalog_library_items WHERE reference_id = $1 ORDER BY added_at', [row.id]),
     ]);
     const artifacts = artifactRows.rows.map((artifact): CatalogArtifact => ({
       id: artifact.id,
