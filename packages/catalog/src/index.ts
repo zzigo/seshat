@@ -81,6 +81,20 @@ export interface CatalogMetadataUpdate {
   manualFields: string[];
 }
 
+export interface CitationSearchResult {
+  id: string;
+  citeKey: string;
+  type: string;
+  title: string;
+  contributors: unknown[];
+  issued?: Record<string, unknown>;
+  identifiers: Record<string, unknown>;
+  tags: string[];
+  language?: string;
+  libraryIds: string[];
+  updatedAt: string;
+}
+
 export function buildInitialJobs(_referenceId: string, id: () => string = () => crypto.randomUUID()): CatalogJob[] {
   const timestamp = new Date().toISOString();
   return (['extract', 'identify', 'summarize', 'relate'] as const).map((stage, index) => ({
@@ -230,6 +244,58 @@ export class PostgresCatalog {
       [ownerKey, Math.max(1, Math.min(200, limit))],
     );
     return Promise.all(result.rows.map((row) => this.hydrate(row)));
+  }
+
+  async searchCitations(
+    ownerKey: string,
+    query: string,
+    limit = 20,
+    libraryId?: string,
+  ): Promise<CitationSearchResult[]> {
+    await this.ensureSchema();
+    const normalizedQuery = query.trim();
+    const pattern = `%${normalizedQuery.replace(/[\\%_]/g, '\\$&')}%`;
+    const result = await this.pool.query(
+      `SELECT r.id, r.cite_key, r.type, r.title, r.contributors, r.issued,
+              r.identifiers, r.tags, r.language, r.updated_at,
+              COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
+       FROM catalog_references r
+       LEFT JOIN catalog_library_items li ON li.reference_id = r.id
+       WHERE r.owner_key = $1
+         AND ($4::text IS NULL OR EXISTS (
+           SELECT 1 FROM catalog_library_items scoped
+           WHERE scoped.reference_id = r.id AND scoped.library_id = $4
+         ))
+         AND ($2 = '' OR r.cite_key ILIKE $3 ESCAPE '\\'
+           OR r.title ILIKE $3 ESCAPE '\\'
+           OR r.contributors::text ILIKE $3 ESCAPE '\\'
+           OR array_to_string(r.tags, ' ') ILIKE $3 ESCAPE '\\')
+       GROUP BY r.id
+       ORDER BY
+         CASE
+           WHEN $2 = '' THEN 3
+           WHEN lower(r.cite_key) = lower($2) THEN 0
+           WHEN r.cite_key ILIKE ($2 || '%') THEN 1
+           WHEN r.title ILIKE ($2 || '%') THEN 2
+           ELSE 3
+         END,
+         r.updated_at DESC
+       LIMIT $5`,
+      [ownerKey, normalizedQuery, pattern, libraryId || null, Math.max(1, Math.min(50, limit))],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      citeKey: row.cite_key,
+      type: row.type,
+      title: row.title,
+      contributors: row.contributors ?? [],
+      issued: row.issued ?? undefined,
+      identifiers: row.identifiers ?? {},
+      tags: row.tags ?? [],
+      language: row.language ?? undefined,
+      libraryIds: row.library_ids ?? [],
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
   }
 
   async listLibraries(ownerKey: string): Promise<CatalogLibrary[]> {

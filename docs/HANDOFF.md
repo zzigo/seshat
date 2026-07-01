@@ -25,6 +25,7 @@ The product direction is a source-aware catalog that understands its documents b
 - Bibliographic identification that first inspects extracted content, uses local Ollama inference, validates through Google Books and falls back to Open Library.
 - Automatic title, author and year updates while preserving manually curated fields.
 - Immediate row deletion that cancels work, removes all known R2 objects and then deletes catalog rows, without a confirmation dialog.
+- A bearer-authenticated, owner-scoped citation search endpoint for trusted editors such as Musiki; browser clients must use their application's server-side proxy.
 - Production deployment behind Caddy with PM2 web/worker processes.
 
 ## Current user experience

@@ -34,6 +34,14 @@ Returns the application name, status, version and capability labels. This route 
 
 Auth.js/Auth Astro handler. It implements provider discovery, sign-in, callback, session, CSRF and sign-out endpoints. Production uses Authentik OIDC; Google can also be enabled when its credentials are configured. Application code should use the Auth.js client flow rather than call callback routes manually.
 
+## Trusted integrations
+
+### `GET /api/integrations/citations/search`
+
+Server-to-server citation search for consumers such as Musiki. It requires `Authorization: Bearer <SESHAT_INTEGRATION_TOKEN>` and an `X-Seshat-Owner` header containing the authenticated consumer user's email. Do not call this endpoint directly from browser JavaScript or expose its bearer token through a public environment variable.
+
+Query parameters are `q`, optional `libraryId`, and `limit` (1–50). An empty query returns recently updated references. Results contain the citekey, title, authors, year, identifiers, tags and library membership, but never artifact storage credentials.
+
 ## Document intake
 
 ### `POST /api/intake/documents`

@@ -30,6 +30,7 @@ This directory is the operational source of truth for developers and agents. Sta
 - Local Ollama inference for title, author and year, with Google Books and Open Library validation/fallback.
 - Manual metadata protected from later automatic overwrite.
 - Immediate deletion of a reference, its PostgreSQL rows and all known R2 objects.
+- Trusted, owner-scoped citation search for editors such as Musiki.
 
 ## Important boundaries
 

@@ -24,6 +24,7 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `GOOGLE_BOOKS_API_KEY` | Recommended | fallback to `GOOGLE_API_KEY` | Server-side Google Books queries |
 | `GOOGLE_GENERATIVE_LANGUAGE_API_KEY` | Currently unused by worker | none | Reserved for Generative Language integration |
 | `GOOGLE_API_KEY` | Legacy fallback | none | Backward-compatible Google Books key fallback |
+| `SESHAT_INTEGRATION_TOKEN` | Required for external consumers | none | Long random bearer secret for trusted server-to-server citation search; never expose it to browser code |
 | `SITE_URL` | Optional | fallback to `AUTH_URL`, then localhost | Alternative external site/origin setting |
 | `HOST` | Optional | framework default; PM2 sets `127.0.0.1` | Astro listen address |
 | `PORT` | Optional | `4331` | Astro listen port |
