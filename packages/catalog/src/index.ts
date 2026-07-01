@@ -658,6 +658,29 @@ export class PostgresCatalog {
     return result.rowCount === 1;
   }
 
+  async queueEnrichment(ownerKey: string, id: string, stage: EnrichmentStage): Promise<boolean> {
+    await this.ensureSchema();
+    const downstream: EnrichmentStage[] = stage === 'identify' ? ['summarize', 'relate']
+      : stage === 'summarize' ? ['relate'] : [];
+    const result = await this.pool.query(
+      `UPDATE catalog_jobs j
+       SET status = CASE
+            WHEN j.stage=$3 THEN 'queued'
+            WHEN j.stage=ANY($4::text[]) THEN 'blocked'
+            ELSE j.status
+          END,
+          attempts = CASE WHEN j.stage=$3 THEN 0 ELSE j.attempts END,
+          error = CASE WHEN j.stage=$3 OR j.stage=ANY($4::text[]) THEN NULL ELSE j.error END,
+          payload = CASE WHEN j.stage=$3 THEN '{}'::jsonb ELSE j.payload END,
+          updated_at = now()
+       FROM catalog_references r
+       WHERE j.reference_id=r.id AND r.owner_key=$1 AND r.id=$2
+         AND (j.stage=$3 OR j.stage=ANY($4::text[]))`,
+      [ownerKey, id, stage, downstream],
+    );
+    return (result.rowCount || 0) > 0;
+  }
+
   async catalogDocument(input: CatalogDocumentInput): Promise<CatalogReference> {
     await this.ensureSchema();
     const client = await this.pool.connect();

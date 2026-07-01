@@ -179,25 +179,55 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     }, 500));
   };
 
+  const selectedEditableIds = () => [...selectedReferences].filter((id) => references.get(id)?.access !== 'viewer');
+  const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'summarize') => {
+    const label = action === 'reprocess-metadata' ? 'metadata re-processing' : 'AI summary';
+    if (!ids.length) { setSaveState('no editable references selected', 'error'); return; }
+    setSaveState(`queueing ${label}…`, 'saving');
+    const response = await fetch('/api/library/actions', {
+      method: 'POST',
+      headers: {'content-type':'application/json'},
+      body: JSON.stringify({ ids, action }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setSaveState(result.error || `Could not queue ${label}`, 'error'); return; }
+    setSaveState(`${result.queued} ${result.queued === 1 ? 'item' : 'items'} queued for ${label}`);
+    for (const id of ids) {
+      updateActivity(`${action}-${id}`, { state: 'working', referenceId: id,
+        message: `${references.get(id)?.title || id} · ${action === 'reprocess-metadata' ? 'Identifying title, author, year and publisher' : 'Preparing AI summary'}` });
+      const reference = references.get(id);
+      void followPipeline(id, `${action}-${id}`, reference?.filename || reference?.title || id).catch((error) => {
+        updateActivity(`${action}-${id}`, { state: 'error', message: `${reference?.title || id} · ${error instanceof Error ? error.message : 'status unavailable'}` });
+      });
+    }
+  };
+  const deleteReferences = async (ids: string[]) => {
+    for (const id of ids) await deleteReference(id);
+    selectedReferences.clear();
+    renderTree(search.value);
+  };
+  const referenceMenuItems = (ids: string[]) => [
+    { label: `Re-process metadata${ids.length > 1 ? ` (${ids.length})` : ''}`, action: () => runReferenceAction(ids, 'reprocess-metadata') },
+    { label: `AI summarize${ids.length > 1 ? ` (${ids.length})` : ''}`, action: () => runReferenceAction(ids, 'summarize') },
+    { label: `Delete selected${ids.length > 1 ? ` (${ids.length})` : ''}`, danger: true, action: () => deleteReferences(ids) },
+  ];
+
   const mountCatalog = (element: HTMLElement) => {
     if (catalogTable || !element.isConnected) return;
     element.classList.add('ht-theme-main');
+    element.addEventListener('contextmenu', (event) => {
+      const ids = selectedEditableIds();
+      if (!ids.length) return;
+      openContextMenu(event, referenceMenuItems(ids));
+    });
     catalogTable = new Handsontable(element, {
       data: filteredRows(),
       columns: [
-        { data: '__delete', title: '', readOnly: true, width: 34, renderer: (instance, td, row) => {
-          Handsontable.dom.empty(td);
-          const reference = instance.getSourceDataAtRow(row) as ReferenceRow | undefined;
-          if (reference?.access === 'viewer') { td.textContent = '·'; td.title = 'Shared reference (read only)'; return; }
-          const button = document.createElement('button'); button.type = 'button'; button.className = 'catalog-delete';
-          button.textContent = '×'; button.title = 'Delete reference and stored files'; button.setAttribute('aria-label', 'Delete reference and stored files');
-          td.appendChild(button);
-        } },
         { data: 'title', title: 'Title', width: 300 },
         { data: 'authors', title: 'Authors', width: 220 },
         { data: 'year', title: 'Year', type: 'numeric', width: 72 },
         { data: 'type', title: 'Type', type: 'dropdown', source: ['document','article','article-journal','book','chapter','paper-conference','report','thesis'], width: 130 },
-        { data: 'publisher', title: 'Publisher / institution', width: 210 },
+        { data: 'publisher', title: 'Publisher', width: 210 },
         { data: 'publisherPlace', title: 'Place', width: 140 },
         { data: 'url', title: 'URL', width: 260 },
         { data: 'isbn', title: 'ISBN', width: 150 },
@@ -208,14 +238,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         { data: 'format', title: 'File', readOnly: true, width: 65 },
         { data: 'status', title: 'State', readOnly: true, width: 92 },
       ],
-      rowHeaders: true,
+      rowHeaders: false,
       rowHeights: 28,
       autoRowSize: false,
       columnHeaderHeight: 30,
       width: '100%',
       height: '100%',
       stretchH: 'none',
-      fixedColumnsStart: 3,
+      fixedColumnsStart: 2,
       filters: true,
       dropdownMenu: true,
       multiColumnSorting: true,
@@ -223,7 +253,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       manualColumnResize: true,
       copyPaste: true,
       fillHandle: true,
-      contextMenu: true,
+      contextMenu: false,
       outsideClickDeselects: false,
       cells: (row) => filteredRows()[row]?.access === 'viewer' ? { readOnly: true } : {},
       licenseKey: 'non-commercial-and-evaluation',
@@ -242,8 +272,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const physicalRow = catalogTable?.toPhysicalRow(coords.row) ?? coords.row;
         const row = catalogTable?.getSourceDataAtRow(physicalRow) as ReferenceRow | undefined;
         if (!row) return;
-        const property = catalogTable?.colToProp(coords.col);
-        if (property === '__delete') { event.preventDefault(); void deleteReference(row.id); return; }
+        if (event.button === 2 && !selectedReferences.has(row.id)) {
+          selectedReferences.clear();
+          selectedReferences.add(row.id);
+          catalogTable?.selectCell(coords.row, Math.max(0, coords.col));
+          renderTree(search.value);
+        }
         if (event.detail === 2) controller.openDocument(row.id, event.altKey);
       },
       afterSelectionEnd: (row, _column, row2) => {
@@ -439,7 +473,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
   };
 
-  const deleteReference = async (referenceId: string) => {
+  async function deleteReference(referenceId: string) {
     const reference = references.get(referenceId);
     if (!reference) return;
     const timer = saveTimers.get(referenceId);
@@ -455,11 +489,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       api.panels.filter((item) => item.id.includes(referenceId)).forEach((item) => item.api.close());
       references.delete(referenceId);
       committed.delete(referenceId);
+      selectedReferences.delete(referenceId);
       const index = payload.references.findIndex((item) => item.id === referenceId);
       if (index >= 0) payload.references.splice(index, 1);
       if (activeReference === referenceId) activeReference = null;
       refreshTable();
-      renderTree(search.value);
+      renderTree(search?.value || '');
       updateActivity(activityId, { state: 'complete', message: `${reference.title} · deleted from catalog and R2` });
       setSaveState('deleted');
     } catch (error) {
@@ -467,7 +502,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       updateActivity(activityId, { state: 'error', message: `${reference.title} · ${message}` });
       setSaveState(message, 'error');
     }
-  };
+  }
 
   const resize = new ResizeObserver(([entry]) => api.layout(entry.contentRect.width, entry.contentRect.height));
   resize.observe(host);
@@ -693,6 +728,27 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           setSaveState(`${selectedReferences.size} selected`);
         });
         item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
+        item.addEventListener('contextmenu', (event) => {
+          if (!selectedReferences.has(reference.id)) {
+            selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
+          }
+          openContextMenu(event, referenceMenuItems(selectedEditableIds()));
+        });
+        let referenceLongPress: number | null = null;
+        const clearReferenceLongPress = () => { if (referenceLongPress) window.clearTimeout(referenceLongPress); referenceLongPress = null; };
+        item.addEventListener('pointerdown', (event) => {
+          if (event.pointerType !== 'touch') return;
+          clearReferenceLongPress();
+          referenceLongPress = window.setTimeout(() => {
+            if (!selectedReferences.has(reference.id)) {
+              selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
+            }
+            openContextMenu(event, referenceMenuItems(selectedEditableIds()));
+          }, 560);
+        });
+        item.addEventListener('pointermove', clearReferenceLongPress);
+        item.addEventListener('pointerup', clearReferenceLongPress);
+        item.addEventListener('pointercancel', clearReferenceLongPress);
         item.addEventListener('dragstart', (event) => {
           if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value); }
           const ids = [...selectedReferences].filter((id) => references.get(id)?.access !== 'viewer');
@@ -736,7 +792,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         return;
       }
       if (status.ready) {
-        updateActivity(activityId, { state: 'complete', message: `${status.reference.title} · text and structure ready`, referenceId, mapReady: status.reference.hasStructure });
+        updateActivity(activityId, { state: 'complete', message: `${status.reference.title} · metadata and summary ready`, referenceId, mapReady: status.reference.hasStructure });
         return;
       }
       const active = status.pipeline.find((job:any) => job.status === 'running' || job.status === 'queued');

@@ -58,6 +58,27 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
       url = parsed.toString();
     } catch { return Response.json({ error: 'URL must be a valid http(s) address.' }, { status: 400 }); }
   }
+  const currentAuthors = (current.contributors || []).map((contributor:any) => contributor.literal
+    || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('\n');
+  const currentYear = current.issued?.year ? String(current.issued.year) : '';
+  const currentIsbns = ((current.identifiers?.isbn as string[] | undefined) || []).join('\n');
+  const existingManual = new Set<string>((current.source?.curation as any)?.manualFields || []);
+  const manualFields = new Set<string>(existingManual);
+  const markChanged = (field: string, before: string, after: string) => {
+    if (before.trim() !== after.trim()) manualFields.add(field);
+  };
+  markChanged('title', current.title || '', title);
+  markChanged('citeKey', current.citeKey || '', citeKey);
+  markChanged('type', current.type || '', type);
+  markChanged('contributors', currentAuthors, authors.join('\n'));
+  markChanged('issued', currentYear, year === null ? '' : String(year));
+  markChanged('identifiers', currentIsbns, isbns.join('\n'));
+  markChanged('tags', (current.tags || []).join('\n'), tags.join('\n'));
+  markChanged('abstract', current.abstract || '', abstract);
+  markChanged('language', current.language || '', language);
+  markChanged('publisher', current.publisher || '', publisher);
+  markChanged('publisherPlace', current.publisherPlace || '', publisherPlace);
+  markChanged('url', current.url || '', url || '');
   const reference = await catalog.updateMetadata(ownerKey, current.id, {
     title,
     citeKey,
@@ -71,7 +92,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     publisher: publisher || undefined,
     publisherPlace: publisherPlace || undefined,
     url,
-    manualFields: ['title', 'citeKey', 'type', 'contributors', 'issued', 'identifiers', 'tags', 'abstract', 'language', 'publisher', 'publisherPlace', 'url'],
+    manualFields: [...manualFields],
   });
   return Response.json({ ok: true, reference });
 };

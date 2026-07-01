@@ -63,6 +63,11 @@ const labels: Record<string, string> = {
           <label><span>Language</span><input name="language" value={reference.language || ''} maxlength="32" /></label>
           <label><span>Tags</span><input name="tags" value={reference.tags.join(', ')} /></label>
         </div>
+        <div class="metadata-pair">
+          <label><span>Publisher</span><input name="publisher" value={reference.publisher || ''} maxlength="500" /></label>
+          <label><span>Place</span><input name="publisherPlace" value={reference.publisherPlace || ''} maxlength="500" /></label>
+        </div>
+        <label><span>URL</span><input name="url" value={reference.url || ''} maxlength="2000" /></label>
         <label><span>Abstract</span><textarea name="abstract" rows="5">{reference.abstract || ''}</textarea></label>
         <div class="metadata-actions">
           <button class="button primary" type="submit">Save record</button>

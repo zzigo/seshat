@@ -9,6 +9,7 @@ export const GET: APIRoute = async ({ locals, params }) => {
   const active = reference.jobs.find((job) => job.status === 'running' || job.status === 'queued');
   const failed = reference.jobs.find((job) => job.status === 'failed');
   const identify = reference.jobs.find((job) => job.stage === 'identify');
+  const summarize = reference.jobs.find((job) => job.stage === 'summarize');
   return Response.json({
     reference: {
       id: reference.id,
@@ -33,7 +34,7 @@ export const GET: APIRoute = async ({ locals, params }) => {
       hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
     },
     pipeline: reference.jobs,
-    ready: identify?.status === 'complete',
+    ready: identify?.status === 'complete' && summarize?.status === 'complete',
     failed: failed?.error || null,
   });
 };
