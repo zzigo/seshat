@@ -408,6 +408,25 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(api.toJSON()));
   });
 
+  let contextMenu: HTMLElement | null = null;
+  const closeContextMenu = () => { contextMenu?.remove(); contextMenu = null; };
+  const openContextMenu = (event: MouseEvent, items: Array<{ label: string; danger?: boolean; disabled?: boolean; action: () => void | Promise<void> }>) => {
+    event.preventDefault(); event.stopPropagation(); closeContextMenu();
+    const menu = document.createElement('div'); menu.className = 'seshat-context-menu'; menu.setAttribute('role', 'menu');
+    items.forEach((item) => {
+      const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.textContent = item.label;
+      button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
+      button.addEventListener('click', () => { closeContextMenu(); void item.action(); }); menu.appendChild(button);
+    });
+    document.body.appendChild(menu); contextMenu = menu;
+    const bounds = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
+    menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - bounds.height - 6))}px`;
+  };
+  document.addEventListener('pointerdown', (event) => { if (contextMenu && !contextMenu.contains(event.target as Node)) closeContextMenu(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeContextMenu(); });
+  window.addEventListener('blur', closeContextMenu);
+
   const renderTree = (query = '') => {
     tree.replaceChildren();
     const makeButton = (label: string, count: number, libraryId: string | null) => {
@@ -444,45 +463,74 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
     tree.appendChild(allButton);
     const children = (parentId?: string) => payload.libraries.filter((library) => (library.parentId || undefined) === parentId);
+    const createFolder = async (library: LibraryNode) => {
+      const name = window.prompt(`New folder inside “${library.name}”`)?.trim(); if (!name) return;
+      const response = await fetch('/api/libraries', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ name, parentId: library.id }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Could not create folder', 'error'); return; }
+      payload.libraries.push(result.library); renderTree(search.value); setSaveState('folder created');
+    };
+    const renameLibrary = async (library: LibraryNode) => {
+      const kind = library.parentId ? 'folder' : 'library';
+      const next = window.prompt(`Rename ${kind}`, library.name)?.trim(); if (!next || next === library.name) return;
+      const response = await fetch(`/api/libraries/${library.id}`, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ name: next }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Rename failed', 'error'); return; }
+      library.name = result.library.name; renderTree(search.value); setSaveState(`${kind} renamed`);
+    };
+    const shareLibrary = async (library: LibraryNode) => {
+      const email = window.prompt(`Share “${library.name}” with which Musiki user?`, '')?.trim().toLowerCase(); if (!email) return;
+      const response = await fetch(`/api/libraries/${library.id}/shares`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Share failed', 'error'); return; }
+      setSaveState(`shared with ${email}`);
+    };
+    const manageSharing = async (library: LibraryNode) => {
+      const response = await fetch(`/api/libraries/${library.id}/shares`); const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Could not read sharing', 'error'); return; }
+      const emails = (result.shares || []).map((share:any) => share.email);
+      if (!emails.length) { window.alert('This library is not shared yet.'); return; }
+      const email = window.prompt(`Shared with:\n${emails.join('\n')}\n\nEnter an email to revoke access, or Cancel to keep all:`)?.trim().toLowerCase();
+      if (!email) return;
+      const revoke = await fetch(`/api/libraries/${library.id}/shares?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+      const revoked = await revoke.json().catch(() => ({}));
+      if (!revoke.ok) { setSaveState(revoked.error || 'Could not revoke access', 'error'); return; }
+      setSaveState(`access revoked for ${email}`);
+    };
+    const deleteLibrary = async (library: LibraryNode) => {
+      const kind = library.parentId ? 'folder' : 'library';
+      if (!window.confirm(`Delete ${kind} “${library.name}” and its subfolders? References will remain in the catalog.`)) return;
+      const response = await fetch(`/api/libraries/${library.id}`, { method: 'DELETE' }); const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Delete failed', 'error'); return; }
+      const removeIds = new Set<string>([library.id]); let changed = true;
+      while (changed) { changed = false; payload.libraries.forEach((item) => { if (item.parentId && removeIds.has(item.parentId) && !removeIds.has(item.id)) { removeIds.add(item.id); changed = true; } }); }
+      payload.libraries = payload.libraries.filter((item) => !removeIds.has(item.id)); payload.references.forEach((item) => { item.libraryIds = item.libraryIds.filter((id) => !removeIds.has(id)); });
+      if (activeLibrary && removeIds.has(activeLibrary)) activeLibrary = null; renderTree(search.value); refreshTable(); setSaveState(`${kind} deleted`);
+    };
     const appendLibrary = (library: LibraryNode, container: HTMLElement) => {
       const details = document.createElement('details'); details.open = true; details.className = 'tree-branch';
       const summary = document.createElement('summary'); summary.draggable = !library.id.startsWith('inbox:');
       const own = matched.filter((reference) => reference.libraryIds.includes(library.id));
       const libraryRow = document.createElement('div'); libraryRow.className = 'tree-library-row';
       libraryRow.appendChild(makeButton(library.name, own.length, library.id));
-      if (!library.id.startsWith('inbox:') && library.access !== 'viewer') {
+      if (library.access !== 'viewer') {
         const actions = document.createElement('span'); actions.className = 'tree-library-actions';
-        const share = document.createElement('button'); share.type = 'button'; share.textContent = '↗'; share.title = 'Share library with a Musiki user';
-        share.addEventListener('click', async (event) => {
-          event.preventDefault(); event.stopPropagation();
-          const email = window.prompt(`Share “${library.name}” with which Musiki user?`, '')?.trim().toLowerCase();
-          if (!email) return;
-          const response = await fetch(`/api/libraries/${library.id}/shares`, {
-            method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) { setSaveState(result.error || 'Share failed', 'error'); return; }
-          setSaveState(`shared with ${email}`);
-        });
-        const rename = document.createElement('button'); rename.type = 'button'; rename.textContent = '✎'; rename.title = 'Rename library';
-        rename.addEventListener('click', async (event) => {
-          event.preventDefault(); event.stopPropagation(); const next = window.prompt('Rename library', library.name)?.trim(); if (!next || next === library.name) return;
-          const response = await fetch(`/api/libraries/${library.id}`, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ name: next }) });
-          const result = await response.json().catch(() => ({})); if (!response.ok) { setSaveState(result.error || 'Rename failed', 'error'); return; }
-          library.name = result.library.name; renderTree(search.value); setSaveState('library renamed');
-        });
-        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.title = 'Delete library or folder';
-        remove.addEventListener('click', async (event) => {
-          event.preventDefault(); event.stopPropagation();
-          if (!window.confirm(`Delete “${library.name}” and its subfolders? References will remain in the catalog.`)) return;
-          const response = await fetch(`/api/libraries/${library.id}`, { method: 'DELETE' }); const result = await response.json().catch(() => ({}));
-          if (!response.ok) { setSaveState(result.error || 'Delete failed', 'error'); return; }
-          const removeIds = new Set<string>([library.id]); let changed = true;
-          while (changed) { changed = false; payload.libraries.forEach((item) => { if (item.parentId && removeIds.has(item.parentId) && !removeIds.has(item.id)) { removeIds.add(item.id); changed = true; } }); }
-          payload.libraries = payload.libraries.filter((item) => !removeIds.has(item.id)); payload.references.forEach((item) => { item.libraryIds = item.libraryIds.filter((id) => !removeIds.has(id)); });
-          if (activeLibrary && removeIds.has(activeLibrary)) activeLibrary = null; renderTree(search.value); refreshTable(); setSaveState('library deleted');
-        });
-        actions.append(share, rename, remove); libraryRow.appendChild(actions);
+        const more = document.createElement('button'); more.type = 'button'; more.textContent = '⋯'; more.title = 'Library and folder actions'; more.setAttribute('aria-label', `Actions for ${library.name}`);
+        const menuItems = () => {
+          const items: Array<{ label: string; danger?: boolean; action: () => void | Promise<void> }> = [
+            { label: 'New folder inside', action: () => createFolder(library) },
+          ];
+          if (!library.id.startsWith('inbox:')) items.push(
+            { label: `Rename ${library.parentId ? 'folder' : 'library'}…`, action: () => renameLibrary(library) },
+            { label: 'Share with Musiki user…', action: () => shareLibrary(library) },
+            { label: 'Manage sharing…', action: () => manageSharing(library) },
+            { label: `Delete ${library.parentId ? 'folder' : 'library'}…`, danger: true, action: () => deleteLibrary(library) },
+          );
+          return items;
+        };
+        more.addEventListener('click', (event) => openContextMenu(event, menuItems()));
+        summary.addEventListener('contextmenu', (event) => openContextMenu(event, menuItems()));
+        actions.append(more); libraryRow.appendChild(actions);
       } else if (library.access === 'viewer') {
         const shared = document.createElement('span'); shared.className = 'tree-shared';
         shared.textContent = 'shared'; shared.title = library.sharedByEmail ? `Shared by ${library.sharedByEmail}` : 'Shared library';
