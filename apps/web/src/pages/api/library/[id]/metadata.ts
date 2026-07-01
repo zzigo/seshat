@@ -47,6 +47,17 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const tags = [...new Set(text(form.get('tags')).split(/[,;\n]+/).map((tag) => tag.trim()).filter(Boolean))].slice(0, 100);
   const language = text(form.get('language')).slice(0, 32);
   const abstract = text(form.get('abstract')).slice(0, 20_000);
+  const publisher = text(form.get('publisher')).slice(0, 500);
+  const publisherPlace = text(form.get('publisherPlace')).slice(0, 500);
+  const rawUrl = text(form.get('url')).slice(0, 2_000);
+  let url: string | undefined;
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+      url = parsed.toString();
+    } catch { return Response.json({ error: 'URL must be a valid http(s) address.' }, { status: 400 }); }
+  }
   const reference = await catalog.updateMetadata(ownerKey, current.id, {
     title,
     citeKey,
@@ -57,7 +68,10 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     tags,
     abstract: abstract || undefined,
     language: language || undefined,
-    manualFields: ['title', 'citeKey', 'type', 'contributors', 'issued', 'identifiers', 'tags', 'abstract', 'language'],
+    publisher: publisher || undefined,
+    publisherPlace: publisherPlace || undefined,
+    url,
+    manualFields: ['title', 'citeKey', 'type', 'contributors', 'issued', 'identifiers', 'tags', 'abstract', 'language', 'publisher', 'publisherPlace', 'url'],
   });
   return Response.json({ ok: true, reference });
 };

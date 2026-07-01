@@ -7,6 +7,7 @@ registerAllModules();
 type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; authors: string; year: number | string;
   isbn: string; language: string; tags: string; abstract: string; format: string; filename: string;
+  publisher: string; publisherPlace: string; url: string;
   libraryIds: string[]; status: string; hasStructure: boolean; hasText: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
@@ -29,6 +30,9 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   language: reference.language || '',
   tags: (reference.tags || []).join(', '),
   abstract: reference.abstract || '',
+  publisher: reference.publisher || '',
+  publisherPlace: reference.publisherPlace || '',
+  url: reference.url || '',
   format: String(reference.source?.originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
   filename: String(reference.source?.originalFilename || reference.title),
   libraryIds: reference.libraryIds || [],
@@ -58,6 +62,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let catalogTable: Handsontable | null = null;
   let activeLibrary: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
+  let previewRender: ((referenceId: string) => void) | null = null;
+  const selectedReferences = new Set<string>();
   const committed = new Map(payload.references.map((reference) => [reference.id, { ...reference }]));
   const saveTimers = new Map<string, number>();
   const activities: Activity[] = [];
@@ -70,6 +76,44 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     saveState.textContent = state;
     saveState.dataset.tone = tone;
   };
+
+  const dialogShell = (title: string) => {
+    const dialog = document.createElement('dialog'); dialog.className = 'seshat-dialog';
+    const header = document.createElement('header');
+    const heading = document.createElement('h2'); heading.textContent = title;
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'dialog-close'; close.textContent = '×'; close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', () => dialog.close()); header.append(heading, close); dialog.appendChild(header);
+    dialog.addEventListener('close', () => dialog.remove()); root.appendChild(dialog); dialog.showModal();
+    return dialog;
+  };
+
+  const requestText = (title: string, labelText: string, value = '', submitLabel = 'Save'): Promise<string | null> => new Promise((resolve) => {
+    const dialog = dialogShell(title); const form = document.createElement('form'); form.className = 'dialog-form';
+    const label = document.createElement('label'); label.textContent = labelText;
+    const input = document.createElement('input'); input.type = 'text'; input.value = value; input.autocomplete = 'off'; label.appendChild(input);
+    const actions = document.createElement('footer');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+    const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'primary'; submit.textContent = submitLabel;
+    actions.append(cancel, submit); form.append(label, actions); dialog.appendChild(form);
+    let settled = false; const finish = (result: string | null) => { if (settled) return; settled = true; resolve(result); dialog.close(); };
+    cancel.addEventListener('click', () => finish(null)); dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(null); });
+    dialog.addEventListener('close', () => { if (!settled) { settled = true; resolve(null); } });
+    form.addEventListener('submit', (event) => { event.preventDefault(); const result = input.value.trim(); if (result) finish(result); else input.focus(); });
+    window.requestAnimationFrame(() => { input.focus(); input.select(); });
+  });
+
+  const confirmAction = (title: string, message: string, confirmLabel: string): Promise<boolean> => new Promise((resolve) => {
+    const dialog = dialogShell(title); const body = document.createElement('div'); body.className = 'dialog-confirm';
+    const copy = document.createElement('p'); copy.textContent = message;
+    const actions = document.createElement('footer');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+    const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'danger'; confirm.textContent = confirmLabel;
+    actions.append(cancel, confirm); body.append(copy, actions); dialog.appendChild(body);
+    let settled = false; const finish = (result: boolean) => { if (settled) return; settled = true; resolve(result); dialog.close(); };
+    cancel.addEventListener('click', () => finish(false)); confirm.addEventListener('click', () => finish(true));
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(false); });
+    dialog.addEventListener('close', () => { if (!settled) { settled = true; resolve(false); } });
+  });
 
   const renderActivities = () => {
     const active = activities.filter((activity) => activity.state === 'working');
@@ -109,6 +153,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     form.set('language', row.language);
     form.set('tags', row.tags);
     form.set('abstract', row.abstract);
+    form.set('publisher', row.publisher);
+    form.set('publisherPlace', row.publisherPlace);
+    form.set('url', row.url);
     const response = await fetch(`/api/library/${row.id}/metadata`, { method: 'POST', body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Save failed');
@@ -150,6 +197,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         { data: 'authors', title: 'Authors', width: 220 },
         { data: 'year', title: 'Year', type: 'numeric', width: 72 },
         { data: 'type', title: 'Type', type: 'dropdown', source: ['document','article','article-journal','book','chapter','paper-conference','report','thesis'], width: 130 },
+        { data: 'publisher', title: 'Publisher / institution', width: 210 },
+        { data: 'publisherPlace', title: 'Place', width: 140 },
+        { data: 'url', title: 'URL', width: 260 },
         { data: 'isbn', title: 'ISBN', width: 150 },
         { data: 'language', title: 'Lang', width: 70 },
         { data: 'tags', title: 'Tags', width: 190 },
@@ -194,7 +244,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if (!row) return;
         const property = catalogTable?.colToProp(coords.col);
         if (property === '__delete') { event.preventDefault(); void deleteReference(row.id); return; }
-        if (event.detail === 2) controller.openDocument(row.id);
+        if (event.detail === 2) controller.openDocument(row.id, event.altKey);
+      },
+      afterSelectionEnd: (row, _column, row2) => {
+        selectedReferences.clear();
+        for (let visual = Math.min(row, row2); visual <= Math.max(row, row2); visual += 1) {
+          const physical = catalogTable?.toPhysicalRow(visual) ?? visual;
+          const selected = catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined;
+          if (selected?.id) selectedReferences.add(selected.id);
+        }
+        renderTree(search.value); setSaveState(`${selectedReferences.size} selected`);
       },
     });
   };
@@ -225,20 +284,26 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     return toolbar;
   };
 
+  const renderDocument = (element: HTMLElement, referenceId: string) => {
+    element.replaceChildren();
+    const reference = references.get(referenceId);
+    if (!reference) { element.textContent = 'Reference not found.'; return; }
+    activeReference = referenceId;
+    element.appendChild(podToolbar(reference));
+    const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
+    if (reference.format === 'pdf') {
+      const frame = document.createElement('iframe'); frame.src = `/api/library/${reference.id}/original`; frame.title = reference.title; body.appendChild(frame);
+    } else void mountText(body, reference.id, 'markdown');
+  };
+
   const documentRenderer = (referenceId: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() {
-      const reference = references.get(referenceId);
-      if (!reference) { element.textContent = 'Reference not found.'; return; }
-      activeReference = referenceId;
-      element.appendChild(podToolbar(reference));
-      const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
-      if (reference.format === 'pdf') {
-        const frame = document.createElement('iframe'); frame.src = `/api/library/${reference.id}/original`; frame.title = reference.title; body.appendChild(frame);
-      } else {
-        void mountText(body, reference.id, 'markdown');
-      }
-    } };
+    return { element, init() { renderDocument(element, referenceId); } };
+  };
+
+  const previewRenderer = (): IContentRenderer => {
+    const element = panel('document-pod');
+    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; } };
   };
 
   const mountText = async (element: HTMLElement, referenceId: string, kind: 'markdown' | 'structure') => {
@@ -340,6 +405,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           catalogTable = null;
         } };
       }
+      if (name === 'document-preview') return previewRenderer();
       if (name.startsWith('document:')) return documentRenderer(name.slice('document:'.length));
       if (name.startsWith('text:')) return derivativeRenderer(name.slice('text:'.length), 'text');
       if (name.startsWith('structure:')) return derivativeRenderer(name.slice('structure:'.length), 'structure');
@@ -361,7 +427,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const controller = {
     openCatalog() { addPanel('catalog', 'catalog', 'Catalog', 'within'); },
-    openDocument(referenceId: string) { activeReference = referenceId; const ref = references.get(referenceId); if (ref) addPanel(`document-${referenceId}`, `document:${referenceId}`, ref.title, 'right'); },
+    openDocument(referenceId: string, split = false) {
+      activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return;
+      if (split) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
+      const existing = api.getPanel('document-preview');
+      if (existing) { previewRender?.(referenceId); existing.api.setTitle(ref.title); existing.api.setActive(); }
+      else addPanel('document-preview', 'document-preview', ref.title, 'right');
+    },
     openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
     openTool(kind: ToolKind, referenceId = activeReference || undefined) { const suffix = referenceId || 'global'; addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1), 'right'); },
     openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
@@ -414,11 +486,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     event.preventDefault(); event.stopPropagation(); closeContextMenu();
     const menu = document.createElement('div'); menu.className = 'seshat-context-menu'; menu.setAttribute('role', 'menu');
     items.forEach((item) => {
-      const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem'; button.textContent = item.label;
+      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem'); button.textContent = item.label;
       button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
       button.addEventListener('click', () => { closeContextMenu(); void item.action(); }); menu.appendChild(button);
     });
-    document.body.appendChild(menu); contextMenu = menu;
+    root.appendChild(menu); contextMenu = menu;
     const bounds = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
     menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - bounds.height - 6))}px`;
@@ -443,6 +515,29 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (!response.ok) throw new Error(result.error || 'Could not move reference.');
       reference.libraryIds = result.libraryIds; renderTree(search.value); refreshTable();
     };
+    const dragReferenceIds = (event: DragEvent) => {
+      const bundled = event.dataTransfer?.getData('application/x-seshat-references');
+      if (bundled) {
+        try {
+          const parsed = JSON.parse(bundled);
+          if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === 'string');
+        } catch {}
+      }
+      const single = event.dataTransfer?.getData('application/x-seshat-reference');
+      return single ? [single] : [];
+    };
+    const moveReferences = async (ids: string[], targetLibraryId: string | null, add = false) => {
+      const unique = [...new Set(ids)]
+        .map((id) => references.get(id))
+        .filter((reference): reference is ReferenceRow => reference !== undefined && reference.access !== 'viewer');
+      for (const reference of unique) {
+        const next = targetLibraryId
+          ? (add ? [...new Set([...reference.libraryIds, targetLibraryId])] : [targetLibraryId])
+          : [];
+        await moveReference(reference, next);
+      }
+      setSaveState(unique.length === 1 ? (targetLibraryId ? 'reference moved' : 'moved outside libraries') : `${unique.length} references moved`);
+    };
     const moveLibrary = async (library: LibraryNode, parentId: string | null) => {
       const response = await fetch(`/api/libraries/${library.id}`, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ parentId }) });
       const result = await response.json().catch(() => ({}));
@@ -454,17 +549,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     allButton.addEventListener('dragleave', () => allButton.classList.remove('drop-target'));
     allButton.addEventListener('drop', async (event) => {
       event.preventDefault(); allButton.classList.remove('drop-target');
-      const reference = references.get(event.dataTransfer?.getData('application/x-seshat-reference') || '');
+      const referenceIds = dragReferenceIds(event);
       const library = payload.libraries.find((item) => item.id === event.dataTransfer?.getData('application/x-seshat-library'));
       try {
-        if (reference) { await moveReference(reference, []); setSaveState('moved outside libraries'); }
+        if (referenceIds.length) await moveReferences(referenceIds, null);
         else if (library) { await moveLibrary(library, null); setSaveState('library moved to root'); }
       } catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
     });
     tree.appendChild(allButton);
     const children = (parentId?: string) => payload.libraries.filter((library) => (library.parentId || undefined) === parentId);
     const createFolder = async (library: LibraryNode) => {
-      const name = window.prompt(`New folder inside “${library.name}”`)?.trim(); if (!name) return;
+      const name = await requestText('Create folder', `Name inside “${library.name}”`, '', 'Create'); if (!name) return;
       const response = await fetch('/api/libraries', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ name, parentId: library.id }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Could not create folder', 'error'); return; }
@@ -472,14 +567,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     const renameLibrary = async (library: LibraryNode) => {
       const kind = library.parentId ? 'folder' : 'library';
-      const next = window.prompt(`Rename ${kind}`, library.name)?.trim(); if (!next || next === library.name) return;
+      const next = await requestText(`Rename ${kind}`, 'Name', library.name, 'Rename'); if (!next || next === library.name) return;
       const response = await fetch(`/api/libraries/${library.id}`, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ name: next }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Rename failed', 'error'); return; }
       library.name = result.library.name; renderTree(search.value); setSaveState(`${kind} renamed`);
     };
     const shareLibrary = async (library: LibraryNode) => {
-      const email = window.prompt(`Share “${library.name}” with which Musiki user?`, '')?.trim().toLowerCase(); if (!email) return;
+      const email = (await requestText('Share library', `Musiki user email for “${library.name}”`, '', 'Share'))?.toLowerCase(); if (!email) return;
       const response = await fetch(`/api/libraries/${library.id}/shares`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Share failed', 'error'); return; }
@@ -488,18 +583,28 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const manageSharing = async (library: LibraryNode) => {
       const response = await fetch(`/api/libraries/${library.id}/shares`); const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Could not read sharing', 'error'); return; }
-      const emails = (result.shares || []).map((share:any) => share.email);
-      if (!emails.length) { window.alert('This library is not shared yet.'); return; }
-      const email = window.prompt(`Shared with:\n${emails.join('\n')}\n\nEnter an email to revoke access, or Cancel to keep all:`)?.trim().toLowerCase();
-      if (!email) return;
-      const revoke = await fetch(`/api/libraries/${library.id}/shares?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-      const revoked = await revoke.json().catch(() => ({}));
-      if (!revoke.ok) { setSaveState(revoked.error || 'Could not revoke access', 'error'); return; }
-      setSaveState(`access revoked for ${email}`);
+      const dialog = dialogShell(`Sharing · ${library.name}`); const body = document.createElement('div'); body.className = 'dialog-sharing'; dialog.appendChild(body);
+      const render = () => {
+        body.replaceChildren(); const shares = result.shares || [];
+        if (!shares.length) { const empty = document.createElement('p'); empty.textContent = 'This library is not shared yet.'; body.appendChild(empty); }
+        shares.forEach((share:any) => {
+          const row = document.createElement('div'); const email = document.createElement('span'); email.textContent = share.email;
+          const revoke = document.createElement('button'); revoke.type = 'button'; revoke.textContent = 'Revoke'; revoke.className = 'danger quiet';
+          revoke.addEventListener('click', async () => {
+            revoke.disabled = true; const response = await fetch(`/api/libraries/${library.id}/shares?email=${encodeURIComponent(share.email)}`, { method: 'DELETE' });
+            const revoked = await response.json().catch(() => ({}));
+            if (!response.ok) { revoke.disabled = false; setSaveState(revoked.error || 'Could not revoke access', 'error'); return; }
+            result.shares = shares.filter((item:any) => item.email !== share.email); render(); setSaveState(`access revoked for ${share.email}`);
+          }); row.append(email, revoke); body.appendChild(row);
+        });
+        const add = document.createElement('button'); add.type = 'button'; add.className = 'primary'; add.textContent = 'Share with another user';
+        add.addEventListener('click', () => { dialog.close(); void shareLibrary(library); }); body.appendChild(add);
+      };
+      render();
     };
     const deleteLibrary = async (library: LibraryNode) => {
       const kind = library.parentId ? 'folder' : 'library';
-      if (!window.confirm(`Delete ${kind} “${library.name}” and its subfolders? References will remain in the catalog.`)) return;
+      if (!await confirmAction(`Delete ${kind}`, `Delete “${library.name}” and its subfolders? References will remain in the catalog.`, `Delete ${kind}`)) return;
       const response = await fetch(`/api/libraries/${library.id}`, { method: 'DELETE' }); const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Delete failed', 'error'); return; }
       const removeIds = new Set<string>([library.id]); let changed = true;
@@ -530,6 +635,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         };
         more.addEventListener('click', (event) => openContextMenu(event, menuItems()));
         summary.addEventListener('contextmenu', (event) => openContextMenu(event, menuItems()));
+        let longPressTimer: number | null = null;
+        const clearLongPress = () => { if (longPressTimer) window.clearTimeout(longPressTimer); longPressTimer = null; };
+        summary.addEventListener('pointerdown', (event) => {
+          if (event.pointerType !== 'touch') return;
+          clearLongPress();
+          longPressTimer = window.setTimeout(() => openContextMenu(event, menuItems()), 560);
+        });
+        summary.addEventListener('pointermove', clearLongPress);
+        summary.addEventListener('pointerup', clearLongPress);
+        summary.addEventListener('pointercancel', clearLongPress);
         actions.append(more); libraryRow.appendChild(actions);
       } else if (library.access === 'viewer') {
         const shared = document.createElement('span'); shared.className = 'tree-shared';
@@ -551,23 +666,42 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
           return;
         }
-        const referenceId = event.dataTransfer?.getData('application/x-seshat-reference') || '';
-        const reference = references.get(referenceId);
-        if (!reference) return;
+        const referenceIds = dragReferenceIds(event);
+        if (!referenceIds.length) return;
         try {
-          const next = event.altKey ? [...new Set([...reference.libraryIds, library.id])] : [library.id];
-          await moveReference(reference, next); setSaveState(event.altKey ? 'added to library' : 'reference moved');
+          await moveReferences(referenceIds, library.id, event.altKey);
+          if (event.altKey) setSaveState(referenceIds.length === 1 ? 'added to library' : `${referenceIds.length} references added to library`);
         } catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
       });
       const nested = document.createElement('div'); nested.className = 'tree-children';
       children(library.id).forEach((child) => appendLibrary(child, nested));
       own.slice(0, 100).forEach((reference) => {
         const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title;
+        item.classList.toggle('selected', selectedReferences.has(reference.id));
         item.draggable = reference.access !== 'viewer';
         const glyph = document.createElement('span'); glyph.textContent = reference.format === 'pdf' ? '▧' : '≡';
         const title = document.createElement('span'); title.textContent = reference.title; item.append(glyph, title);
-        item.addEventListener('click', () => controller.openDocument(reference.id)); nested.appendChild(item);
-        item.addEventListener('dragstart', (event) => event.dataTransfer?.setData('application/x-seshat-reference', reference.id));
+        item.addEventListener('click', (event) => {
+          if (event.detail > 1) return;
+          if (event.metaKey || event.ctrlKey) {
+            if (selectedReferences.has(reference.id)) selectedReferences.delete(reference.id);
+            else selectedReferences.add(reference.id);
+          } else {
+            selectedReferences.clear(); selectedReferences.add(reference.id);
+          }
+          renderTree(search.value);
+          setSaveState(`${selectedReferences.size} selected`);
+        });
+        item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
+        item.addEventListener('dragstart', (event) => {
+          if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value); }
+          const ids = [...selectedReferences].filter((id) => references.get(id)?.access !== 'viewer');
+          if (!ids.length) { event.preventDefault(); return; }
+          event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(ids));
+          event.dataTransfer?.setData('application/x-seshat-reference', ids[0]);
+          setSaveState(`${ids.length} selected`);
+        });
+        nested.appendChild(item);
       });
       details.appendChild(nested); container.appendChild(details);
     };
@@ -668,8 +802,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   search.addEventListener('input', () => renderTree(search.value));
   root.querySelector<HTMLButtonElement>('[data-new-library]')?.addEventListener('click', async () => {
-    const name = window.prompt(activeLibrary ? 'New folder inside the selected library' : 'New library');
-    if (!name?.trim()) return;
+    const name = await requestText(activeLibrary ? 'Create folder' : 'Create library', 'Name', '', 'Create');
+    if (!name) return;
     const response = await fetch('/api/libraries', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ name, parentId: activeLibrary }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setSaveState(result.error || 'Could not create library', 'error'); return; }

@@ -60,6 +60,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
         contributors, issued: year ? { year } : undefined,
         identifiers: { ...(isbn.length ? { isbn } : {}), ...(doi ? { doi } : {}) },
         tags: [], abstract: literal(fields.abstract) || undefined, language: literal(fields.language) || undefined,
+        publisher: literal(fields.publisher || fields.institution || fields.school) || undefined,
+        publisherPlace: literal(fields.address || fields.location) || undefined,
+        url: literal(fields.url) || undefined,
         source: { provider: 'bibtex', sourceFile: file.name, importedAt: new Date().toISOString(), bibtex: fields, raw: input },
         originalSha256: createHash('sha256').update(`bibtex\0${input}`).digest('hex'),
       });

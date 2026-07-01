@@ -45,6 +45,9 @@ export const GET: APIRoute = async ({ request, url }) => {
         };
         if (year) item.issued = { 'date-parts': [[year]] };
         if (reference.language) item.language = reference.language;
+        if (reference.publisher) item.publisher = reference.publisher;
+        if (reference.publisherPlace) item['publisher-place'] = reference.publisherPlace;
+        if (reference.url) item.URL = reference.url;
         if (identifiers.doi) item.DOI = Array.isArray(identifiers.doi) ? identifiers.doi[0] : identifiers.doi;
         if (identifiers.isbn) item.ISBN = Array.isArray(identifiers.isbn) ? identifiers.isbn.join(' ') : identifiers.isbn;
         return item;

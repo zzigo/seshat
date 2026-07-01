@@ -38,6 +38,9 @@ export interface CatalogReference {
   tags: string[];
   abstract?: string;
   language?: string;
+  publisher?: string;
+  publisherPlace?: string;
+  url?: string;
   source: Record<string, unknown>;
   originalSha256: string;
   artifacts: CatalogArtifact[];
@@ -87,6 +90,9 @@ export interface CatalogMetadataUpdate {
   tags: string[];
   abstract?: string;
   language?: string;
+  publisher?: string;
+  publisherPlace?: string;
+  url?: string;
   manualFields: string[];
 }
 
@@ -101,6 +107,9 @@ export interface CatalogBibliographyInput {
   tags?: string[];
   abstract?: string;
   language?: string;
+  publisher?: string;
+  publisherPlace?: string;
+  url?: string;
   source: Record<string, unknown>;
   originalSha256: string;
 }
@@ -115,6 +124,9 @@ export interface CitationSearchResult {
   identifiers: Record<string, unknown>;
   tags: string[];
   language?: string;
+  publisher?: string;
+  publisherPlace?: string;
+  url?: string;
   libraryIds: string[];
   updatedAt: string;
 }
@@ -144,6 +156,9 @@ const schema = `
     tags text[] NOT NULL DEFAULT ARRAY[]::text[],
     abstract text,
     language text,
+    publisher text,
+    publisher_place text,
+    url text,
     source jsonb NOT NULL DEFAULT '{}'::jsonb,
     original_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -152,6 +167,9 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS catalog_references_owner_updated_idx
     ON catalog_references (owner_key, updated_at DESC);
+  ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher text;
+  ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher_place text;
+  ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS url text;
 
   CREATE TABLE IF NOT EXISTS catalog_artifacts (
     id text PRIMARY KEY,
@@ -228,6 +246,9 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   tags: row.tags ?? [],
   abstract: row.abstract ?? undefined,
   language: row.language ?? undefined,
+  publisher: row.publisher ?? undefined,
+  publisherPlace: row.publisher_place ?? undefined,
+  url: row.url ?? undefined,
   source: row.source ?? {},
   originalSha256: row.original_sha256,
   artifacts,
@@ -316,7 +337,7 @@ export class PostgresCatalog {
     const pattern = `%${normalizedQuery.replace(/[\\%_]/g, '\\$&')}%`;
     const result = await this.pool.query(
       `SELECT r.id, r.cite_key, r.type, r.title, r.contributors, r.issued,
-              r.identifiers, r.tags, r.language, r.updated_at,
+              r.identifiers, r.tags, r.language, r.publisher, r.publisher_place, r.url, r.updated_at,
               COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
        FROM catalog_references r
        LEFT JOIN catalog_library_items li ON li.reference_id = r.id
@@ -352,6 +373,9 @@ export class PostgresCatalog {
       identifiers: row.identifiers ?? {},
       tags: row.tags ?? [],
       language: row.language ?? undefined,
+      publisher: row.publisher ?? undefined,
+      publisherPlace: row.publisher_place ?? undefined,
+      url: row.url ?? undefined,
       libraryIds: row.library_ids ?? [],
       updatedAt: new Date(row.updated_at).toISOString(),
     }));
@@ -363,7 +387,7 @@ export class PostgresCatalog {
     if (!keys.length) return [];
     const result = await this.pool.query(
       `SELECT r.id, r.cite_key, r.type, r.title, r.contributors, r.issued,
-              r.identifiers, r.tags, r.language, r.updated_at,
+              r.identifiers, r.tags, r.language, r.publisher, r.publisher_place, r.url, r.updated_at,
               COALESCE(array_agg(li.library_id) FILTER (WHERE li.library_id IS NOT NULL), ARRAY[]::text[]) AS library_ids
        FROM catalog_references r
        LEFT JOIN catalog_library_items li ON li.reference_id = r.id
@@ -382,6 +406,9 @@ export class PostgresCatalog {
       identifiers: row.identifiers ?? {},
       tags: row.tags ?? [],
       language: row.language ?? undefined,
+      publisher: row.publisher ?? undefined,
+      publisherPlace: row.publisher_place ?? undefined,
+      url: row.url ?? undefined,
       libraryIds: row.library_ids ?? [],
       updatedAt: new Date(row.updated_at).toISOString(),
     }));
@@ -560,13 +587,14 @@ export class PostgresCatalog {
       for (const entry of entries.slice(0, 5000)) {
         const result = await client.query(
           `INSERT INTO catalog_references
-             (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,source,original_sha256)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::text[],$10,$11,$12::jsonb,$13)
+             (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,publisher,publisher_place,url,source,original_sha256)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::text[],$10,$11,$12,$13,$14,$15::jsonb,$16)
            ON CONFLICT (owner_key,original_sha256) DO UPDATE SET updated_at=now()
            RETURNING id`,
           [entry.id, ownerKey, entry.citeKey, entry.type, entry.title, JSON.stringify(entry.contributors),
             JSON.stringify(entry.issued ?? null), JSON.stringify(entry.identifiers), entry.tags ?? [],
-            entry.abstract || null, entry.language || null, JSON.stringify(entry.source), entry.originalSha256],
+            entry.abstract || null, entry.language || null, entry.publisher || null, entry.publisherPlace || null,
+            entry.url || null, JSON.stringify(entry.source), entry.originalSha256],
         );
         const referenceId = result.rows[0].id;
         importedIds.push(referenceId);
@@ -598,13 +626,15 @@ export class PostgresCatalog {
       `UPDATE catalog_references
        SET title=$3, cite_key=$4, type=$5, contributors=$6::jsonb, issued=$7::jsonb,
            identifiers=$8::jsonb, tags=$9::text[], abstract=$10, language=$11,
-           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $12::jsonb, true),
+           publisher=$12, publisher_place=$13, url=$14,
+           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $15::jsonb, true),
            updated_at=now()
        WHERE owner_key=$1 AND id=$2
        RETURNING *`,
       [ownerKey, id, input.title, input.citeKey, input.type, JSON.stringify(input.contributors),
         JSON.stringify(input.issued ?? null), JSON.stringify(input.identifiers), input.tags,
-        input.abstract || null, input.language || null, JSON.stringify(curation)],
+        input.abstract || null, input.language || null, input.publisher || null, input.publisherPlace || null,
+        input.url || null, JSON.stringify(curation)],
     );
     return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }
