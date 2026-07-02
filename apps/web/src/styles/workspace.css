@@ -29,11 +29,11 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .tree-branch > summary { list-style: none; }
 .tree-branch > summary::-webkit-details-marker { display: none; }
 .tree-branch > summary.drop-target { outline: 1px solid var(--green-bright); outline-offset: -1px; background: rgba(61,122,88,.12); }
-.tree-branch > summary .tree-node span::before { content: '▾'; display: inline-block; width: 14px; color: var(--muted); }
-.tree-branch:not([open]) > summary .tree-node span::before { content: '▸'; }
 .tree-children { margin-left: 12px; border-left: 1px solid var(--hairline); }
 .tree-library-row { display: flex; align-items: center; min-width: 0; }
 .tree-library-row > .tree-node { flex: 1; }
+.tree-fold { flex: 0 0 22px; width: 22px; height: 27px; padding: 0; border: 0; color: var(--muted); background: transparent; font: 11px/1 monospace; cursor: pointer; }
+.tree-fold:hover { color: var(--green); background: rgba(61,122,88,.1); }
 .tree-library-actions { display: flex; padding-right: 5px; }
 .tree-library-actions button { width: 22px; height: 22px; padding: 0; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .tree-library-actions button:hover { color: var(--green); background: rgba(61,122,88,.1); }
@@ -60,6 +60,7 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .tree-reference { gap: 7px; min-height: 25px; padding: 3px 9px; color: #4f5952; font: 11px/1.2 Georgia,serif; }
 .tree-reference span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-reference span:first-child { color: var(--gold); font: 10px monospace; }
+.tree-reference.associated-drop-target { outline: 1px solid var(--green-bright); outline-offset: -2px; background: rgba(61,122,88,.16); }
 .tree-footer { display: flex; justify-content: space-between; padding: 9px 10px; border-top: 1px solid var(--hairline); color: var(--muted); font: 8px monospace; text-transform: uppercase; }
 .workspace-stage { min-width: 0; min-height: 0; background: var(--paper); }
 .workspace-console { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: 118px minmax(0,1fr) 90px; align-items: center; border-top: 1px solid var(--ink); background: var(--chrome-deep); font: 9px monospace; letter-spacing: .04em; }
@@ -109,10 +110,33 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .bibliography-pod-list small { margin-top: 5px; color: var(--muted); font: 10px monospace; }
 .bibliography-pod-list code { color: var(--green); font-size: 10px; }
 
-.seshat-dockview { --dv-tabs-and-actions-container-height: 30px; --dv-tabs-container-height: 30px; --dv-group-view-background-color: var(--paper); --dv-pane-background-color: var(--paper); --dv-activegroup-visiblepanel-tab-background-color: var(--paper); --dv-inactivegroup-visiblepanel-tab-background-color: var(--chrome-deep); --dv-tab-divider-color: var(--hairline); --dv-separator-border: var(--ink); }
+.seshat-dockview {
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-tabs-container-height: 30px;
+  --dv-group-view-background-color: var(--paper);
+  --dv-paneview-header-border-color: var(--hairline);
+  --dv-tabs-and-actions-container-background-color: var(--chrome-deep);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--paper);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--chrome-deep);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--chrome-deep);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ink);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--chrome-deep);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-icon-hover-background-color: rgba(61,122,88,.1);
+  --dv-tabs-container-scrollbar-color: var(--muted);
+  --dv-sash-color: var(--hairline);
+  --dv-active-sash-color: var(--green);
+  --dv-tab-divider-color: var(--hairline);
+  --dv-separator-border: var(--ink);
+  color: var(--ink);
+  background: var(--paper);
+}
 .seshat-dockview .dv-tab { font: 10px monospace; text-transform: uppercase; }
 .seshat-dockview .dv-tab-content { padding: 0 10px; }
 .seshat-dockview .dv-tabs-and-actions-container { border-bottom: 1px solid var(--ink); background: var(--chrome-deep); }
+.seshat-dockview .dv-tabs-container, .seshat-dockview .dv-groupview, .seshat-dockview .dv-content-container { background: var(--paper); }
 
 .catalog-pod.ht-theme-main { --ht-cell-background-color: var(--paper); --ht-cell-foreground-color: var(--ink); --ht-accent-color: var(--green); --ht-border-color: var(--hairline); --ht-wrapper-border-color: transparent; --ht-row-header-background-color: var(--chrome-deep); --ht-column-header-background-color: var(--chrome-deep); font: 11px monospace; }
 .catalog-pod .handsontable, .catalog-pod .handsontable table, .catalog-pod .handsontable td, .catalog-pod .handsontable th { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size: 10px; }
@@ -132,6 +156,7 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 }
 .catalog-pod .handsontable th { color: var(--muted); font-weight: 600; text-transform: uppercase; }
 .catalog-pod .handsontable .wtBorder { background-color: var(--green) !important; }
+.catalog-pod .handsontable td.associated-drop-target { outline: 2px solid var(--green-bright); outline-offset: -2px; background: rgba(61,122,88,.16) !important; }
 .catalog-delete { width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; color: #8b3628; background: transparent; font: 17px/1 monospace; cursor: pointer; opacity: .45; }
 .catalog-delete:hover { opacity: 1; background: rgba(139,54,40,.08); }
 

@@ -80,6 +80,12 @@ export interface CatalogDocumentInput {
   libraryId?: string;
 }
 
+export interface CatalogOriginalReplacement {
+  originalFilename: string;
+  originalSha256: string;
+  artifact: Omit<CatalogArtifact, 'createdAt'>;
+}
+
 export interface CatalogMetadataUpdate {
   title: string;
   citeKey: string;
@@ -679,6 +685,47 @@ export class PostgresCatalog {
       [ownerKey, id, stage, downstream],
     );
     return (result.rowCount || 0) > 0;
+  }
+
+  async replaceOriginal(ownerKey: string, id: string, input: CatalogOriginalReplacement): Promise<CatalogReference | null> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query(
+        `UPDATE catalog_references
+         SET original_sha256=$3,
+             source=jsonb_set(source, '{originalFilename}', to_jsonb($4::text), true),
+             updated_at=now()
+         WHERE owner_key=$1 AND id=$2
+         RETURNING id`,
+        [ownerKey, id, input.originalSha256, input.originalFilename],
+      );
+      if (!updated.rows[0]) { await client.query('ROLLBACK'); return null; }
+      await client.query('DELETE FROM catalog_artifacts WHERE reference_id=$1', [id]);
+      await client.query(
+        `INSERT INTO catalog_artifacts
+          (id, reference_id, kind, provider, object_key, bucket, mime_type, size_bytes, sha256, etag)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [input.artifact.id, id, input.artifact.kind, input.artifact.provider,
+          input.artifact.objectKey, input.artifact.bucket, input.artifact.mimeType,
+          input.artifact.sizeBytes, input.artifact.sha256, input.artifact.etag],
+      );
+      await client.query(
+        `UPDATE catalog_jobs SET
+           status=CASE WHEN stage='extract' THEN 'queued' ELSE 'blocked' END,
+           attempts=0, error=NULL, payload='{}'::jsonb, updated_at=now()
+         WHERE reference_id=$1`,
+        [id],
+      );
+      await client.query('COMMIT');
+      return this.get(ownerKey, id);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async catalogDocument(input: CatalogDocumentInput): Promise<CatalogReference> {

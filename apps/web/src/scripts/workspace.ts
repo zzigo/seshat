@@ -16,6 +16,7 @@ type ToolKind = 'analysis' | 'annotation' | 'agent';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
+const TREE_STATE_KEY = 'seshat.workspace.tree.v1';
 const readPayload = (): WorkspacePayload => JSON.parse(document.getElementById('seshat-workspace-data')?.textContent || '{"references":[],"libraries":[]}');
 const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
 const rowFromCatalogReference = (reference: any): ReferenceRow => ({
@@ -68,6 +69,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const saveTimers = new Map<string, number>();
   const activities: Activity[] = [];
   const bibliographyFiles = new Map<string, File[]>();
+  const collapsedLibraries = new Set<string>(JSON.parse(window.localStorage.getItem(TREE_STATE_KEY) || '[]'));
 
   const filteredRows = () => payload.references.filter((reference) => !activeLibrary || reference.libraryIds.includes(activeLibrary));
   const refreshTable = () => catalogTable?.loadData(filteredRows());
@@ -179,7 +181,53 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     }, 500));
   };
 
-  const selectedEditableIds = () => [...selectedReferences].filter((id) => references.get(id)?.access !== 'viewer');
+  const selectedIds = () => [...selectedReferences].filter((id) => references.has(id));
+  const bibtexEscape = (value: unknown) => String(value ?? '').replace(/[{}]/g, '').trim();
+  const bibtexType = (type: string) => ({
+    'article-journal': 'article', article: 'article', chapter: 'incollection',
+    'paper-conference': 'inproceedings', thesis: 'phdthesis', report: 'techreport', book: 'book',
+  }[type] || 'misc');
+  const toBetterBibtex = (rows: ReferenceRow[]) => rows.map((row) => {
+    const fields: Array<[string, string]> = [
+      ['title', row.title],
+      ['author', row.authors.split(';').map((author) => author.trim()).filter(Boolean).join(' and ')],
+      ['year', String(row.year || '')],
+      ['publisher', row.publisher],
+      ['address', row.publisherPlace],
+      ['isbn', row.isbn],
+      ['url', row.url],
+      ['language', row.language],
+      ['abstract', row.abstract],
+      ['keywords', row.tags],
+    ].filter((field): field is [string, string] => Boolean(field[1]?.trim()));
+    const body = fields.map(([key, value]) => `  ${key} = {${bibtexEscape(value)}}`).join(',\n');
+    return `@${bibtexType(row.type)}{${row.citeKey || row.id},\n${body}\n}`;
+  }).join('\n\n');
+  const apaAuthor = (author: string) => {
+    const [family, ...givenParts] = author.split(',').map((part) => part.trim());
+    if (!givenParts.length) return family;
+    const initials = givenParts.join(' ').split(/\s+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase()}.`).join(' ');
+    return `${family}, ${initials}`;
+  };
+  const toApa = (row: ReferenceRow) => {
+    const people = row.authors.split(';').map((author) => author.trim()).filter(Boolean).map(apaAuthor);
+    const author = people.length > 1 ? `${people.slice(0, -1).join(', ')}, & ${people.at(-1)}` : people[0] || 'Unknown author';
+    return `${author} (${row.year || 'n.d.'}). ${row.title}.${row.publisher ? ` ${row.publisher}.` : ''}${row.url ? ` ${row.url}` : ''}`;
+  };
+  const copyText = async (text: string, label: string) => {
+    try { await navigator.clipboard.writeText(text); setSaveState(`${label} copied`); }
+    catch { setSaveState('Clipboard access was denied', 'error'); }
+  };
+  const copyReferences = (ids: string[], format: 'apa' | 'bibtex') => {
+    const rows = ids.map((id) => references.get(id)).filter((row): row is ReferenceRow => Boolean(row));
+    if (!rows.length) { setSaveState('no references selected', 'error'); return; }
+    void copyText(format === 'apa' ? rows.map(toApa).join('\n') : toBetterBibtex(rows), format === 'apa' ? 'APA citation' : 'Better BibTeX');
+  };
+  const pickAssociatedFile = (referenceId: string) => {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.docx,.txt,.epub';
+    input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void replaceAssociatedFile(referenceId, file); });
+    input.click();
+  };
   const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'summarize') => {
     const label = action === 'reprocess-metadata' ? 'metadata re-processing' : 'AI summary';
     if (!ids.length) { setSaveState('no editable references selected', 'error'); return; }
@@ -206,19 +254,42 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     selectedReferences.clear();
     renderTree(search.value);
   };
-  const referenceMenuItems = (ids: string[]) => [
-    { label: `Re-process metadata${ids.length > 1 ? ` (${ids.length})` : ''}`, action: () => runReferenceAction(ids, 'reprocess-metadata') },
-    { label: `AI summarize${ids.length > 1 ? ` (${ids.length})` : ''}`, action: () => runReferenceAction(ids, 'summarize') },
-    { label: `Delete selected${ids.length > 1 ? ` (${ids.length})` : ''}`, danger: true, action: () => deleteReferences(ids) },
-  ];
+  const referenceMenuItems = (ids: string[]) => {
+    const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
+    return [
+    { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
+    { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
+    { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
+    { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
+    { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
+    { label: `Delete selected${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
+    ];
+  };
 
   const mountCatalog = (element: HTMLElement) => {
     if (catalogTable || !element.isConnected) return;
     element.classList.add('ht-theme-main');
     element.addEventListener('contextmenu', (event) => {
-      const ids = selectedEditableIds();
+      const ids = selectedIds();
       if (!ids.length) return;
       openContextMenu(event, referenceMenuItems(ids));
+    });
+    element.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer?.types.includes('Files')) return;
+      const cell = (event.target as HTMLElement).closest('td');
+      if (cell) { event.preventDefault(); event.stopPropagation(); cell.classList.add('associated-drop-target'); }
+    });
+    element.addEventListener('dragleave', (event) => (event.target as HTMLElement).closest('td')?.classList.remove('associated-drop-target'));
+    element.addEventListener('drop', (event) => {
+      if (!event.dataTransfer?.files.length) return;
+      const cell = (event.target as HTMLElement).closest('td');
+      if (!cell || !catalogTable) return;
+      event.preventDefault(); event.stopPropagation(); cell.classList.remove('associated-drop-target');
+      const coords = catalogTable.getCoords(cell as HTMLTableCellElement);
+      const physicalRow = coords ? catalogTable.toPhysicalRow(coords.row) : -1;
+      const row = physicalRow >= 0 ? catalogTable.getSourceDataAtRow(physicalRow) as ReferenceRow : undefined;
+      const file = event.dataTransfer.files[0];
+      if (row?.access === 'owner' && file) void replaceAssociatedFile(row.id, file);
     });
     catalogTable = new Handsontable(element, {
       data: filteredRows(),
@@ -647,29 +718,59 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       payload.libraries = payload.libraries.filter((item) => !removeIds.has(item.id)); payload.references.forEach((item) => { item.libraryIds = item.libraryIds.filter((id) => !removeIds.has(id)); });
       if (activeLibrary && removeIds.has(activeLibrary)) activeLibrary = null; renderTree(search.value); refreshTable(); setSaveState(`${kind} deleted`);
     };
+    const libraryBranchIds = (libraryId: string) => {
+      const ids = new Set([libraryId]); let changed = true;
+      while (changed) {
+        changed = false;
+        payload.libraries.forEach((item) => {
+          if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; }
+        });
+      }
+      return ids;
+    };
+    const exportLibrary = (library: LibraryNode) => {
+      const branch = libraryBranchIds(library.id);
+      const rows = payload.references.filter((reference) => reference.libraryIds.some((id) => branch.has(id)));
+      if (!rows.length) { setSaveState('library has no references to export', 'error'); return; }
+      const blob = new Blob([toBetterBibtex(rows)], { type: 'application/x-bibtex;charset=utf-8' });
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
+      link.download = `${library.name.normalize('NFKD').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'seshat-library'}.bib`;
+      link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      setSaveState(`${rows.length} references exported as Better BibTeX`);
+    };
     const appendLibrary = (library: LibraryNode, container: HTMLElement) => {
-      const details = document.createElement('details'); details.open = true; details.className = 'tree-branch';
+      const details = document.createElement('details'); details.open = Boolean(query) || !collapsedLibraries.has(library.id); details.className = 'tree-branch';
       const summary = document.createElement('summary'); summary.draggable = !library.id.startsWith('inbox:');
       const own = matched.filter((reference) => reference.libraryIds.includes(library.id));
       const libraryRow = document.createElement('div'); libraryRow.className = 'tree-library-row';
+      const fold = document.createElement('button'); fold.type = 'button'; fold.className = 'tree-fold';
+      fold.textContent = details.open ? '▾' : '▸'; fold.title = details.open ? 'Collapse' : 'Expand'; fold.setAttribute('aria-label', fold.title);
+      fold.addEventListener('click', (event) => {
+        event.preventDefault(); event.stopPropagation(); details.open = !details.open;
+        if (details.open) collapsedLibraries.delete(library.id); else collapsedLibraries.add(library.id);
+        window.localStorage.setItem(TREE_STATE_KEY, JSON.stringify([...collapsedLibraries]));
+        fold.textContent = details.open ? '▾' : '▸'; fold.title = details.open ? 'Collapse' : 'Expand'; fold.setAttribute('aria-label', fold.title);
+      });
+      libraryRow.appendChild(fold);
       libraryRow.appendChild(makeButton(library.name, own.length, library.id));
+      const menuItems = () => {
+        const items: Array<{ label: string; danger?: boolean; action: () => void | Promise<void> }> = [
+          { label: 'Export as Better BibTeX (.bib)', action: () => exportLibrary(library) },
+        ];
+        if (library.access !== 'viewer') items.unshift({ label: 'New folder inside', action: () => createFolder(library) });
+        if (library.access !== 'viewer' && !library.id.startsWith('inbox:')) items.push(
+          { label: `Rename ${library.parentId ? 'folder' : 'library'}…`, action: () => renameLibrary(library) },
+          { label: 'Share with Musiki user…', action: () => shareLibrary(library) },
+          { label: 'Manage sharing…', action: () => manageSharing(library) },
+          { label: `Delete ${library.parentId ? 'folder' : 'library'}…`, danger: true, action: () => deleteLibrary(library) },
+        );
+        return items;
+      };
+      summary.addEventListener('contextmenu', (event) => openContextMenu(event, menuItems()));
       if (library.access !== 'viewer') {
         const actions = document.createElement('span'); actions.className = 'tree-library-actions';
         const more = document.createElement('button'); more.type = 'button'; more.textContent = '⋯'; more.title = 'Library and folder actions'; more.setAttribute('aria-label', `Actions for ${library.name}`);
-        const menuItems = () => {
-          const items: Array<{ label: string; danger?: boolean; action: () => void | Promise<void> }> = [
-            { label: 'New folder inside', action: () => createFolder(library) },
-          ];
-          if (!library.id.startsWith('inbox:')) items.push(
-            { label: `Rename ${library.parentId ? 'folder' : 'library'}…`, action: () => renameLibrary(library) },
-            { label: 'Share with Musiki user…', action: () => shareLibrary(library) },
-            { label: 'Manage sharing…', action: () => manageSharing(library) },
-            { label: `Delete ${library.parentId ? 'folder' : 'library'}…`, danger: true, action: () => deleteLibrary(library) },
-          );
-          return items;
-        };
         more.addEventListener('click', (event) => openContextMenu(event, menuItems()));
-        summary.addEventListener('contextmenu', (event) => openContextMenu(event, menuItems()));
         let longPressTimer: number | null = null;
         const clearLongPress = () => { if (longPressTimer) window.clearTimeout(longPressTimer); longPressTimer = null; };
         summary.addEventListener('pointerdown', (event) => {
@@ -685,6 +786,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const shared = document.createElement('span'); shared.className = 'tree-shared';
         shared.textContent = 'shared'; shared.title = library.sharedByEmail ? `Shared by ${library.sharedByEmail}` : 'Shared library';
         libraryRow.appendChild(shared);
+        let longPressTimer: number | null = null;
+        const clearLongPress = () => { if (longPressTimer) window.clearTimeout(longPressTimer); longPressTimer = null; };
+        summary.addEventListener('pointerdown', (event) => {
+          if (event.pointerType !== 'touch') return;
+          clearLongPress(); longPressTimer = window.setTimeout(() => openContextMenu(event, menuItems()), 560);
+        });
+        summary.addEventListener('pointermove', clearLongPress);
+        summary.addEventListener('pointerup', clearLongPress);
+        summary.addEventListener('pointercancel', clearLongPress);
       }
       summary.appendChild(libraryRow); details.appendChild(summary);
       summary.addEventListener('dragstart', (event) => {
@@ -732,7 +842,18 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           if (!selectedReferences.has(reference.id)) {
             selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
           }
-          openContextMenu(event, referenceMenuItems(selectedEditableIds()));
+          openContextMenu(event, referenceMenuItems(selectedIds()));
+        });
+        item.addEventListener('dragover', (event) => {
+          if (!event.dataTransfer?.types.includes('Files')) return;
+          event.preventDefault(); event.stopPropagation(); item.classList.add('associated-drop-target');
+        });
+        item.addEventListener('dragleave', () => item.classList.remove('associated-drop-target'));
+        item.addEventListener('drop', (event) => {
+          if (!event.dataTransfer?.files.length) return;
+          event.preventDefault(); event.stopPropagation(); item.classList.remove('associated-drop-target');
+          const file = event.dataTransfer.files[0];
+          if (file && reference.access === 'owner') void replaceAssociatedFile(reference.id, file);
         });
         let referenceLongPress: number | null = null;
         const clearReferenceLongPress = () => { if (referenceLongPress) window.clearTimeout(referenceLongPress); referenceLongPress = null; };
@@ -743,7 +864,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             if (!selectedReferences.has(reference.id)) {
               selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
             }
-            openContextMenu(event, referenceMenuItems(selectedEditableIds()));
+            openContextMenu(event, referenceMenuItems(selectedIds()));
           }, 560);
         });
         item.addEventListener('pointermove', clearReferenceLongPress);
@@ -802,6 +923,29 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     updateActivity(activityId, { state: 'error', message: `${filename} · processing timed out` });
   };
 
+  const replaceAssociatedFile = async (referenceId: string, file: File) => {
+    const reference = references.get(referenceId);
+    if (!reference || reference.access !== 'owner') { setSaveState('This reference is read-only', 'error'); return; }
+    if (file.name.toLowerCase().endsWith('.bib')) { setSaveState('A .bib file cannot replace a document', 'error'); return; }
+    const activityId = `replace-${referenceId}-${crypto.randomUUID()}`;
+    updateActivity(activityId, { state: 'working', referenceId, message: `${reference.title} · replacing associated file with ${file.name}` });
+    const form = new FormData(); form.set('file', file, file.name);
+    try {
+      const response = await fetch(`/api/library/${referenceId}/file`, { method: 'POST', body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'File replacement failed.');
+      const row = rowFromCatalogReference(result.reference); upsertRow(row);
+      updateActivity(activityId, { state: 'working', referenceId, message: `${reference.title} · extracting replacement text and structure` });
+      void followPipeline(referenceId, activityId, file.name).catch((error) => {
+        updateActivity(activityId, { state: 'error', message: `${reference.title} · ${error instanceof Error ? error.message : 'status unavailable'}` });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'File replacement failed';
+      updateActivity(activityId, { state: 'error', referenceId, message: `${reference.title} · ${message}` });
+      setSaveState(message, 'error');
+    }
+  };
+
   const ingestDocument = async (file: File) => {
     const activityId = `document-${crypto.randomUUID()}`;
     updateActivity(activityId, { state: 'working', message: `${file.name} · uploading` });
@@ -848,6 +992,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     void (async () => {
       for (const file of documents) await ingestDocument(file);
     })();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (!event.altKey || !event.shiftKey || event.metaKey || event.ctrlKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== 'a' && key !== 'b') return;
+    const target = event.target as HTMLElement | null;
+    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    event.preventDefault();
+    const ids = selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : [];
+    copyReferences(ids, key === 'a' ? 'apa' : 'bibtex');
   });
 
   consoleToggle.addEventListener('click', () => {
