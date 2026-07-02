@@ -3,6 +3,7 @@ import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { annotationColors, mountAnnotationWorkspace, type Annotation } from './annotations';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
+const SIDEBAR_WIDTH_KEY = 'seshat.pdf.annotation-sidebar-width';
 
 type PdfAnchor = {
   quote: string; prefix: string; suffix: string; startOffset: number; endOffset: number;
@@ -20,10 +21,30 @@ export async function mountPdfViewer(
   const viewer = document.createElement('div'); viewer.className = 'seshat-pdf-viewer';
   const pages = document.createElement('div'); pages.className = 'seshat-pdf-pages'; viewer.appendChild(pages);
   const sidebar = document.createElement('aside'); sidebar.className = 'seshat-pdf-annotations';
+  const savedSidebarWidth = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  if (Number.isFinite(savedSidebarWidth) && savedSidebarWidth >= 240) shell.style.setProperty('--annotation-sidebar-width', `${savedSidebarWidth}px`);
+  const resizeHandle = document.createElement('div'); resizeHandle.className = 'pdf-annotation-resizer'; resizeHandle.tabIndex = 0;
+  resizeHandle.setAttribute('role', 'separator'); resizeHandle.setAttribute('aria-orientation', 'vertical'); resizeHandle.setAttribute('aria-label', 'Resize annotation sidebar');
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'pdf-annotation-toggle';
   toggle.textContent = '☰'; toggle.title = 'Annotations'; toggle.setAttribute('aria-label', 'Toggle annotations'); toggle.setAttribute('aria-expanded', 'false');
   toggle.addEventListener('click', () => {
     const open = !shell.classList.contains('annotations-open'); shell.classList.toggle('annotations-open', open); toggle.setAttribute('aria-expanded', String(open));
+  });
+  const setSidebarWidth = (width: number) => {
+    const maximum = Math.max(280, Math.min(620, shell.getBoundingClientRect().width * .68));
+    const next = Math.round(Math.max(240, Math.min(maximum, width)));
+    shell.style.setProperty('--annotation-sidebar-width', `${next}px`); window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+  };
+  resizeHandle.addEventListener('pointerdown', (event) => {
+    event.preventDefault(); resizeHandle.setPointerCapture(event.pointerId); shell.classList.add('resizing-annotations');
+    const move = (moveEvent: PointerEvent) => setSidebarWidth(shell.getBoundingClientRect().right - moveEvent.clientX);
+    const stop = () => { shell.classList.remove('resizing-annotations'); resizeHandle.removeEventListener('pointermove', move); resizeHandle.removeEventListener('pointerup', stop); resizeHandle.removeEventListener('pointercancel', stop); };
+    resizeHandle.addEventListener('pointermove', move); resizeHandle.addEventListener('pointerup', stop); resizeHandle.addEventListener('pointercancel', stop);
+  });
+  resizeHandle.addEventListener('dblclick', () => setSidebarWidth(340));
+  resizeHandle.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return; event.preventDefault();
+    const current = sidebar.getBoundingClientRect().width || 340; setSidebarWidth(current + (event.key === 'ArrowLeft' ? 20 : -20));
   });
   const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = 'Loading PDF…';
   pages.appendChild(progress); shell.append(viewer, sidebar, toggle); element.replaceChildren(shell);
@@ -39,6 +60,7 @@ export async function mountPdfViewer(
   const annotationResponse = await fetch(`/api/library/${referenceId}/annotations`);
   if (annotationResponse.ok) annotations = (await annotationResponse.json()).annotations || [];
   const disposeIndex = await mountAnnotationWorkspace(sidebar, referenceId, title, report, { indexOnly: true });
+  sidebar.prepend(resizeHandle);
   progress.remove();
 
   const palette = document.createElement('div'); palette.className = 'annotation-palette pdf-annotation-palette'; palette.hidden = true;
