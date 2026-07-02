@@ -3,12 +3,13 @@ import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer } from './pdf-viewer';
+import { referenceFileType } from '../lib/reference-file';
 
 registerAllModules();
 
 type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; authors: string; year: number | string;
-  isbn: string; language: string; tags: string; abstract: string; format: string; filename: string;
+  isbn: string; language: string; tags: string; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string;
   libraryIds: string[]; status: string; hasStructure: boolean; hasText: boolean; access: 'owner' | 'viewer';
 };
@@ -36,7 +37,8 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   publisher: reference.publisher || '',
   publisherPlace: reference.publisherPlace || '',
   url: reference.url || '',
-  format: String(reference.source?.originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
+  format: referenceFileType(reference),
+  fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
   libraryIds: reference.libraryIds || [],
   status: (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued')?.stage
@@ -309,7 +311,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         { data: 'tags', title: 'Tags', width: 190 },
         { data: 'citeKey', title: 'Citekey', width: 160 },
         { data: 'abstract', title: 'Abstract', width: 320 },
-        { data: 'format', title: 'File', readOnly: true, width: 65 },
+        { data: 'fileType', title: 'File', readOnly: true, width: 72 },
         { data: 'status', title: 'State', readOnly: true, width: 92 },
       ],
       rowHeaders: false,
@@ -376,7 +378,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const toolbar = document.createElement('header');
     toolbar.className = 'pod-toolbar';
     const label = document.createElement('span');
-    label.textContent = `${reference.format.toUpperCase()} · ${reference.filename}`;
+    label.textContent = `${reference.fileType} · ${reference.filename}`;
     toolbar.appendChild(label);
     const actions: Array<[string, string]> = [['text','Text'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate'],['agent','Agent']];
     for (const [kind, title] of actions) {

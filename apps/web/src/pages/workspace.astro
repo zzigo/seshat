@@ -2,6 +2,7 @@
 import { SignOut } from 'auth-astro/components';
 import DropLayer from '../components/DropLayer.astro';
 import { getCatalog, ownerKeyFor } from '../lib/catalog';
+import { referenceFileType } from '../lib/reference-file';
 import '../styles/global.css';
 import 'dockview-core/dist/styles/dockview.css';
 import 'handsontable/styles/handsontable.css';
@@ -28,7 +29,8 @@ const payload = {
     publisher: reference.publisher || '',
     publisherPlace: reference.publisherPlace || '',
     url: reference.url || '',
-    format: String((reference.source as any).originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
+    format: referenceFileType(reference),
+    fileType: referenceFileType(reference).toUpperCase() || '—',
     filename: String((reference.source as any).originalFilename || reference.title),
     libraryIds: reference.libraryIds,
     status: reference.jobs.find((job) => job.status === 'running' || job.status === 'queued')?.stage

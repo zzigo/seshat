@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
+import { referenceFileType } from '../../../../lib/reference-file';
 
 export const GET: APIRoute = async ({ locals, params }) => {
   const email = String((locals.session as any)?.user?.email || '');
@@ -26,7 +27,8 @@ export const GET: APIRoute = async ({ locals, params }) => {
       publisher: reference.publisher || '',
       publisherPlace: reference.publisherPlace || '',
       url: reference.url || '',
-      format: String((reference.source as any).originalFilename || '').split('.').pop()?.toLowerCase() || 'document',
+      format: referenceFileType(reference),
+      fileType: referenceFileType(reference).toUpperCase() || '—',
       filename: String((reference.source as any).originalFilename || reference.title),
       libraryIds: reference.libraryIds,
       status: failed ? 'failed' : active?.stage || 'catalogued',
