@@ -2,6 +2,7 @@ import Handsontable from 'handsontable';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
 import { mountAnnotationWorkspace } from './annotations';
+import { mountPdfViewer } from './pdf-viewer';
 
 registerAllModules();
 
@@ -65,6 +66,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let activeLibrary: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
+  const documentDisposers = new WeakMap<HTMLElement, () => void>();
   const selectedReferences = new Set<string>();
   const committed = new Map(payload.references.map((reference) => [reference.id, { ...reference }]));
   const saveTimers = new Map<string, number>();
@@ -391,6 +393,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   };
 
   const renderDocument = (element: HTMLElement, referenceId: string) => {
+    documentDisposers.get(element)?.(); documentDisposers.delete(element);
     element.replaceChildren();
     const reference = references.get(referenceId);
     if (!reference) { element.textContent = 'Reference not found.'; return; }
@@ -398,18 +401,21 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     element.appendChild(podToolbar(reference));
     const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
     if (reference.format === 'pdf') {
-      const frame = document.createElement('iframe'); frame.src = `/api/library/${reference.id}/original`; frame.title = reference.title; body.appendChild(frame);
+      body.classList.add('pod-pdf-body'); const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
+      void mountPdfViewer(body, reference.id, reference.title, setSaveState).then((dispose) => {
+        if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
+      }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'PDF viewer unavailable'; });
     } else void mountText(body, reference.id, 'markdown');
   };
 
   const documentRenderer = (referenceId: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { renderDocument(element, referenceId); } };
+    return { element, init() { renderDocument(element, referenceId); }, dispose() { documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
   };
 
   const previewRenderer = (): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; } };
+    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
   };
 
   const mountText = async (element: HTMLElement, referenceId: string, kind: 'markdown' | 'structure') => {
@@ -440,7 +446,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const reference = referenceId ? references.get(referenceId) : undefined;
       if (kind === 'annotation' && reference) {
         element.classList.remove('future-tool-pod');
-        void mountAnnotationWorkspace(element, reference.id, reference.title, setSaveState).then((dispose) => {
+        void mountAnnotationWorkspace(element, reference.id, reference.title, setSaveState, { indexOnly: true }).then((dispose) => {
           if (disposed) dispose(); else disposeAnnotation = dispose;
         });
         return;

@@ -20,6 +20,7 @@
     "auth-astro": "^4.2.0",
     "dockview-core": "^5.2.0",
     "handsontable": "^17.1.0",
+    "pdfjs-dist": "^5.4.624",
     "set-cookie-parser": "^2.7.2"
   },
   "devDependencies": {

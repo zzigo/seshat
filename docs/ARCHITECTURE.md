@@ -115,9 +115,9 @@ A share grants another deterministic email-derived owner key read-only access to
 
 ### `catalog_annotations`
 
-Annotations are personal layers scoped by both `reference_id` and the annotator's `owner_key`; a recipient may therefore annotate a shared reference without modifying its owner metadata. Each row stores a semantic category independently from its exact Zotero-compatible color, plus a W3C-style text quote/position selector (`quote`, `prefix`, `suffix`, start/end offsets), optional page/locator, note type, tags, targets and review state.
+Annotations are personal layers scoped by both `reference_id` and the annotator's `owner_key`; a recipient may therefore annotate a shared reference without modifying its owner metadata. Each row stores a semantic category independently from its exact Zotero-compatible color, plus a W3C-style text quote/position selector (`quote`, `prefix`, `suffix`, start/end offsets), source kind, optional page/locator, normalized PDF rectangles, note type, tags, targets and review state.
 
-The annotation pod renders against the Docling Markdown artifact. If extraction changes offsets, it reanchors by exact quote and surrounding context. Colors are presentation; categories remain stable for search, accessibility and future Musiki exports.
+PDF annotation is part of the document visualizer: PDF.js renders canvas and selectable text layers, while persisted normalized rectangles form the highlight layer and a collapsible right sidebar exposes the index. The separate Annotation pod contains only the index/editor for one attached reference and never duplicates the document viewer. Legacy text selectors can reanchor by exact quote and surrounding context. Colors are presentation; categories remain stable for search, accessibility and future Musiki exports.
 
 ## Upload and ingestion data flow
 

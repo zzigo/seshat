@@ -87,6 +87,31 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .pod-toolbar button, .pod-toolbar a { height: 33px; display: grid; place-items: center; padding: 0 9px; border: 0; border-left: 1px solid var(--hairline); color: var(--ink); background: transparent; font: 8px monospace; text-decoration: none; text-transform: uppercase; cursor: pointer; }
 .pod-document-body { min-height: 0; overflow: auto; }
 .pod-document-body iframe { width: 100%; height: 100%; display: block; border: 0; background: #777; }
+.pod-document-body.pod-pdf-body { overflow: hidden; }
+.seshat-pdf-shell { position: relative; width: 100%; height: 100%; display: grid; grid-template-columns: minmax(0,1fr) 0; overflow: hidden; background: #cbc8bf; transition: grid-template-columns .18s ease; }
+.seshat-pdf-shell.annotations-open { grid-template-columns: minmax(0,1fr) minmax(270px,340px); }
+.seshat-pdf-viewer { min-width: 0; min-height: 0; overflow: auto; }
+.seshat-pdf-pages { min-width: min-content; display: grid; justify-items: center; gap: 18px; padding: 24px 54px 80px; }
+.seshat-pdf-page { position: relative; overflow: hidden; background: #fff; box-shadow: 0 4px 15px rgba(23,35,29,.2); }
+.seshat-pdf-page canvas { position: absolute; inset: 0; display: block; }
+.pdf-page-number { position: absolute; z-index: 4; right: 7px; bottom: 5px; padding: 2px 4px; color: #555; background: rgba(255,255,255,.72); font: 7px monospace; pointer-events: none; }
+.pdf-loading { min-width: 300px; padding: 60px; color: #4f5952; font: 10px monospace; text-align: center; text-transform: uppercase; }
+.pdf-annotation-toggle { position: absolute; z-index: 12; top: 9px; right: 10px; width: 34px; height: 31px; padding: 0; border: 1px solid var(--ink); color: var(--ink); background: rgba(233,230,220,.94); box-shadow: 2px 3px 10px rgba(23,35,29,.16); font: 15px/1 monospace; cursor: pointer; }
+.pdf-annotation-toggle:hover, .pdf-annotation-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
+.seshat-pdf-annotations { min-width: 0; height: 100%; overflow: hidden; border-left: 0 solid var(--ink); background: var(--chrome); }
+.annotations-open .seshat-pdf-annotations { border-left-width: 1px; }
+.pdf-highlight-layer { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
+.pdf-annotation-highlight { position: absolute; padding: 0; border: 0; border-radius: 1px; background: color-mix(in srgb,var(--annotation-color) 43%,transparent); mix-blend-mode: multiply; pointer-events: auto; cursor: pointer; }
+.pdf-annotation-highlight:hover { outline: 1px solid color-mix(in srgb,var(--annotation-color) 80%,#17231d); }
+.textLayer { position: absolute; z-index: 2; inset: 0; overflow: clip; line-height: 1; text-align: initial; text-size-adjust: none; transform-origin: 0 0; forced-color-adjust: none; pointer-events: none; }
+.textLayer :is(span,br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0 0; pointer-events: auto; }
+.textLayer { --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--text-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { user-select: none; cursor: default; }
+.textLayer ::selection { background: rgba(46,168,229,.34); }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent { position: absolute; z-index: 0; inset: 100% 0 0; display: block; user-select: none; cursor: default; }
 .pod-reading-surface { padding: 28px clamp(22px,5vw,70px); }
 .pod-reading-surface pre { max-width: 900px; margin: 0 auto; color: var(--ink); font: 15px/1.7 Georgia,serif; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pod-outline { max-width: 900px; margin: 0 auto; padding: 0; list-style: none; border-top: 1px solid var(--ink); }
@@ -96,6 +121,9 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .future-tool-pod p { max-width: 540px; color: var(--muted); font: 15px/1.6 Georgia,serif; }
 .future-tool-glyph { color: var(--gold); font: 52px Georgia,serif; }
 .annotation-workspace { display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--paper); }
+.annotation-index-only { height: 100%; }
+.annotation-index-only .annotation-body { grid-template-columns: minmax(0,1fr); }
+.annotation-index-only .annotation-rail { width: 100%; }
 .annotation-loading { height: 100%; display: grid; place-items: center; color: var(--muted); font: 11px monospace; text-transform: uppercase; }
 .annotation-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 18px; border-bottom: 1px solid var(--ink); background: var(--chrome); }
 .annotation-head > div:first-child { min-width: 0; }
@@ -223,4 +251,7 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
   .annotation-rail { display: none; }
   .annotation-reading { border-right: 0; }
   .annotation-editor-colors { grid-template-columns: repeat(4,1fr); }
+  .seshat-pdf-shell.annotations-open { grid-template-columns: minmax(0,1fr); }
+  .seshat-pdf-annotations { position: absolute; z-index: 11; top: 0; right: 0; bottom: 0; width: min(88vw,340px); transform: translateX(100%); transition: transform .18s ease; }
+  .annotations-open .seshat-pdf-annotations { transform: translateX(0); }
 }

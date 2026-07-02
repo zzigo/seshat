@@ -115,7 +115,7 @@ Do not place secrets, API keys or database URLs in issues, logs or these documen
 
 ## Recommended next sequence
 
-1. Extend the annotation layer with page-aware PDF.js selectors and export/grouping views for Musiki Lecturas.
+1. Extend the page-aware PDF.js annotation layer with export/grouping views for Musiki Lecturas and robust multi-page selections.
 2. Implement corpus-aware `relate`: embeddings or local semantic search, suggested tags and explicit evidence/provenance.
 3. Add an agent-friendly document/query API over chunks, annotations and structure, with owner/library scoping.
 4. Add Zotero selective synchronization with stable external IDs and conflict policy.

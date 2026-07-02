@@ -78,6 +78,8 @@ export interface CatalogAnnotation {
   suffix: string;
   startOffset: number;
   endOffset: number;
+  sourceKind: string;
+  rects: Array<{ x: number; y: number; width: number; height: number }>;
   page?: number;
   locator?: string;
   color: string;
@@ -97,6 +99,8 @@ export interface CatalogAnnotationInput {
   suffix?: string;
   startOffset: number;
   endOffset: number;
+  sourceKind?: string;
+  rects?: Array<{ x: number; y: number; width: number; height: number }>;
   page?: number;
   locator?: string;
   color: string;
@@ -279,6 +283,8 @@ const schema = `
     suffix text NOT NULL DEFAULT '',
     start_offset integer NOT NULL,
     end_offset integer NOT NULL,
+    source_kind text NOT NULL DEFAULT 'markdown',
+    rects jsonb NOT NULL DEFAULT '[]'::jsonb,
     page integer,
     locator text,
     color text NOT NULL,
@@ -294,6 +300,8 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS catalog_annotations_reference_owner_idx
     ON catalog_annotations (reference_id, owner_key, start_offset);
+  ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS source_kind text NOT NULL DEFAULT 'markdown';
+  ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS rects jsonb NOT NULL DEFAULT '[]'::jsonb;
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
@@ -361,6 +369,8 @@ export class PostgresCatalog {
       suffix: row.suffix || '',
       startOffset: Number(row.start_offset),
       endOffset: Number(row.end_offset),
+      sourceKind: row.source_kind || 'markdown',
+      rects: Array.isArray(row.rects) ? row.rects : [],
       page: row.page ?? undefined,
       locator: row.locator ?? undefined,
       color: row.color,
@@ -388,12 +398,13 @@ export class PostgresCatalog {
     await this.ensureSchema();
     const result = await this.pool.query(
       `INSERT INTO catalog_annotations
-        (id,reference_id,owner_key,quote,prefix,suffix,start_offset,end_offset,page,locator,color,category,note_type,note,tags,targets,review_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::text[],$16::text[],$17)
+        (id,reference_id,owner_key,quote,prefix,suffix,start_offset,end_offset,source_kind,rects,page,locator,color,category,note_type,note,tags,targets,review_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17::text[],$18::text[],$19)
        RETURNING *`,
       [crypto.randomUUID(), referenceId, ownerKey, input.quote, input.prefix || '', input.suffix || '',
-        input.startOffset, input.endOffset, input.page || null, input.locator || null, input.color,
-        input.category, input.noteType || null, input.note || null, input.tags || [], input.targets || [],
+        input.startOffset, input.endOffset, input.sourceKind || 'markdown', JSON.stringify(input.rects || []),
+        input.page || null, input.locator || null, input.color, input.category,
+        input.noteType || null, input.note || null, input.tags || [], input.targets || [],
         input.reviewStatus || 'captured'],
     );
     return this.mapAnnotation(result.rows[0]);
@@ -408,13 +419,14 @@ export class PostgresCatalog {
     const row = this.mapAnnotation(current.rows[0]);
     const next = { ...row, ...input };
     const result = await this.pool.query(
-      `UPDATE catalog_annotations SET quote=$4,prefix=$5,suffix=$6,start_offset=$7,end_offset=$8,page=$9,
-         locator=$10,color=$11,category=$12,note_type=$13,note=$14,tags=$15::text[],targets=$16::text[],
-         review_status=$17,updated_at=now()
+      `UPDATE catalog_annotations SET quote=$4,prefix=$5,suffix=$6,start_offset=$7,end_offset=$8,source_kind=$9,
+         rects=$10::jsonb,page=$11,locator=$12,color=$13,category=$14,note_type=$15,note=$16,
+         tags=$17::text[],targets=$18::text[],review_status=$19,updated_at=now()
        WHERE id=$1 AND owner_key=$2 AND reference_id=$3 RETURNING *`,
       [id, ownerKey, referenceId, next.quote, next.prefix, next.suffix, next.startOffset, next.endOffset,
-        next.page || null, next.locator || null, next.color, next.category, next.noteType || null,
-        next.note || null, next.tags || [], next.targets || [], next.reviewStatus || 'captured'],
+        next.sourceKind || 'markdown', JSON.stringify(next.rects || []), next.page || null, next.locator || null,
+        next.color, next.category, next.noteType || null, next.note || null, next.tags || [], next.targets || [],
+        next.reviewStatus || 'captured'],
     );
     return result.rows[0] ? this.mapAnnotation(result.rows[0]) : null;
   }

@@ -1,6 +1,6 @@
-type Annotation = {
+export type Annotation = {
   id: string; referenceId: string; quote: string; prefix: string; suffix: string;
-  startOffset: number; endOffset: number; page?: number; locator?: string;
+  startOffset: number; endOffset: number; sourceKind: string; rects: Array<{ x: number; y: number; width: number; height: number }>; page?: number; locator?: string;
   color: string; category: string; noteType?: string; note?: string;
   tags: string[]; targets: string[]; reviewStatus: string; createdAt: string; updatedAt: string;
 };
@@ -27,18 +27,19 @@ export async function mountAnnotationWorkspace(
   referenceId: string,
   title: string,
   report: (message: string, tone?: 'ready' | 'saving' | 'error') => void,
+  options: { indexOnly?: boolean } = {},
 ): Promise<() => void> {
   element.classList.add('annotation-workspace');
   element.innerHTML = '<div class="annotation-loading">Loading extracted text and annotations…</div>';
   const [textResponse, annotationResponse] = await Promise.all([
-    fetch(`/api/library/${referenceId}/artifact/markdown`),
+    options.indexOnly ? Promise.resolve(null) : fetch(`/api/library/${referenceId}/artifact/markdown`),
     fetch(`/api/library/${referenceId}/annotations`),
   ]);
-  if (!textResponse.ok) { element.innerHTML = '<div class="annotation-loading">Extracted text is not available yet.</div>'; return () => undefined; }
+  if (textResponse && !textResponse.ok) { element.innerHTML = '<div class="annotation-loading">Extracted text is not available yet.</div>'; return () => undefined; }
   if (!annotationResponse.ok) { element.innerHTML = '<div class="annotation-loading">Annotations could not be loaded.</div>'; return () => undefined; }
-  const source = await textResponse.text();
+  const source = textResponse ? await textResponse.text() : '';
   const annotations: Annotation[] = (await annotationResponse.json()).annotations || [];
-  annotations.forEach((annotation) => {
+  if (!options.indexOnly) annotations.filter((annotation) => annotation.sourceKind !== 'pdf').forEach((annotation) => {
     if (source.slice(annotation.startOffset, annotation.endOffset) === annotation.quote) return;
     const candidates: number[] = []; let offset = source.indexOf(annotation.quote);
     while (offset >= 0 && candidates.length < 100) { candidates.push(offset); offset = source.indexOf(annotation.quote, offset + 1); }
@@ -56,7 +57,7 @@ export async function mountAnnotationWorkspace(
 
   const header = document.createElement('header'); header.className = 'annotation-head';
   const heading = document.createElement('div');
-  const eyebrow = document.createElement('span'); eyebrow.textContent = 'Semantic annotation';
+  const eyebrow = document.createElement('span'); eyebrow.textContent = options.indexOnly ? 'Annotation index' : 'Semantic annotation';
   const h2 = document.createElement('h2'); h2.textContent = title; heading.append(eyebrow, h2);
   const stats = document.createElement('div'); stats.className = 'annotation-stats'; header.append(heading, stats);
   const body = document.createElement('div'); body.className = 'annotation-body';
@@ -65,7 +66,9 @@ export async function mountAnnotationWorkspace(
   const rail = document.createElement('aside'); rail.className = 'annotation-rail';
   const railHead = document.createElement('header'); railHead.innerHTML = '<strong>Annotations</strong><span>Select text · 1–8 · M</span>';
   const cards = document.createElement('div'); cards.className = 'annotation-cards'; rail.append(railHead, cards);
-  body.append(reading, rail); element.replaceChildren(header, body);
+  if (options.indexOnly) { element.classList.add('annotation-index-only'); body.appendChild(rail); }
+  else body.append(reading, rail);
+  element.replaceChildren(header, body);
 
   const palette = document.createElement('div'); palette.className = 'annotation-palette'; palette.hidden = true;
   annotationColors.forEach((color, index) => {
@@ -79,8 +82,8 @@ export async function mountAnnotationWorkspace(
   document.body.appendChild(palette);
 
   const render = () => {
-    surface.replaceChildren();
-    const valid = annotations.filter((item) => item.startOffset >= 0 && item.endOffset <= source.length && item.endOffset > item.startOffset)
+    if (!options.indexOnly) surface.replaceChildren();
+    const valid = annotations.filter((item) => item.sourceKind !== 'pdf' && item.startOffset >= 0 && item.endOffset <= source.length && item.endOffset > item.startOffset)
       .sort((a, b) => a.startOffset - b.startOffset || a.endOffset - b.endOffset);
     let cursor = 0;
     valid.forEach((annotation) => {
@@ -94,7 +97,7 @@ export async function mountAnnotationWorkspace(
       mark.addEventListener('click', (event) => { event.stopPropagation(); activeId = annotation.id; render(); openEditor(annotation); });
       surface.appendChild(mark); cursor = annotation.endOffset;
     });
-    surface.append(document.createTextNode(source.slice(cursor)));
+    if (!options.indexOnly) surface.append(document.createTextNode(source.slice(cursor)));
 
     cards.replaceChildren();
     annotations.forEach((annotation) => {
@@ -107,7 +110,7 @@ export async function mountAnnotationWorkspace(
       if (annotation.note) { const note = document.createElement('p'); note.textContent = annotation.note; card.appendChild(note); }
       card.addEventListener('click', () => {
         activeId = annotation.id; render();
-        surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (!options.indexOnly) surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
       card.addEventListener('dblclick', () => openEditor(annotation)); cards.appendChild(card);
     });
@@ -147,6 +150,7 @@ export async function mountAnnotationWorkspace(
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { report(result.error || 'Annotation could not be saved', 'error'); return; }
     annotations.push(result.annotation); activeId = result.annotation.id; pending = null; window.getSelection()?.removeAllRanges(); render(); report('annotation saved');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
   }
 
   async function updateAnnotation(annotation: Annotation, details: Record<string, unknown>) {
@@ -157,12 +161,14 @@ export async function mountAnnotationWorkspace(
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { report(result.error || 'Annotation could not be updated', 'error'); return; }
     Object.assign(annotation, result.annotation); render(); report('annotation saved');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
   }
 
   async function deleteAnnotation(annotation: Annotation) {
     const response = await fetch(`/api/library/${referenceId}/annotations/${annotation.id}`, { method: 'DELETE' });
     if (!response.ok) { report('Annotation could not be deleted', 'error'); return; }
     annotations.splice(annotations.indexOf(annotation), 1); activeId = null; render(); report('annotation deleted');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
   }
 
   function openEditor(annotation?: Annotation, anchor?: SelectionAnchor) {
@@ -221,10 +227,18 @@ export async function mountAnnotationWorkspace(
   const outsidePointer = (event: PointerEvent) => {
     if (!palette.contains(event.target as Node) && !surface.contains(event.target as Node)) palette.hidden = true;
   };
-  surface.addEventListener('mouseup', () => window.setTimeout(showPalette));
-  surface.addEventListener('keyup', (event) => { if (event.key === 'Shift' || event.key.startsWith('Arrow')) showPalette(); });
+  const changed = async (event: Event) => {
+    if ((event as CustomEvent).detail?.referenceId !== referenceId) return;
+    const response = await fetch(`/api/library/${referenceId}/annotations`); if (!response.ok) return;
+    annotations.splice(0, annotations.length, ...((await response.json()).annotations || [])); render();
+  };
+  if (!options.indexOnly) {
+    surface.addEventListener('mouseup', () => window.setTimeout(showPalette));
+    surface.addEventListener('keyup', (event) => { if (event.key === 'Shift' || event.key.startsWith('Arrow')) showPalette(); });
+  }
   document.addEventListener('keydown', keyboard);
   document.addEventListener('pointerdown', outsidePointer);
+  window.addEventListener('seshat:annotations-changed', changed);
   render();
-  return () => { document.removeEventListener('keydown', keyboard); document.removeEventListener('pointerdown', outsidePointer); palette.remove(); dialogs.forEach((dialog) => dialog.remove()); dialogs.clear(); };
+  return () => { document.removeEventListener('keydown', keyboard); document.removeEventListener('pointerdown', outsidePointer); window.removeEventListener('seshat:annotations-changed', changed); palette.remove(); dialogs.forEach((dialog) => dialog.remove()); dialogs.clear(); };
 }

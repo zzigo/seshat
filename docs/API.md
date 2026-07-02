@@ -179,7 +179,7 @@ Returns the authenticated user's personal annotation layer for an owned or share
 
 ### `POST /api/library/:id/annotations`
 
-Creates a semantic text annotation. Required fields are `quote`, `startOffset`, `endOffset`, one of the eight exact Zotero colors, and its normalized category. Optional fields include `prefix`, `suffix`, `page`, `locator`, `noteType`, `note`, `tags`, `targets` and `reviewStatus`.
+Creates a semantic annotation. Required fields are `quote`, `startOffset`, `endOffset`, one of the eight exact Zotero colors, and its normalized category. PDF selectors additionally send `sourceKind: "pdf"`, a page and normalized `{x,y,width,height}` rectangles. Optional fields include `prefix`, `suffix`, `locator`, `noteType`, `note`, `tags`, `targets` and `reviewStatus`.
 
 ### `PATCH /api/library/:id/annotations/:annotationId`
 
