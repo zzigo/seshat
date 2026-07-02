@@ -71,7 +71,7 @@ ecosystem.config.cjs    PM2 definitions and .env loader
 | Identifier utilities | `packages/core/src/identifiers.ts` | Normalize/validate DOI and ISBN, generate citekeys and fingerprints |
 | `evaluateReferenceHealth` | `packages/core/src/health.ts` | Deterministic metadata completeness/validity report |
 | `ZoteroProvider` | `packages/zotero/src/provider.ts` | Paginated Zotero Web API implementation |
-| `PostgresCatalog` | `packages/catalog/src/index.ts` | Schema bootstrap, records, libraries, memberships and jobs |
+| `PostgresCatalog` | `packages/catalog/src/index.ts` | Schema bootstrap, records, libraries, memberships, annotations and jobs |
 | `ingest_document` | `services/ingest/seshat_ingest/pipeline.py` | Reproducible structured derivative generation |
 | Worker `run/tick/claim` | `apps/worker/src/index.ts` | Serialized enrichment queue consumption |
 | `mountSeshatWorkspace` | `apps/web/src/scripts/workspace.ts` | Catalog table, tree, Dockview adapter, uploads and HUD |
@@ -112,6 +112,12 @@ Statuses are `queued`, `blocked`, `running`, `complete` and `failed`. Only `extr
 Libraries are owner-scoped and can be nested through `parent_id`. References can belong to multiple libraries through the join table. Every owner has an `Inbox` library used as the default target.
 
 A share grants another deterministic email-derived owner key read-only access to one library subtree. Ownership never changes and storage is not duplicated. Catalog reads calculate the accessible subtree recursively; all mutations remain scoped to the original owner.
+
+### `catalog_annotations`
+
+Annotations are personal layers scoped by both `reference_id` and the annotator's `owner_key`; a recipient may therefore annotate a shared reference without modifying its owner metadata. Each row stores a semantic category independently from its exact Zotero-compatible color, plus a W3C-style text quote/position selector (`quote`, `prefix`, `suffix`, start/end offsets), optional page/locator, note type, tags, targets and review state.
+
+The annotation pod renders against the Docling Markdown artifact. If extraction changes offsets, it reanchors by exact quote and surrounding context. Colors are presentation; categories remain stable for search, accessibility and future Musiki exports.
 
 ## Upload and ingestion data flow
 

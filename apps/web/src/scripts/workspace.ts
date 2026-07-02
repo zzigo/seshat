@@ -1,6 +1,7 @@
 import Handsontable from 'handsontable';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
+import { mountAnnotationWorkspace } from './annotations';
 
 registerAllModules();
 
@@ -434,15 +435,23 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const toolRenderer = (kind: ToolKind, referenceId?: string): IContentRenderer => {
     const element = panel('future-tool-pod');
+    let disposeAnnotation: () => void = () => undefined; let disposed = false;
     return { element, init() {
       const reference = referenceId ? references.get(referenceId) : undefined;
+      if (kind === 'annotation' && reference) {
+        element.classList.remove('future-tool-pod');
+        void mountAnnotationWorkspace(element, reference.id, reference.title, setSaveState).then((dispose) => {
+          if (disposed) dispose(); else disposeAnnotation = dispose;
+        });
+        return;
+      }
       const glyph = kind === 'analysis' ? '⌁' : kind === 'annotation' ? '✎' : '✣';
       const heading = document.createElement('div'); heading.className = 'future-tool-glyph'; heading.textContent = glyph; element.appendChild(heading);
       const title = document.createElement('h2'); title.textContent = kind === 'agent' ? 'Agent workspace' : `${kind[0].toUpperCase()}${kind.slice(1)} workspace`; element.appendChild(title);
       const copy = document.createElement('p'); copy.textContent = reference
         ? `Context attached to “${reference.title}”. This pod slot is ready for its own lifecycle and persistence.`
         : 'Open a document first to attach evidence and provenance to this pod.'; element.appendChild(copy);
-    } };
+    }, dispose() { disposed = true; disposeAnnotation(); } };
   };
 
   const bibliographyRenderer = (batchId: string): IContentRenderer => {

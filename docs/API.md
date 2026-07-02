@@ -171,6 +171,24 @@ Returns the current table-ready reference projection and pipeline jobs.
 
 The workspace polls this endpoint while extraction or identification is active.
 
+## Annotations
+
+### `GET /api/library/:id/annotations`
+
+Returns the authenticated user's personal annotation layer for an owned or shared reference. Annotations belonging to other users are never returned.
+
+### `POST /api/library/:id/annotations`
+
+Creates a semantic text annotation. Required fields are `quote`, `startOffset`, `endOffset`, one of the eight exact Zotero colors, and its normalized category. Optional fields include `prefix`, `suffix`, `page`, `locator`, `noteType`, `note`, `tags`, `targets` and `reviewStatus`.
+
+### `PATCH /api/library/:id/annotations/:annotationId`
+
+Updates the semantic color/category and processing metadata while retaining the original selector and quote.
+
+### `DELETE /api/library/:id/annotations/:annotationId`
+
+Deletes only an annotation owned by the authenticated user. Reference ownership is not required, so users can maintain private annotation layers over shared libraries.
+
 ## Artifact streaming
 
 ### `GET /api/library/:id/original`

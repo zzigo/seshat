@@ -69,6 +69,45 @@ export interface CatalogLibraryShare {
   createdAt: string;
 }
 
+export interface CatalogAnnotation {
+  id: string;
+  referenceId: string;
+  ownerKey: string;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  startOffset: number;
+  endOffset: number;
+  page?: number;
+  locator?: string;
+  color: string;
+  category: string;
+  noteType?: string;
+  note?: string;
+  tags: string[];
+  targets: string[];
+  reviewStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogAnnotationInput {
+  quote: string;
+  prefix?: string;
+  suffix?: string;
+  startOffset: number;
+  endOffset: number;
+  page?: number;
+  locator?: string;
+  color: string;
+  category: string;
+  noteType?: string;
+  note?: string;
+  tags?: string[];
+  targets?: string[];
+  reviewStatus?: string;
+}
+
 export interface CatalogDocumentInput {
   id: string;
   ownerKey: string;
@@ -231,6 +270,30 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS catalog_library_shares_grantee_idx
     ON catalog_library_shares (grantee_owner_key);
+  CREATE TABLE IF NOT EXISTS catalog_annotations (
+    id text PRIMARY KEY,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    owner_key text NOT NULL,
+    quote text NOT NULL,
+    prefix text NOT NULL DEFAULT '',
+    suffix text NOT NULL DEFAULT '',
+    start_offset integer NOT NULL,
+    end_offset integer NOT NULL,
+    page integer,
+    locator text,
+    color text NOT NULL,
+    category text NOT NULL,
+    note_type text,
+    note text,
+    tags text[] NOT NULL DEFAULT ARRAY[]::text[],
+    targets text[] NOT NULL DEFAULT ARRAY[]::text[],
+    review_status text NOT NULL DEFAULT 'captured',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK (start_offset >= 0 AND end_offset > start_offset)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_annotations_reference_owner_idx
+    ON catalog_annotations (reference_id, owner_key, start_offset);
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
@@ -286,6 +349,82 @@ export class PostgresCatalog {
       [ownerKey, sha256],
     );
     return result.rows[0] ? this.hydrate(result.rows[0], ownerKey) : null;
+  }
+
+  private mapAnnotation(row: any): CatalogAnnotation {
+    return {
+      id: row.id,
+      referenceId: row.reference_id,
+      ownerKey: row.owner_key,
+      quote: row.quote,
+      prefix: row.prefix || '',
+      suffix: row.suffix || '',
+      startOffset: Number(row.start_offset),
+      endOffset: Number(row.end_offset),
+      page: row.page ?? undefined,
+      locator: row.locator ?? undefined,
+      color: row.color,
+      category: row.category,
+      noteType: row.note_type ?? undefined,
+      note: row.note ?? undefined,
+      tags: row.tags || [],
+      targets: row.targets || [],
+      reviewStatus: row.review_status,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  async listAnnotations(ownerKey: string, referenceId: string): Promise<CatalogAnnotation[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'SELECT * FROM catalog_annotations WHERE owner_key=$1 AND reference_id=$2 ORDER BY start_offset, created_at',
+      [ownerKey, referenceId],
+    );
+    return result.rows.map((row) => this.mapAnnotation(row));
+  }
+
+  async createAnnotation(ownerKey: string, referenceId: string, input: CatalogAnnotationInput): Promise<CatalogAnnotation> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `INSERT INTO catalog_annotations
+        (id,reference_id,owner_key,quote,prefix,suffix,start_offset,end_offset,page,locator,color,category,note_type,note,tags,targets,review_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::text[],$16::text[],$17)
+       RETURNING *`,
+      [crypto.randomUUID(), referenceId, ownerKey, input.quote, input.prefix || '', input.suffix || '',
+        input.startOffset, input.endOffset, input.page || null, input.locator || null, input.color,
+        input.category, input.noteType || null, input.note || null, input.tags || [], input.targets || [],
+        input.reviewStatus || 'captured'],
+    );
+    return this.mapAnnotation(result.rows[0]);
+  }
+
+  async updateAnnotation(ownerKey: string, referenceId: string, id: string, input: Partial<CatalogAnnotationInput>): Promise<CatalogAnnotation | null> {
+    await this.ensureSchema();
+    const current = await this.pool.query(
+      'SELECT * FROM catalog_annotations WHERE id=$1 AND owner_key=$2 AND reference_id=$3', [id, ownerKey, referenceId],
+    );
+    if (!current.rows[0]) return null;
+    const row = this.mapAnnotation(current.rows[0]);
+    const next = { ...row, ...input };
+    const result = await this.pool.query(
+      `UPDATE catalog_annotations SET quote=$4,prefix=$5,suffix=$6,start_offset=$7,end_offset=$8,page=$9,
+         locator=$10,color=$11,category=$12,note_type=$13,note=$14,tags=$15::text[],targets=$16::text[],
+         review_status=$17,updated_at=now()
+       WHERE id=$1 AND owner_key=$2 AND reference_id=$3 RETURNING *`,
+      [id, ownerKey, referenceId, next.quote, next.prefix, next.suffix, next.startOffset, next.endOffset,
+        next.page || null, next.locator || null, next.color, next.category, next.noteType || null,
+        next.note || null, next.tags || [], next.targets || [], next.reviewStatus || 'captured'],
+    );
+    return result.rows[0] ? this.mapAnnotation(result.rows[0]) : null;
+  }
+
+  async deleteAnnotation(ownerKey: string, referenceId: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'DELETE FROM catalog_annotations WHERE id=$1 AND owner_key=$2 AND reference_id=$3', [id, ownerKey, referenceId],
+    );
+    return result.rowCount === 1;
   }
 
   async get(ownerKey: string, id: string): Promise<CatalogReference | null> {

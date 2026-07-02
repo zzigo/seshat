@@ -115,13 +115,12 @@ Do not place secrets, API keys or database URLs in issues, logs or these documen
 
 ## Recommended next sequence
 
-1. Implement and test the `summarize` stage, producing a versioned summary artifact and exposing it as a pod.
+1. Extend the annotation layer with page-aware PDF.js selectors and export/grouping views for Musiki Lecturas.
 2. Implement corpus-aware `relate`: embeddings or local semantic search, suggested tags and explicit evidence/provenance.
-3. Add an agent-friendly document/query API over chunks and structure, with owner/library scoping.
-4. Add a real BibTeX landing workflow: preview, reconcile, deduplicate, select library and persist.
-5. Add Zotero selective synchronization with stable external IDs and conflict policy.
-6. Add migration, backup, health and CI foundations before catalog volume grows.
-7. Localize UI strings into Spanish, English and French through a shared message catalog; do not fork the application per language.
+3. Add an agent-friendly document/query API over chunks, annotations and structure, with owner/library scoping.
+4. Add Zotero selective synchronization with stable external IDs and conflict policy.
+5. Add migration, backup, health and CI foundations before catalog volume grows.
+6. Localize UI strings into Spanish, English and French through a shared message catalog; do not fork the application per language.
 
 For AI stages, define an evaluation corpus and record model, prompt, source chunks, confidence and output version. A plausible answer is not sufficient bibliographic provenance.
 

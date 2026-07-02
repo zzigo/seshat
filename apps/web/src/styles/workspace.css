@@ -95,6 +95,58 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
 .future-tool-pod h2 { font-size: clamp(34px,5vw,58px); }
 .future-tool-pod p { max-width: 540px; color: var(--muted); font: 15px/1.6 Georgia,serif; }
 .future-tool-glyph { color: var(--gold); font: 52px Georgia,serif; }
+.annotation-workspace { display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--paper); }
+.annotation-loading { height: 100%; display: grid; place-items: center; color: var(--muted); font: 11px monospace; text-transform: uppercase; }
+.annotation-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 18px; border-bottom: 1px solid var(--ink); background: var(--chrome); }
+.annotation-head > div:first-child { min-width: 0; }
+.annotation-head span { display: block; color: var(--green); font: 8px/1 monospace; letter-spacing: .1em; text-transform: uppercase; }
+.annotation-head h2 { margin: 5px 0 0; overflow: hidden; font: 18px/1.1 Georgia,serif; text-overflow: ellipsis; white-space: nowrap; }
+.annotation-stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.annotation-stats span { padding: 4px 6px; border-left: 3px solid var(--annotation-color); color: var(--ink); background: rgba(255,255,255,.3); font-size: 8px; }
+.annotation-body { min-height: 0; display: grid; grid-template-columns: minmax(360px,1fr) minmax(260px,330px); }
+.annotation-reading { min-height: 0; overflow: auto; border-right: 1px solid var(--ink); }
+.annotation-surface { max-width: 900px; min-height: 100%; margin: 0 auto; padding: 42px clamp(28px,6vw,82px) 100px; color: var(--ink); font: 15px/1.75 Georgia,serif; white-space: pre-wrap; overflow-wrap: anywhere; outline: 0; }
+.annotation-surface mark { position: relative; margin: 0 1px; padding: 1px 2px; color: inherit; background: color-mix(in srgb,var(--annotation-color) 38%,transparent); box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
+.annotation-surface mark::before { content: attr(data-sigil); margin-right: 4px; padding: 1px 3px; color: #17231d; background: var(--annotation-color); font: 7px/1 ui-monospace,SFMono-Regular,Menlo,monospace; vertical-align: 2px; }
+.annotation-surface mark.active { outline: 1px solid color-mix(in srgb,var(--annotation-color) 75%,#17231d); outline-offset: 2px; }
+.annotation-rail { min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: var(--chrome); }
+.annotation-rail > header { min-height: 45px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 11px; border-bottom: 1px solid var(--hairline); }
+.annotation-rail > header strong { font: 10px monospace; text-transform: uppercase; }
+.annotation-rail > header span { color: var(--muted); font: 8px monospace; }
+.annotation-cards { min-height: 0; overflow: auto; }
+.annotation-cards article { padding: 12px 13px 14px; border-bottom: 1px solid var(--hairline); border-left: 4px solid var(--annotation-color); cursor: pointer; }
+.annotation-cards article:hover, .annotation-cards article.active { background: rgba(61,122,88,.08); }
+.annotation-cards article header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.annotation-cards article header span { color: var(--ink); font: 8px/1.25 monospace; text-transform: uppercase; }
+.annotation-cards article header small { color: var(--muted); font: 7px monospace; text-transform: uppercase; }
+.annotation-cards blockquote { margin: 10px 0 0; display: -webkit-box; overflow: hidden; font: 13px/1.4 Georgia,serif; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.annotation-cards p { margin: 8px 0 0; color: var(--muted); font: 10px/1.4 monospace; }
+.annotation-palette { position: fixed; z-index: 1400; display: flex; gap: 3px; padding: 5px; border: 1px solid var(--ink); background: #e9e6dc; box-shadow: 5px 8px 24px rgba(23,35,29,.25); }
+.annotation-palette[hidden] { display: none; }
+.annotation-palette button { width: 31px; height: 31px; position: relative; display: grid; place-items: center; padding: 0; border: 1px solid transparent; background: transparent; cursor: pointer; }
+.annotation-palette button:hover { border-color: var(--ink); }
+.annotation-palette button i { width: 17px; height: 17px; display: block; border-radius: 50%; background: var(--annotation-color); }
+.annotation-palette button small { position: absolute; right: 1px; bottom: 0; color: var(--muted); font: 7px monospace; }
+.annotation-palette .annotation-comment { margin-left: 3px; border-left-color: var(--hairline); color: var(--green); font: 700 11px monospace; }
+.annotation-editor { width: min(720px,calc(100vw - 30px)); max-height: calc(100vh - 30px); padding: 0; border: 1px solid var(--ink); border-radius: 0; color: var(--ink); background: #e9e6dc; box-shadow: 12px 18px 60px rgba(23,35,29,.34); }
+.annotation-editor::backdrop { background: rgba(23,35,29,.35); backdrop-filter: blur(2px); }
+.annotation-editor form { display: grid; gap: 14px; padding: 0 18px 18px; }
+.annotation-editor form > header { min-height: 42px; display: flex; align-items: center; justify-content: space-between; margin: 0 -18px; padding-left: 18px; border-bottom: 1px solid var(--ink); background: #dedacd; font: 10px monospace; text-transform: uppercase; }
+.annotation-editor form > header button { width: 42px; height: 42px; border: 0; border-left: 1px solid var(--hairline); background: transparent; font-size: 18px; cursor: pointer; }
+.annotation-editor blockquote { max-height: 105px; overflow: auto; margin: 0; padding: 12px; border-left: 4px solid var(--green); background: rgba(255,255,255,.3); font: 14px/1.45 Georgia,serif; }
+.annotation-editor-colors { display: grid; grid-template-columns: repeat(8,minmax(45px,1fr)); gap: 4px; }
+.annotation-editor-colors button { height: 42px; display: grid; place-items: center; gap: 2px; padding: 4px; border: 1px solid var(--hairline); background: transparent; cursor: pointer; }
+.annotation-editor-colors button.selected { border-color: var(--ink); background: rgba(255,255,255,.5); }
+.annotation-editor-colors i { width: 16px; height: 16px; border-radius: 50%; background: var(--annotation-color); }
+.annotation-editor-colors span { font: 7px monospace; }
+.annotation-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.annotation-editor label { display: grid; gap: 5px; color: var(--muted); font: 8px monospace; text-transform: uppercase; }
+.annotation-editor input, .annotation-editor select, .annotation-editor textarea { width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--hairline); border-radius: 0; color: var(--ink); background: #f4f1e8; font: 11px/1.35 monospace; text-transform: none; }
+.annotation-editor textarea { resize: vertical; font-family: Georgia,serif; font-size: 14px; }
+.annotation-editor footer { display: flex; justify-content: flex-end; gap: 7px; }
+.annotation-editor footer button { min-height: 31px; padding: 0 12px; border: 1px solid var(--hairline); background: transparent; font: 9px monospace; text-transform: uppercase; cursor: pointer; }
+.annotation-editor footer button.primary { color: #f5f2e8; background: var(--green); }
+.annotation-editor footer button.danger { margin-right: auto; color: #f8eee8; background: #8b3628; }
 .bibliography-pod { padding: 28px; }
 .bibliography-pod-head { display: flex; align-items: end; justify-content: space-between; padding-bottom: 18px; border-bottom: 1px solid var(--ink); }
 .bibliography-pod-head h2 { font-size: clamp(30px,4vw,48px); }
@@ -167,4 +219,8 @@ html, body.workspace-body { width: 100%; height: 100%; overflow: hidden; }
   .workspace-shell { grid-template-columns: 1fr; }
   .workspace-sidebar { position: fixed; z-index: 30; top: 44px; bottom: 0; left: 0; width: 248px; transform: translateX(-100%); }
   .console-drawer { left: 0; }
+  .annotation-body { grid-template-columns: 1fr; }
+  .annotation-rail { display: none; }
+  .annotation-reading { border-right: 0; }
+  .annotation-editor-colors { grid-template-columns: repeat(4,1fr); }
 }
