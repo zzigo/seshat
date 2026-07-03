@@ -410,19 +410,36 @@ export class PostgresCatalog {
       await client.query('BEGIN');
       const occupied = await client.query('SELECT identity_key FROM catalog_identities WHERE owner_key=$1 AND identity_key<>$2 LIMIT 1', [targetOwnerKey, identityKey]);
       if (occupied.rows[0]) { await client.query('ROLLBACK'); return { ok: false, reason: 'catalog_already_linked' }; }
-      const current = await client.query(
-        `SELECT (SELECT count(*) FROM catalog_references WHERE owner_key=$1)::int AS references,
-                (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1 AND id<>$2)::int AS libraries`,
-        [currentOwnerKey, `inbox:${currentOwnerKey}`],
-      );
-      if (Number(current.rows[0]?.references) > 0 || Number(current.rows[0]?.libraries) > 0) {
-        await client.query('ROLLBACK'); return { ok: false, reason: 'current_catalog_not_empty' };
-      }
       const target = await client.query(
         `SELECT ((SELECT count(*) FROM catalog_references WHERE owner_key=$1) +
                  (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1))::int AS records`, [targetOwnerKey],
       );
       if (Number(target.rows[0]?.records) === 0) { await client.query('ROLLBACK'); return { ok: false, reason: 'previous_catalog_not_found' }; }
+      const duplicate = await client.query(
+        `SELECT 1 FROM catalog_references current JOIN catalog_references target
+         ON target.owner_key=$2 AND target.original_sha256=current.original_sha256
+         WHERE current.owner_key=$1 LIMIT 1`, [currentOwnerKey, targetOwnerKey],
+      );
+      if (duplicate.rows[0]) { await client.query('ROLLBACK'); return { ok: false, reason: 'duplicate_items_require_review' }; }
+      const libraryConflict = await client.query(
+        `SELECT 1 FROM catalog_libraries current JOIN catalog_libraries target
+         ON target.owner_key=$2 AND lower(target.name)=lower(current.name)
+         WHERE current.owner_key=$1 AND current.id<>$3 AND target.id<>$4 LIMIT 1`,
+        [currentOwnerKey, targetOwnerKey, `inbox:${currentOwnerKey}`, `inbox:${targetOwnerKey}`],
+      );
+      if (libraryConflict.rows[0]) { await client.query('ROLLBACK'); return { ok: false, reason: 'library_names_require_review' }; }
+      const currentInbox = `inbox:${currentOwnerKey}`; const targetInbox = `inbox:${targetOwnerKey}`;
+      await client.query(`INSERT INTO catalog_libraries(id,owner_key,name,description) VALUES($1,$2,'Inbox','Documents awaiting cultivation') ON CONFLICT(id) DO NOTHING`, [targetInbox, targetOwnerKey]);
+      await client.query('UPDATE catalog_libraries SET parent_id=$2 WHERE parent_id=$1', [currentInbox, targetInbox]);
+      await client.query(`INSERT INTO catalog_library_items(library_id,reference_id)
+        SELECT $2,reference_id FROM catalog_library_items WHERE library_id=$1 ON CONFLICT DO NOTHING`, [currentInbox, targetInbox]);
+      await client.query('DELETE FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [currentInbox, currentOwnerKey]);
+      await client.query('UPDATE catalog_libraries SET owner_key=$2 WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query('UPDATE catalog_references SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query('UPDATE catalog_annotations SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query(`DELETE FROM catalog_library_shares current USING catalog_library_shares target
+        WHERE current.grantee_owner_key=$1 AND target.grantee_owner_key=$2 AND current.library_id=target.library_id`, [currentOwnerKey, targetOwnerKey]);
+      await client.query('UPDATE catalog_library_shares SET grantee_owner_key=$2 WHERE grantee_owner_key=$1', [currentOwnerKey, targetOwnerKey]);
       await client.query('UPDATE catalog_identities SET owner_key=$2,current_email=$3,updated_at=now() WHERE identity_key=$1', [identityKey, targetOwnerKey, currentEmail]);
       await client.query('COMMIT'); return { ok: true };
     } catch (error) { await client.query('ROLLBACK'); throw error; }

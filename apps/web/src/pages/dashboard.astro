@@ -64,7 +64,7 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
           <label><span>Previous Authentik email</span><input type="email" name="previousEmail" required placeholder="previous@email.example" /></label>
           <button class="button primary" type="submit">Recover previous catalog</button>
           <output aria-live="polite"></output>
-          <p>This one-time administrative action links the stable Authentik subject to an unclaimed previous catalog. The current catalog must be empty.</p>
+          <p>This administrative action links the stable Authentik subject to an unclaimed previous catalog and safely merges a current catalog when there are no duplicate items or library-name conflicts.</p>
         </form>
       ) : <p class="account-note">Catalog recovery is restricted to Authentik/Seshat administrators.</p>}
     </section>
@@ -79,7 +79,7 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       const response = await fetch('/api/account/recover', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ previousEmail }) });
       const result = await response.json().catch(() => ({}));
       if (response.ok) { output.value = 'Catalog recovered. Reloading…'; location.reload(); return; }
-      const labels: Record<string,string> = { catalog_already_linked:'That catalog already belongs to another identity.', current_catalog_not_empty:'The current catalog is not empty; merge requires an explicit migration.', previous_catalog_not_found:'No previous catalog was found for that email.', stable_identity_required:'Sign out and back in to refresh the stable Authentik identity.' };
+      const labels: Record<string,string> = { catalog_already_linked:'That catalog already belongs to another identity.', duplicate_items_require_review:'Both catalogs contain the same original file; review is required before merging.', library_names_require_review:'Both catalogs contain a library with the same name; rename one before merging.', previous_catalog_not_found:'No previous catalog was found for that email.', stable_identity_required:'Sign out and back in to refresh the stable Authentik identity.' };
       output.value = labels[result.error] || result.error || 'Recovery failed.'; button.disabled = false;
     });
   </script>
