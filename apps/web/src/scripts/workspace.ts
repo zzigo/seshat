@@ -16,6 +16,7 @@ type ReferenceRow = {
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
 type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[] };
+type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
 
@@ -773,11 +774,74 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       library.name = result.library.name; renderTree(search.value); setSaveState(`${kind} renamed`);
     };
     const shareLibrary = async (library: LibraryNode) => {
-      const email = (await requestText('Share library', `Musiki user email for “${library.name}”`, '', 'Share'))?.toLowerCase(); if (!email) return;
-      const response = await fetch(`/api/libraries/${library.id}/shares`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) { setSaveState(result.error || 'Share failed', 'error'); return; }
-      setSaveState(`shared with ${email}`);
+      const dialog = dialogShell('Share library');
+      dialog.classList.add('share-search-dialog');
+      const form = document.createElement('form'); form.className = 'dialog-share-search';
+      const heading = document.createElement('p'); heading.textContent = `Share “${library.name}” with a registered Musiki user or group.`;
+      const input = document.createElement('input'); input.type = 'search'; input.autocomplete = 'off'; input.placeholder = 'Search users, groups, course or year…'; input.setAttribute('aria-label', 'Search Musiki users and groups');
+      const status = document.createElement('p'); status.className = 'share-search-status'; status.setAttribute('aria-live', 'polite');
+      const results = document.createElement('div'); results.className = 'share-search-results'; results.setAttribute('role', 'listbox');
+      const footer = document.createElement('footer');
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      const manual = document.createElement('button'); manual.type = 'submit'; manual.className = 'primary'; manual.textContent = 'Share email'; manual.disabled = true;
+      footer.append(cancel, manual); form.append(heading, input, status, results, footer); dialog.appendChild(form);
+
+      let searchTimer = 0;
+      let requestController: AbortController | null = null;
+      const setBusy = (busy: boolean) => {
+        input.disabled = busy;
+        results.querySelectorAll<HTMLButtonElement>('button').forEach((button) => { button.disabled = busy; });
+        manual.disabled = busy || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value.trim());
+      };
+      const submitTarget = async (target: ShareTarget) => {
+        const emails = target.type === 'group' ? target.emails || [] : target.email ? [target.email] : [];
+        if (!emails.length) return;
+        setBusy(true); status.textContent = target.type === 'group' ? `Sharing with ${emails.length} group members…` : 'Sharing…';
+        const response = await fetch(`/api/libraries/${library.id}/shares`, {
+          method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ emails }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) { setBusy(false); status.textContent = result.error || 'Share failed'; status.dataset.tone = 'error'; return; }
+        setSaveState(`shared with ${target.label}`); dialog.close();
+      };
+      const renderTargets = (targets: ShareTarget[]) => {
+        results.replaceChildren();
+        if (!targets.length) { status.textContent = 'No registered users or groups found.'; return; }
+        status.textContent = `${targets.length} ${targets.length === 1 ? 'match' : 'matches'}`;
+        targets.forEach((target) => {
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'share-search-option'; button.setAttribute('role', 'option');
+          const kind = document.createElement('span'); kind.className = 'share-search-kind'; kind.textContent = target.type === 'group' ? 'GROUP' : 'USER';
+          const copy = document.createElement('span'); copy.className = 'share-search-copy';
+          const label = document.createElement('strong'); label.textContent = target.label;
+          const detail = document.createElement('small'); detail.textContent = target.type === 'group' ? `${target.memberCount || target.emails?.length || 0} members` : target.email || '';
+          copy.append(label, detail); button.append(kind, copy); button.addEventListener('click', () => void submitTarget(target)); results.appendChild(button);
+        });
+      };
+      const loadTargets = async () => {
+        requestController?.abort(); requestController = new AbortController();
+        status.dataset.tone = ''; status.textContent = 'Searching Musiki…';
+        try {
+          const response = await fetch(`/api/share-targets?q=${encodeURIComponent(input.value.trim())}`, { signal: requestController.signal });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || 'Could not search Musiki.');
+          renderTargets(Array.isArray(result.targets) ? result.targets : []);
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') return;
+          results.replaceChildren(); status.dataset.tone = 'error'; status.textContent = error instanceof Error ? error.message : 'Could not search Musiki.';
+        }
+      };
+
+      input.addEventListener('input', () => {
+        manual.disabled = !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value.trim());
+        window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void loadTargets(), 180);
+      });
+      form.addEventListener('submit', (event) => {
+        event.preventDefault(); const email = input.value.trim().toLowerCase();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) void submitTarget({ id: `manual:${email}`, type: 'user', label: email, email });
+      });
+      cancel.addEventListener('click', () => dialog.close());
+      dialog.addEventListener('close', () => { window.clearTimeout(searchTimer); requestController?.abort(); });
+      window.requestAnimationFrame(() => { input.focus(); void loadTargets(); });
     };
     const manageSharing = async (library: LibraryNode) => {
       const response = await fetch(`/api/libraries/${library.id}/shares`); const result = await response.json().catch(() => ({}));

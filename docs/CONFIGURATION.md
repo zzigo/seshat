@@ -28,6 +28,7 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `GOOGLE_API_KEY` | Legacy fallback | none | Backward-compatible Google Books key fallback |
 | `SESHAT_INTEGRATION_TOKEN` | Required for external consumers | none | Long random bearer secret for trusted server-to-server citation search; never expose it to browser code |
 | `SESHAT_INTEGRATION_OWNER_KEY` | Optional | owner derived from `X-Seshat-Owner` email | Fixed 32-character catalog owner key for a deployment exposing one curated bibliography to trusted consumers |
+| `MUSIKI_API_URL` | No | `https://musiki.org.ar` | Musiki server used to list registered users and course groups in Share Library |
 | `SITE_URL` | Optional | fallback to `AUTH_URL`, then localhost | Alternative external site/origin setting |
 | `HOST` | Optional | framework default; PM2 sets `127.0.0.1` | Astro listen address |
 | `PORT` | Optional | `4331` | Astro listen port |
