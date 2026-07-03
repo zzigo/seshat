@@ -121,6 +121,12 @@ Annotations are personal layers scoped by both `reference_id` and the annotator'
 
 PDF annotation is part of the document visualizer: PDF.js renders canvas and selectable text layers, while persisted normalized rectangles form the highlight layer and a collapsible right sidebar exposes the index. The separate Annotation pod contains only the index/editor for one attached reference and never duplicates the document viewer. Legacy text selectors can reanchor by exact quote and surrounding context. Colors are presentation; categories remain stable for search, accessibility and future Musiki exports.
 
+### `catalog_identities`
+
+Authentik email is mutable and is not a durable ownership identifier. Middleware binds the OIDC provider plus stable `sub` claim to the existing opaque `owner_key`, updates current email as profile metadata, and caches the alias for legacy routes. The account dashboard can recover a previous email-derived catalog only for configured Authentik/Seshat administrators, only while the new catalog is empty, and only when the target catalog is not linked to another identity.
+
+The username opens `/dashboard`, which aggregates items, exact extracted word counts, annotations, libraries, publication years, structured authors and tags. Word counts are recorded by the Docling worker from generated Markdown; `npm run backfill:words -- --apply` fills existing zero-count records from private R2 derivatives.
+
 ## Upload and ingestion data flow
 
 1. The authenticated user drops PDF, EPUB, DOCX, TXT or BibTeX on `/workspace`.

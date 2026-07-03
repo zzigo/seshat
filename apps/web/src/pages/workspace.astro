@@ -63,7 +63,7 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
           <button type="button" data-open-tool="annotation">Annotation</button>
           <button type="button" data-open-tool="agent">AI agent</button>
         </nav>
-        <div class="workspace-session"><span data-save-state>ready</span><span>{(Astro.locals.session as any)?.user?.name || email}</span><SignOut><span>sign out</span></SignOut></div>
+        <div class="workspace-session"><span data-save-state>ready</span><a href="/dashboard">{(Astro.locals.session as any)?.user?.name || email}</a><SignOut><span>sign out</span></SignOut></div>
       </header>
       <div class="workspace-shell">
         <aside class="workspace-sidebar">

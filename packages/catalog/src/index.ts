@@ -43,6 +43,7 @@ export interface CatalogReference {
   url?: string;
   source: Record<string, unknown>;
   originalSha256: string;
+  wordCount: number;
   artifacts: CatalogArtifact[];
   jobs: CatalogJob[];
   createdAt: string;
@@ -110,6 +111,13 @@ export interface CatalogAnnotationInput {
   tags?: string[];
   targets?: string[];
   reviewStatus?: string;
+}
+
+export interface CatalogDashboardStats {
+  totals: { items: number; words: number; libraries: number; annotations: number };
+  topAuthors: Array<{ name: string; count: number }>;
+  publicationYears: Array<{ year: number; count: number }>;
+  topTags: Array<{ name: string; count: number }>;
 }
 
 export interface CatalogDocumentInput {
@@ -210,6 +218,7 @@ const schema = `
     url text,
     source jsonb NOT NULL DEFAULT '{}'::jsonb,
     original_sha256 text NOT NULL,
+    word_count integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (owner_key, original_sha256)
@@ -219,6 +228,7 @@ const schema = `
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher_place text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS url text;
+  ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS word_count integer NOT NULL DEFAULT 0;
 
   CREATE TABLE IF NOT EXISTS catalog_artifacts (
     id text PRIMARY KEY,
@@ -302,6 +312,17 @@ const schema = `
     ON catalog_annotations (reference_id, owner_key, start_offset);
   ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS source_kind text NOT NULL DEFAULT 'markdown';
   ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS rects jsonb NOT NULL DEFAULT '[]'::jsonb;
+  CREATE TABLE IF NOT EXISTS catalog_identities (
+    identity_key text PRIMARY KEY,
+    owner_key text NOT NULL,
+    provider text NOT NULL,
+    subject text NOT NULL,
+    current_email text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (provider, subject)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_identities_owner_idx ON catalog_identities (owner_key);
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
@@ -328,6 +349,7 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   url: row.url ?? undefined,
   source: row.source ?? {},
   originalSha256: row.original_sha256,
+  wordCount: Number(row.word_count || 0),
   artifacts,
   jobs,
   createdAt: new Date(row.created_at).toISOString(),
@@ -357,6 +379,90 @@ export class PostgresCatalog {
       [ownerKey, sha256],
     );
     return result.rows[0] ? this.hydrate(result.rows[0], ownerKey) : null;
+  }
+
+  async bindIdentity(input: { identityKey: string; provider: string; subject: string; email: string; proposedOwnerKey: string }): Promise<string> {
+    await this.ensureSchema();
+    const existing = await this.pool.query('SELECT owner_key FROM catalog_identities WHERE identity_key=$1', [input.identityKey]);
+    if (existing.rows[0]) {
+      await this.pool.query('UPDATE catalog_identities SET current_email=$2,updated_at=now() WHERE identity_key=$1', [input.identityKey, input.email]);
+      return existing.rows[0].owner_key;
+    }
+    const result = await this.pool.query(
+      `INSERT INTO catalog_identities(identity_key,owner_key,provider,subject,current_email)
+       VALUES($1,$2,$3,$4,$5) ON CONFLICT(identity_key) DO UPDATE SET current_email=excluded.current_email,updated_at=now()
+       RETURNING owner_key`,
+      [input.identityKey, input.proposedOwnerKey, input.provider, input.subject, input.email],
+    );
+    return result.rows[0].owner_key;
+  }
+
+  async identityOwnerForEmail(email: string): Promise<string | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query('SELECT owner_key FROM catalog_identities WHERE lower(current_email)=lower($1) ORDER BY updated_at DESC LIMIT 1', [email]);
+    return result.rows[0]?.owner_key || null;
+  }
+
+  async recoverIdentity(identityKey: string, currentOwnerKey: string, targetOwnerKey: string, currentEmail: string): Promise<{ ok: boolean; reason?: string }> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const occupied = await client.query('SELECT identity_key FROM catalog_identities WHERE owner_key=$1 AND identity_key<>$2 LIMIT 1', [targetOwnerKey, identityKey]);
+      if (occupied.rows[0]) { await client.query('ROLLBACK'); return { ok: false, reason: 'catalog_already_linked' }; }
+      const current = await client.query(
+        `SELECT (SELECT count(*) FROM catalog_references WHERE owner_key=$1)::int AS references,
+                (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1 AND id<>$2)::int AS libraries`,
+        [currentOwnerKey, `inbox:${currentOwnerKey}`],
+      );
+      if (Number(current.rows[0]?.references) > 0 || Number(current.rows[0]?.libraries) > 0) {
+        await client.query('ROLLBACK'); return { ok: false, reason: 'current_catalog_not_empty' };
+      }
+      const target = await client.query(
+        `SELECT ((SELECT count(*) FROM catalog_references WHERE owner_key=$1) +
+                 (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1))::int AS records`, [targetOwnerKey],
+      );
+      if (Number(target.rows[0]?.records) === 0) { await client.query('ROLLBACK'); return { ok: false, reason: 'previous_catalog_not_found' }; }
+      await client.query('UPDATE catalog_identities SET owner_key=$2,current_email=$3,updated_at=now() WHERE identity_key=$1', [identityKey, targetOwnerKey, currentEmail]);
+      await client.query('COMMIT'); return { ok: true };
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async dashboardStats(ownerKey: string): Promise<CatalogDashboardStats> {
+    await this.ensureSchema();
+    const [totals, authors, years, tags] = await Promise.all([
+      this.pool.query(
+        `SELECT (SELECT count(*) FROM catalog_references WHERE owner_key=$1)::int AS items,
+                (SELECT COALESCE(sum(word_count),0) FROM catalog_references WHERE owner_key=$1)::bigint AS words,
+                (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1)::int AS libraries,
+                (SELECT count(*) FROM catalog_annotations WHERE owner_key=$1)::int AS annotations`, [ownerKey],
+      ),
+      this.pool.query(
+        `SELECT COALESCE(NULLIF(trim(person->>'family'),''),NULLIF(trim(person->>'literal'),''),NULLIF(trim(person->>'given'),'')) AS name,
+                count(DISTINCT r.id)::int AS count
+         FROM catalog_references r CROSS JOIN LATERAL jsonb_array_elements(r.contributors) person
+         WHERE r.owner_key=$1 AND COALESCE(person->>'role','author')='author'
+         GROUP BY name HAVING COALESCE(NULLIF(trim(person->>'family'),''),NULLIF(trim(person->>'literal'),''),NULLIF(trim(person->>'given'),'')) IS NOT NULL
+         ORDER BY count DESC,name LIMIT 10`, [ownerKey],
+      ),
+      this.pool.query(
+        `SELECT (issued->>'year')::int AS year,count(*)::int AS count FROM catalog_references
+         WHERE owner_key=$1 AND (issued->>'year') ~ '^[0-9]{4}$'
+         GROUP BY year ORDER BY year`, [ownerKey],
+      ),
+      this.pool.query(
+        `SELECT tag AS name,count(*)::int AS count FROM catalog_references CROSS JOIN LATERAL unnest(tags) tag
+         WHERE owner_key=$1 AND trim(tag)<>'' GROUP BY tag ORDER BY count DESC,name LIMIT 20`, [ownerKey],
+      ),
+    ]);
+    const row = totals.rows[0] || {};
+    return {
+      totals: { items: Number(row.items || 0), words: Number(row.words || 0), libraries: Number(row.libraries || 0), annotations: Number(row.annotations || 0) },
+      topAuthors: authors.rows.map((item) => ({ name: item.name, count: Number(item.count) })),
+      publicationYears: years.rows.map((item) => ({ year: Number(item.year), count: Number(item.count) })),
+      topTags: tags.rows.map((item) => ({ name: item.name, count: Number(item.count) })),
+    };
   }
 
   private mapAnnotation(row: any): CatalogAnnotation {

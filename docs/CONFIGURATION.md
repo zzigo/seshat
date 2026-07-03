@@ -14,6 +14,8 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `OIDC_ISSUER_URL` | Yes for Authentik | Authentik Seshat issuer fallback in `auth.config.ts` | OIDC discovery/issuer |
 | `OIDC_CLIENT_ID` | Yes for Authentik | none | Authentik OAuth client |
 | `OIDC_CLIENT_SECRET` | Yes for Authentik | none | Authentik OAuth secret |
+| `SESHAT_ADMIN_EMAILS` | No | empty | Comma-separated account-recovery administrators |
+| `SESHAT_ADMIN_GROUPS` | No | `authentik Admins,Seshat Admins` | Authentik groups allowed to recover a previous catalog identity |
 | `GOOGLE_CLIENT_ID` | Optional | none | Enables direct Google login when paired with its secret |
 | `GOOGLE_CLIENT_SECRET` | Optional | none | Enables direct Google login when paired with its client ID |
 | `DATABASE_URL` | Yes | none | PostgreSQL connection for web and worker |

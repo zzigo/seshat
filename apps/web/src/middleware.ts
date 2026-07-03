@@ -1,7 +1,8 @@
 import { defineMiddleware } from 'astro:middleware';
 import { getSession } from 'auth-astro/server';
+import { registerSessionIdentity } from './lib/catalog';
 
-const protectedPaths = ['/workspace', '/intake', '/library', '/bibliography', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography'];
+const protectedPaths = ['/workspace', '/dashboard', '/intake', '/library', '/bibliography', '/api/account', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   let session = null;
@@ -12,6 +13,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   context.locals.session = session;
+  if (session?.user?.email) await registerSessionIdentity(session).catch((error) => console.error('[seshat:identity]', error));
 
   if (protectedPaths.some((path) => context.url.pathname.startsWith(path)) && !session?.user?.email) {
     if (context.url.pathname.startsWith('/api/')) {

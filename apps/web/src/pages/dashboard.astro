@@ -1,0 +1,90 @@
+---
+import Shell from '../components/Shell.astro';
+import { getCatalog, isSessionAccountAdmin, ownerKeyFor, sessionIdentity } from '../lib/catalog';
+
+const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
+const stats = await getCatalog().dashboardStats(ownerKeyFor(identity.email));
+const admin = isSessionAccountAdmin(session);
+const years = stats.publicationYears; const width = 760; const height = 250; const padX = 42; const padY = 32;
+const minYear = years[0]?.year || new Date().getFullYear(); const maxYear = years.at(-1)?.year || minYear;
+const maxCount = Math.max(1, ...years.map((item) => item.count)); const span = Math.max(1, maxYear - minYear);
+const point = (item: { year: number; count: number }) => ({
+  x: padX + ((item.year - minYear) / span) * (width - padX * 2),
+  y: height - padY - (item.count / maxCount) * (height - padY * 2),
+});
+const points = years.map(point); const line = points.map((item) => `${item.x},${item.y}`).join(' ');
+const area = points.length ? `${padX},${height - padY} ${line} ${points.at(-1)!.x},${height - padY}` : '';
+const number = (value: number) => new Intl.NumberFormat('en').format(value);
+---
+
+<Shell title="Dashboard — Seshat">
+  <section class="account-dashboard">
+    <header class="dashboard-head">
+      <div><div class="eyebrow">Personal archive</div><h1>{session.user.name || identity.email}</h1><p>{identity.email}</p></div>
+      <a class="button quiet" href="/workspace">Open workspace →</a>
+    </header>
+
+    <div class="dashboard-totals">
+      <article><span>Items</span><strong>{number(stats.totals.items)}</strong></article>
+      <article><span>Words extracted</span><strong>{number(stats.totals.words)}</strong></article>
+      <article><span>Annotations</span><strong>{number(stats.totals.annotations)}</strong></article>
+      <article><span>Libraries</span><strong>{number(stats.totals.libraries)}</strong></article>
+    </div>
+
+    <section class="dashboard-panel years-panel">
+      <header><div><span>Publication history</span><h2>Items by year</h2></div><small>{minYear === maxYear ? minYear : `${minYear}—${maxYear}`}</small></header>
+      {years.length ? (
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Publication items by year">
+          {[0,.25,.5,.75,1].map((ratio) => <line x1={padX} x2={width-padX} y1={padY + ratio*(height-padY*2)} y2={padY + ratio*(height-padY*2)} />)}
+          <polygon points={area} class="year-area" />
+          <polyline points={line} class="year-line" />
+          {years.map((item) => { const p = point(item); return <g><circle cx={p.x} cy={p.y} r="4"><title>{item.year}: {item.count}</title></circle><text x={p.x} y={height-8}>{item.year}</text></g>; })}
+        </svg>
+      ) : <div class="dashboard-empty">No publication years yet.</div>}
+    </section>
+
+    <div class="dashboard-columns">
+      <section class="dashboard-panel ranking-panel">
+        <header><div><span>Corpus</span><h2>Top authors</h2></div><small>items</small></header>
+        <ol>{stats.topAuthors.map((author) => <li><span>{author.name}</span><b>{author.count}</b></li>)}</ol>
+        {!stats.topAuthors.length && <div class="dashboard-empty">No structured authors yet.</div>}
+      </section>
+      <section class="dashboard-panel ranking-panel tags-panel">
+        <header><div><span>Vocabulary</span><h2>Top tags</h2></div><small>items</small></header>
+        <div class="tag-cloud">{stats.topTags.map((tag) => <span style={`--weight:${Math.max(.72,Math.min(1.45,.72+tag.count*.1))}`}>{tag.name}<b>{tag.count}</b></span>)}</div>
+        {!stats.topTags.length && <div class="dashboard-empty">No tags yet.</div>}
+      </section>
+    </div>
+
+    <section class="dashboard-panel account-panel">
+      <header><div><span>Identity</span><h2>Authentik account</h2></div><small>stable subject linked</small></header>
+      <dl><div><dt>Current email</dt><dd>{identity.email}</dd></div><div><dt>Provider</dt><dd>{identity.provider}</dd></div><div><dt>Subject</dt><dd>{identity.subject ? `${identity.subject.slice(0,8)}…` : 'refresh login required'}</dd></div></dl>
+      {admin ? (
+        <form data-recover-catalog>
+          <label><span>Previous Authentik email</span><input type="email" name="previousEmail" required placeholder="previous@email.example" /></label>
+          <button class="button primary" type="submit">Recover previous catalog</button>
+          <output aria-live="polite"></output>
+          <p>This one-time administrative action links the stable Authentik subject to an unclaimed previous catalog. The current catalog must be empty.</p>
+        </form>
+      ) : <p class="account-note">Catalog recovery is restricted to Authentik/Seshat administrators.</p>}
+    </section>
+  </section>
+
+  <script>
+    const form = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault(); const button = form.querySelector<HTMLButtonElement>('button'); const output = form.querySelector<HTMLOutputElement>('output');
+      const previousEmail = String(new FormData(form).get('previousEmail') || ''); if (!button || !output) return;
+      button.disabled = true; output.value = 'Checking previous catalog…';
+      const response = await fetch('/api/account/recover', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ previousEmail }) });
+      const result = await response.json().catch(() => ({}));
+      if (response.ok) { output.value = 'Catalog recovered. Reloading…'; location.reload(); return; }
+      const labels: Record<string,string> = { catalog_already_linked:'That catalog already belongs to another identity.', current_catalog_not_empty:'The current catalog is not empty; merge requires an explicit migration.', previous_catalog_not_found:'No previous catalog was found for that email.', stable_identity_required:'Sign out and back in to refresh the stable Authentik identity.' };
+      output.value = labels[result.error] || result.error || 'Recovery failed.'; button.disabled = false;
+    });
+  </script>
+</Shell>
+
+<style>
+  .account-dashboard{width:min(1180px,calc(100% - 36px));margin:0 auto;padding:76px 0 100px}.dashboard-head{display:flex;align-items:end;justify-content:space-between;gap:30px;padding-bottom:30px;border-bottom:1px solid var(--ink)}.dashboard-head h1{margin:7px 0 4px;font-size:clamp(40px,6vw,76px)}.dashboard-head p{margin:0;color:var(--muted);font:11px monospace}.dashboard-totals{display:grid;grid-template-columns:repeat(4,1fr);border-left:1px solid var(--ink);margin:22px 0}.dashboard-totals article{min-height:132px;display:flex;flex-direction:column;justify-content:space-between;padding:18px;border-top:1px solid var(--ink);border-right:1px solid var(--ink);border-bottom:1px solid var(--ink);background:rgba(255,255,255,.16)}.dashboard-totals span,.dashboard-panel header span{color:var(--green);font:9px monospace;letter-spacing:.08em;text-transform:uppercase}.dashboard-totals strong{font:42px/1 Georgia,serif}.dashboard-panel{border:1px solid var(--ink);background:rgba(255,255,255,.13)}.dashboard-panel>header{min-height:64px;display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--ink)}.dashboard-panel h2{margin:4px 0 0;font:25px/1.1 Georgia,serif}.dashboard-panel header small{color:var(--muted);font:9px monospace;text-transform:uppercase}.years-panel svg{width:100%;height:auto;display:block;overflow:visible}.years-panel line{stroke:var(--line);stroke-width:1}.year-area{fill:rgba(61,122,88,.11)}.year-line{fill:none;stroke:var(--green);stroke-width:2}.years-panel circle{fill:var(--paper);stroke:var(--gold);stroke-width:2}.years-panel text{fill:var(--muted);font:8px monospace;text-anchor:middle}.dashboard-columns{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin:22px 0}.ranking-panel ol{margin:0;padding:0;list-style:none}.ranking-panel li{min-height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);font:15px Georgia,serif}.ranking-panel li:last-child{border-bottom:0}.ranking-panel li b{color:var(--green);font:10px monospace}.tag-cloud{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;padding:17px}.tag-cloud>span{padding:7px 9px;border:1px solid var(--line);font:calc(10px * var(--weight)) monospace}.tag-cloud b{margin-left:7px;color:var(--green);font-size:8px}.dashboard-empty{padding:35px;color:var(--muted);font:12px monospace;text-align:center}.account-panel dl{display:grid;grid-template-columns:repeat(3,1fr);margin:0}.account-panel dl div{padding:14px;border-right:1px solid var(--line)}.account-panel dt{color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel dd{margin:5px 0 0;overflow:hidden;font:12px monospace;text-overflow:ellipsis}.account-panel form{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:9px;align-items:end;padding:18px;border-top:1px solid var(--line)}.account-panel label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel input{height:37px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:12px monospace}.account-panel output{grid-column:1/-1;color:var(--green);font:10px monospace}.account-panel form p{grid-column:1/-1;margin:0;color:var(--muted);font:10px/1.4 monospace}.account-note{margin:0;padding:18px;color:var(--muted);font:11px monospace}@media(max-width:760px){.account-dashboard{padding-top:45px}.dashboard-head{align-items:start;flex-direction:column}.dashboard-totals{grid-template-columns:1fr 1fr}.dashboard-columns{grid-template-columns:1fr}.account-panel dl{grid-template-columns:1fr}.account-panel dl div{border-right:0;border-bottom:1px solid var(--line)}.account-panel form{grid-template-columns:1fr}.years-panel svg{min-width:650px}.years-panel{overflow:auto}}
+</style>

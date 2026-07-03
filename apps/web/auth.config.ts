@@ -49,4 +49,22 @@ export default defineConfig({
       },
     },
   ],
+  callbacks: {
+    async jwt({ token, account, profile }) {
+      if (profile) {
+        (token as any).identitySubject = String((profile as any).sub || token.sub || '');
+        (token as any).identityProvider = String(account?.provider || 'oidc');
+        (token as any).groups = Array.isArray((profile as any).groups) ? (profile as any).groups.map(String) : [];
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        (session.user as any).id = String((token as any).identitySubject || token.sub || '');
+        (session.user as any).provider = String((token as any).identityProvider || 'authentik');
+        (session.user as any).groups = Array.isArray((token as any).groups) ? (token as any).groups : [];
+      }
+      return session;
+    },
+  },
 });

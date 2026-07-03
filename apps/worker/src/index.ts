@@ -78,9 +78,11 @@ async function extract(job: Claimed) {
     await exec(python, ['-m', 'seshat_ingest.cli', source, '--reference-id', job.reference_id,
       '--artifact-id', original.id, '--output', output], { env: { ...process.env, PYTHONPATH: join(process.cwd(), 'services/ingest') }, maxBuffer: 10 * 1024 * 1024 });
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
+    let wordCount = 0;
     for (const item of manifest.artifacts) {
       await assertJobRunning(job);
       const bytes = await readFile(join(output, item.filename));
+      if (item.kind === 'markdown') wordCount = (new TextDecoder().decode(bytes).match(/\p{L}[\p{L}\p{N}'’\-]*/gu) || []).length;
       const key = `seshat/${reference.owner_key}/${job.reference_id}/derived/docling/${item.filename}`;
       const stored = await r2.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: item.media_type, CacheControl: 'private, no-store' }));
       await catalog.pool.query(`INSERT INTO catalog_artifacts
@@ -88,7 +90,8 @@ async function extract(job: Claimed) {
         VALUES($1,$2,$3,'r2',$4,$5,$6,$7,$8,$9) ON CONFLICT(object_key) DO NOTHING`,
         [randomUUID(), job.reference_id, item.kind, key, bucket, item.media_type, item.size_bytes, item.sha256, stored.ETag?.replaceAll('"','')]);
     }
-    await complete(job, 'identify', { parser: manifest.parser, sourceSha256: manifest.source_sha256 });
+    await catalog.pool.query('UPDATE catalog_references SET word_count=$2,updated_at=now() WHERE id=$1', [job.reference_id, wordCount]);
+    await complete(job, 'identify', { parser: manifest.parser, sourceSha256: manifest.source_sha256, wordCount });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 

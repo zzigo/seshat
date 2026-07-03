@@ -29,9 +29,9 @@ export const GET: APIRoute = async ({ request, url }) => {
   if (!keys.length) return Response.json({ items: [], missing: [] });
 
   try {
-    const references = await getCatalog().resolveCitationKeys(
-      integration.ownerKey || ownerKeyFor(integration.email || ''), keys,
-    );
+    const catalog = getCatalog();
+    const ownerKey = integration.ownerKey || await catalog.identityOwnerForEmail(integration.email || '') || ownerKeyFor(integration.email || '');
+    const references = await catalog.resolveCitationKeys(ownerKey, keys);
     const found = new Set(references.map((reference) => reference.citeKey));
     return Response.json({
       items: references.map((reference) => {

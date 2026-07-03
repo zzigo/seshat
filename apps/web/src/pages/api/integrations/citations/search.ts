@@ -13,9 +13,9 @@ export const GET: APIRoute = async ({ request, url }) => {
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(50, Math.trunc(requestedLimit))) : 20;
 
   try {
-    const references = await getCatalog().searchCitations(
-      integration.ownerKey || ownerKeyFor(integration.email || ''), query, limit, libraryId,
-    );
+    const catalog = getCatalog();
+    const ownerKey = integration.ownerKey || await catalog.identityOwnerForEmail(integration.email || '') || ownerKeyFor(integration.email || '');
+    const references = await catalog.searchCitations(ownerKey, query, limit, libraryId);
     return Response.json({ items: references.map((reference) => ({
       id: reference.id,
       citeKey: reference.citeKey,

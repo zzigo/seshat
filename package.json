@@ -14,6 +14,7 @@
     "test:packages": "npm run test --workspaces --if-present",
     "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",
     "migrate:contributors": "node scripts/migrate-contributors.mjs",
+    "backfill:words": "node scripts/backfill-word-counts.mjs",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
