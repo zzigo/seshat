@@ -84,6 +84,8 @@ ecosystem.config.cjs    PM2 definitions and .env loader
 
 Canonical records scoped by `owner_key`. Important fields include citekey, type, title, contributors, issued date, identifiers, tags, abstract, language, source/provenance, and the SHA-256 of the original. `(owner_key, original_sha256)` prevents duplicate uploads for one owner.
 
+`contributors` is a canonical ordered JSON array, never a display string. A personal name stores `family`, `given` and `role`; an institution or intentionally unsplit name stores `literal` and `role`. The table exposes one compact Contributors column whose mini editor adds, removes, reorders and assigns roles without multiplying columns. CSL groups names by role, while Better BibTeX emits corresponding `author`, `editor`, `translator` and `composer` fields.
+
 ### `catalog_artifacts`
 
 Links a reference to an R2 object. Every artifact retains kind, provider, object key, bucket, MIME type, size, SHA-256 and optional ETag.
@@ -162,7 +164,7 @@ Manual edits store `source.curation.manualFields`. The worker checks these marke
 The authenticated `/workspace` is a desktop-oriented shell:
 
 - Stable left tree: search, all references, hierarchical libraries, drag/drop moves, CRUD and read-only shared subtrees.
-- Handsontable catalog pod: fixed-height rows with truncated cell text, plus bulk edit of title, authors, year, type, ISBN, language, tags, citekey and abstract.
+- Handsontable catalog pod: fixed-height rows with truncated cell text, bulk scalar metadata editing, and a structured contributor mini editor opened from the Contributors cell or context menu.
 - Dockview host: catalog, PDF, extracted text, structure, BibTeX inspection, analysis, annotation and agent pods.
 - Bottom activity HUD: upload, extraction, identification, errors and “Open map” action.
 - Dockview layout persists in browser `localStorage`; temporary parsed BibTeX payloads use `sessionStorage`.

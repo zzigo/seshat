@@ -113,6 +113,8 @@ These counts are a diagnostic snapshot and will naturally become stale.
 
 Do not place secrets, API keys or database URLs in issues, logs or these documents. One credential was shared during early development; production now uses the VPS-IP-restricted Books API credential and values remain only in `.env`.
 
+Contributor names are stored structurally. `npm run migrate:contributors` previews the conservative legacy-literal conversion; add `-- --apply` only after reviewing aggregate counts. The migration automatically handles `Family, Given` and simple two-token personal names, preserves institutions and leaves ambiguous multi-token literals for the UI editor.
+
 ## Recommended next sequence
 
 1. Extend the page-aware PDF.js annotation layer with export/grouping views for Musiki Lecturas and robust multi-page selections.

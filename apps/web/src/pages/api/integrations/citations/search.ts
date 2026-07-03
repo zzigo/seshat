@@ -1,13 +1,7 @@
 import type { APIRoute } from 'astro';
+import { contributorName } from '@seshat/core';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { authenticateIntegration } from '../../../../lib/integration-auth';
-
-const contributorName = (value: unknown): string => {
-  if (!value || typeof value !== 'object') return '';
-  const contributor = value as Record<string, unknown>;
-  if (contributor.literal) return String(contributor.literal);
-  return [contributor.family, contributor.given].filter(Boolean).map(String).join(', ');
-};
 
 export const GET: APIRoute = async ({ request, url }) => {
   const integration = authenticateIntegration(request);
@@ -27,7 +21,7 @@ export const GET: APIRoute = async ({ request, url }) => {
       citeKey: reference.citeKey,
       type: reference.type,
       title: reference.title,
-      authors: reference.contributors.map(contributorName).filter(Boolean),
+      authors: reference.contributors.filter((person: any) => String(person?.role || 'author') === 'author').map((person: any) => contributorName(person, true)).filter(Boolean),
       year: Number((reference.issued as Record<string, unknown> | undefined)?.year) || null,
       identifiers: reference.identifiers,
       tags: reference.tags,

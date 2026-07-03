@@ -140,7 +140,8 @@ Updates curated metadata. Request format is `multipart/form-data`.
 | Field | Validation |
 |---|---|
 | `title` | required, 1–1000 characters |
-| `authors` | newline- or semicolon-separated, at most 50 |
+| `contributors` | JSON array, at most 50; each entry has a role plus `family`/`given` or `literal` |
+| `authors` | legacy fallback only; newline- or semicolon-separated literals |
 | `year` | empty or integer 1–2100 |
 | `isbns` | newline-, comma- or semicolon-separated; normalized and checksum-validated |
 | `citeKey` | 1–160 letters, numbers, colon, underscore or hyphen |
@@ -149,7 +150,7 @@ Updates curated metadata. Request format is `multipart/form-data`.
 | `language` | first 32 characters |
 | `abstract` | first 20,000 characters |
 
-All fields handled by this endpoint are marked as manual. Later agentic identification must preserve them.
+Only fields changed by the curator are marked as manual. Later agentic identification must preserve them. Contributor roles are `author`, `editor`, `translator`, `composer`, `performer` and `contributor`; order is significant.
 
 ### `GET /api/library/:id/status`
 

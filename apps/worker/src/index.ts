@@ -6,7 +6,7 @@ import { basename, extname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgresCatalog } from '@seshat/catalog';
-import { isValidIsbn, normalizeIsbn } from '@seshat/core';
+import { isValidIsbn, normalizeContributor, normalizeIsbn } from '@seshat/core';
 
 const exec = promisify(execFile);
 const catalog = new PostgresCatalog(process.env.DATABASE_URL || '');
@@ -193,7 +193,7 @@ async function persistInference(job: Claimed, reference: any, inference: any, te
   await catalog.pool.query(`UPDATE catalog_references SET title=$2, contributors=$3::jsonb, issued=$4::jsonb,
     source=source || $5::jsonb, updated_at=now() WHERE id=$1`, [job.reference_id,
     titleAccepted ? candidateTitle : reference.title,
-    JSON.stringify(authorsAccepted ? acceptedAuthors.map((literal:string)=>({literal,role:'author'})) : reference.contributors),
+    JSON.stringify(authorsAccepted ? acceptedAuthors.map((name:string) => normalizeContributor(name, { inferSimpleNames: true })).filter(Boolean) : reference.contributors),
     JSON.stringify(yearAccepted ? {year:numericYear} : reference.issued),
     JSON.stringify({identification:{provider:'docling-ollama',status:'inferred',confidence,
       accepted:{title:titleAccepted,authors:authorsAccepted,year:yearAccepted},inference}})]);
@@ -250,7 +250,7 @@ async function identify(job: Claimed) {
   const manual = new Set<string>(reference.source?.curation?.manualFields || []);
   const title = manual.has('title') ? reference.title : (volume.title || reference.title);
   const contributors = manual.has('contributors') ? reference.contributors
-    : (volume.authors || []).map((literal:string)=>({literal,role:'author'}));
+    : (volume.authors || []).map((name:string) => normalizeContributor(name, { inferSimpleNames: true })).filter(Boolean);
   const issued = manual.has('issued') ? reference.issued
     : (volume.publishedDate ? {year:Number(String(volume.publishedDate).slice(0,4))||undefined} : null);
   const identifiers = manual.has('identifiers') ? reference.identifiers : { ...reference.identifiers, isbn: isbns };

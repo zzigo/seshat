@@ -1,6 +1,7 @@
 import Handsontable from 'handsontable';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
+import { CONTRIBUTOR_ROLES, contributorSummary, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer } from './pdf-viewer';
 import { referenceFileType } from '../lib/reference-file';
@@ -8,7 +9,7 @@ import { referenceFileType } from '../lib/reference-file';
 registerAllModules();
 
 type ReferenceRow = {
-  id: string; citeKey: string; type: string; title: string; authors: string; year: number | string;
+  id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
   isbn: string; language: string; tags: string; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string;
   libraryIds: string[]; status: string; hasStructure: boolean; hasText: boolean; access: 'owner' | 'viewer';
@@ -27,8 +28,8 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   citeKey: reference.citeKey,
   type: reference.type,
   title: reference.title,
-  authors: (reference.contributors || []).map((contributor:any) => contributor.literal
-    || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('; '),
+  contributors: normalizeContributors(reference.contributors || []),
+  contributorsDisplay: contributorSummary(reference.contributors || []),
   year: reference.issued?.year || '',
   isbn: (reference.identifiers?.isbn || []).join('; '),
   language: reference.language || '',
@@ -152,7 +153,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     setSaveState('saving…', 'saving');
     const form = new FormData();
     form.set('title', row.title);
-    form.set('authors', row.authors);
+    form.set('contributors', JSON.stringify(row.contributors));
     form.set('year', String(row.year || ''));
     form.set('isbns', row.isbn);
     form.set('citeKey', row.citeKey);
@@ -193,9 +194,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     'paper-conference': 'inproceedings', thesis: 'phdthesis', report: 'techreport', book: 'book',
   }[type] || 'misc');
   const toBetterBibtex = (rows: ReferenceRow[]) => rows.map((row) => {
+    const byRole = (role: Contributor['role']) => row.contributors.filter((person) => person.role === role)
+      .map((person) => person.literal || [person.family, person.given].filter(Boolean).join(', ')).filter(Boolean).join(' and ');
     const fields: Array<[string, string]> = [
       ['title', row.title],
-      ['author', row.authors.split(';').map((author) => author.trim()).filter(Boolean).join(' and ')],
+      ['author', byRole('author')],
+      ['editor', byRole('editor')],
+      ['translator', byRole('translator')],
+      ['composer', byRole('composer')],
       ['year', String(row.year || '')],
       ['publisher', row.publisher],
       ['address', row.publisherPlace],
@@ -208,14 +214,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const body = fields.map(([key, value]) => `  ${key} = {${bibtexEscape(value)}}`).join(',\n');
     return `@${bibtexType(row.type)}{${row.citeKey || row.id},\n${body}\n}`;
   }).join('\n\n');
-  const apaAuthor = (author: string) => {
-    const [family, ...givenParts] = author.split(',').map((part) => part.trim());
-    if (!givenParts.length) return family;
-    const initials = givenParts.join(' ').split(/\s+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase()}.`).join(' ');
-    return `${family}, ${initials}`;
+  const apaContributor = (person: Contributor) => {
+    if (person.literal) return person.literal;
+    const initials = String(person.given || '').split(/\s+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase()}.`).join(' ');
+    return [person.family, initials].filter(Boolean).join(', ');
   };
   const toApa = (row: ReferenceRow) => {
-    const people = row.authors.split(';').map((author) => author.trim()).filter(Boolean).map(apaAuthor);
+    const primary = row.contributors.filter((person) => person.role === 'author');
+    const people = (primary.length ? primary : row.contributors.filter((person) => person.role === 'editor')).map(apaContributor).filter(Boolean);
     const author = people.length > 1 ? `${people.slice(0, -1).join(', ')}, & ${people.at(-1)}` : people[0] || 'Unknown author';
     return `${author} (${row.year || 'n.d.'}). ${row.title}.${row.publisher ? ` ${row.publisher}.` : ''}${row.url ? ` ${row.url}` : ''}`;
   };
@@ -262,6 +268,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const referenceMenuItems = (ids: string[]) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     return [
+    { label: 'Edit contributors…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
@@ -269,6 +276,74 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Delete selected${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
     ];
+  };
+
+  const openContributorEditor = (row: ReferenceRow) => {
+    type DraftContributor = { role: Contributor['role']; family: string; given: string; literal: string };
+    let draft: DraftContributor[] = row.contributors.map((person) => ({
+      role: person.role || 'author', family: person.family || '', given: person.given || '', literal: person.literal || '',
+    }));
+    if (!draft.length) draft.push({ role: 'author', family: '', given: '', literal: '' });
+    const dialog = dialogShell(`Contributors · ${row.title}`); dialog.classList.add('contributor-dialog');
+    const editor = document.createElement('form'); editor.className = 'contributor-editor';
+    const guidance = document.createElement('p'); guidance.className = 'contributor-guidance';
+    guidance.textContent = 'Keep people structured as family + given. Use Literal for institutions or names that must not be parsed.';
+    const list = document.createElement('div'); list.className = 'contributor-list';
+    let dragged = -1;
+    const render = () => {
+      list.replaceChildren();
+      draft.forEach((person, index) => {
+        const item = document.createElement('div'); item.className = 'contributor-row';
+        item.addEventListener('dragstart', () => { dragged = index; item.classList.add('dragging'); });
+        item.addEventListener('dragend', () => { dragged = -1; item.classList.remove('dragging'); });
+        item.addEventListener('dragover', (event) => event.preventDefault());
+        item.addEventListener('drop', (event) => {
+          event.preventDefault(); if (dragged < 0 || dragged === index) return;
+          const [moved] = draft.splice(dragged, 1); draft.splice(index, 0, moved); render();
+        });
+        const handle = document.createElement('span'); handle.className = 'contributor-handle'; handle.textContent = '⋮⋮'; handle.title = 'Drag to reorder'; handle.draggable = true;
+        const role = document.createElement('select'); role.setAttribute('aria-label', `Role ${index + 1}`);
+        CONTRIBUTOR_ROLES.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; option.selected = value === person.role; role.appendChild(option); });
+        role.addEventListener('change', () => { person.role = role.value as Contributor['role']; });
+        const family = document.createElement('input'); family.placeholder = 'Family'; family.value = person.family; family.setAttribute('aria-label', `Family name ${index + 1}`);
+        const given = document.createElement('input'); given.placeholder = 'Given'; given.value = person.given; given.setAttribute('aria-label', `Given name ${index + 1}`);
+        const literal = document.createElement('input'); literal.placeholder = 'Institution / literal'; literal.value = person.literal; literal.setAttribute('aria-label', `Literal name ${index + 1}`);
+        const syncMode = () => { item.classList.toggle('is-literal', Boolean(literal.value.trim())); };
+        family.addEventListener('input', () => { person.family = family.value; }); given.addEventListener('input', () => { person.given = given.value; });
+        literal.addEventListener('input', () => { person.literal = literal.value; syncMode(); }); syncMode();
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'contributor-remove'; remove.textContent = '×'; remove.title = 'Remove contributor';
+        remove.addEventListener('click', () => { draft.splice(index, 1); render(); });
+        item.append(handle, role, family, given, literal, remove); list.appendChild(item);
+      });
+    };
+    render();
+    const pasteDetails = document.createElement('details'); pasteDetails.className = 'contributor-paste';
+    const pasteSummary = document.createElement('summary'); pasteSummary.textContent = 'Paste multiple names';
+    const pasteArea = document.createElement('textarea'); pasteArea.rows = 4; pasteArea.placeholder = 'One per line, preferably: Family, Given';
+    const pasteButton = document.createElement('button'); pasteButton.type = 'button'; pasteButton.textContent = 'Add pasted names';
+    pasteButton.addEventListener('click', () => {
+      const parsed = pasteArea.value.split(/[\n;]+/).map((value) => normalizeContributor(value)).filter((value): value is Contributor => Boolean(value));
+      draft.push(...parsed.map((person) => ({ role: person.role, family: person.family || '', given: person.given || '', literal: person.literal || '' })));
+      pasteArea.value = ''; pasteDetails.open = false; render();
+    });
+    pasteDetails.append(pasteSummary, pasteArea, pasteButton);
+    const footer = document.createElement('footer');
+    const add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Contributor';
+    add.addEventListener('click', () => { draft.push({ role: 'author', family: '', given: '', literal: '' }); render(); list.lastElementChild?.scrollIntoView({ block: 'nearest' }); });
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; cancel.addEventListener('click', () => dialog.close());
+    const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save contributors';
+    footer.append(add, cancel, save); editor.append(guidance, list, pasteDetails, footer); dialog.appendChild(editor);
+    editor.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const next = normalizeContributors(draft);
+      const previous = row.contributors; row.contributors = next; row.contributorsDisplay = contributorSummary(next);
+      refreshTable(); renderTree(search.value); save.disabled = true; save.textContent = 'Saving…';
+      try { await saveReference(row); dialog.close(); }
+      catch (error) {
+        row.contributors = previous; row.contributorsDisplay = contributorSummary(previous); refreshTable(); renderTree(search.value);
+        save.disabled = false; save.textContent = 'Save contributors'; setSaveState(error instanceof Error ? error.message : 'Save failed', 'error');
+      }
+    });
   };
 
   const mountCatalog = (element: HTMLElement) => {
@@ -300,7 +375,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       data: filteredRows(),
       columns: [
         { data: 'title', title: 'Title', width: 300 },
-        { data: 'authors', title: 'Authors', width: 220 },
+        { data: 'contributorsDisplay', title: 'Contributors', readOnly: true, className: 'contributors-cell', width: 260 },
         { data: 'year', title: 'Year', type: 'numeric', width: 72 },
         { data: 'type', title: 'Type', type: 'dropdown', source: ['document','article','article-journal','book','chapter','paper-conference','report','thesis'], width: 130 },
         { data: 'publisher', title: 'Publisher', width: 210 },
@@ -354,6 +429,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           catalogTable?.selectCell(coords.row, Math.max(0, coords.col));
           renderTree(search.value);
         }
+        if (event.detail === 2 && catalogTable?.colToProp(coords.col) === 'contributorsDisplay') { if (row.access !== 'viewer') openContributorEditor(row); return; }
         if (event.detail === 2) controller.openDocument(row.id, event.altKey);
       },
       afterSelectionEnd: (row, _column, row2) => {
@@ -631,7 +707,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       button.append(text, badge); button.addEventListener('click', () => { activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
       return button;
     };
-    const matched = payload.references.filter((reference) => !query || [reference.title, reference.authors, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
+    const matched = payload.references.filter((reference) => !query || [reference.title, reference.contributorsDisplay, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
     const moveReference = async (reference: ReferenceRow, libraryIds: string[]) => {
       const response = await fetch(`/api/library/${reference.id}/libraries`, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ libraryIds }) });
       const result = await response.json().catch(() => ({}));

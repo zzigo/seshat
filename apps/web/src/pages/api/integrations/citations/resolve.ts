@@ -41,8 +41,14 @@ export const GET: APIRoute = async ({ request, url }) => {
           id: reference.citeKey,
           type: cslType(reference.type),
           title: reference.title,
-          author: reference.contributors.map(cslAuthor).filter(Boolean),
         };
+        const names = (role: string) => reference.contributors
+          .filter((contributor: any) => String(contributor?.role || 'author') === role).map(cslAuthor).filter(Boolean);
+        const authors = names('author'); const editors = names('editor'); const translators = names('translator'); const composers = names('composer');
+        if (authors.length) item.author = authors;
+        if (editors.length) item.editor = editors;
+        if (translators.length) item.translator = translators;
+        if (composers.length) item.composer = composers;
         if (year) item.issued = { 'date-parts': [[year]] };
         if (reference.language) item.language = reference.language;
         if (reference.publisher) item.publisher = reference.publisher;

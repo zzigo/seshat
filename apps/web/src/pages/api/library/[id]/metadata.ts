@@ -1,4 +1,4 @@
-import { isValidIsbn, normalizeIsbn } from '@seshat/core';
+import { isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 
@@ -15,11 +15,16 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     return Response.json({ error: 'Title must contain between 1 and 1000 characters.' }, { status: 400 });
   }
 
-  const authors = text(form.get('authors')).split(/[\n;]+/)
-    .map((author) => author.trim()).filter(Boolean);
-  if (authors.length > 50 || authors.some((author) => author.length > 300)) {
-    return Response.json({ error: 'Use at most 50 authors, one per line.' }, { status: 400 });
+  let contributorInput: unknown[];
+  const structured = form.get('contributors');
+  if (structured !== null) {
+    try { const parsed = JSON.parse(String(structured)); if (!Array.isArray(parsed)) throw new Error('array'); contributorInput = parsed; }
+    catch { return Response.json({ error: 'Contributors must be a valid array.' }, { status: 400 }); }
+  } else {
+    contributorInput = text(form.get('authors')).split(/[\n;]+/).map((author) => author.trim()).filter(Boolean);
   }
+  if (contributorInput.length > 50) return Response.json({ error: 'Use at most 50 contributors.' }, { status: 400 });
+  const contributors = normalizeContributors(contributorInput);
 
   const yearText = text(form.get('year'));
   const year = yearText ? Number(yearText) : null;
@@ -58,8 +63,6 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
       url = parsed.toString();
     } catch { return Response.json({ error: 'URL must be a valid http(s) address.' }, { status: 400 }); }
   }
-  const currentAuthors = (current.contributors || []).map((contributor:any) => contributor.literal
-    || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('\n');
   const currentYear = current.issued?.year ? String(current.issued.year) : '';
   const currentIsbns = ((current.identifiers?.isbn as string[] | undefined) || []).join('\n');
   const existingManual = new Set<string>((current.source?.curation as any)?.manualFields || []);
@@ -70,7 +73,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   markChanged('title', current.title || '', title);
   markChanged('citeKey', current.citeKey || '', citeKey);
   markChanged('type', current.type || '', type);
-  markChanged('contributors', currentAuthors, authors.join('\n'));
+  markChanged('contributors', JSON.stringify(current.contributors || []), JSON.stringify(contributors));
   markChanged('issued', currentYear, year === null ? '' : String(year));
   markChanged('identifiers', currentIsbns, isbns.join('\n'));
   markChanged('tags', (current.tags || []).join('\n'), tags.join('\n'));
@@ -83,7 +86,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     title,
     citeKey,
     type,
-    contributors: authors.map((literal) => ({ literal, role: 'author' })),
+    contributors,
     issued: year === null ? undefined : { year },
     identifiers: { ...current.identifiers, isbn: isbns },
     tags,

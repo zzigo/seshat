@@ -1,4 +1,5 @@
 import type { APIRoute } from 'astro';
+import { contributorSummary } from '@seshat/core';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { referenceFileType } from '../../../../lib/reference-file';
 
@@ -17,8 +18,8 @@ export const GET: APIRoute = async ({ locals, params }) => {
       citeKey: reference.citeKey,
       type: reference.type,
       title: reference.title,
-      authors: reference.contributors.map((contributor: any) => contributor.literal
-        || [contributor.family, contributor.given].filter(Boolean).join(', ')).filter(Boolean).join('; '),
+      contributors: reference.contributors,
+      contributorsDisplay: contributorSummary(reference.contributors as any),
       year: (reference.issued as any)?.year || '',
       isbn: ((reference.identifiers.isbn as string[] | undefined) || []).join('; '),
       language: reference.language || '',

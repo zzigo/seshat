@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { parse } from '@retorquere/bibtex-parser';
 import type { APIRoute } from 'astro';
 import type { CatalogBibliographyInput } from '@seshat/catalog';
+import type { Contributor } from '@seshat/core';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
 
 const MAX_BIB_BYTES = 10 * 1024 * 1024;
@@ -47,9 +48,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
     errors.push(...result.errors.map((error) => ({ ...error, sourceFile: file.name })));
     for (const entry of result.entries) {
       const fields = (entry.fields || {}) as Record<string, any>;
-      const contributors = (Array.isArray(fields.author) ? fields.author : []).map((person: any) => ({
-        family: String(person.lastName || ''), given: String(person.firstName || ''), role: 'author',
-      })).filter((person: any) => person.family || person.given);
+      const people = (field: string, role: Contributor['role']): Contributor[] => (Array.isArray(fields[field]) ? fields[field] : []).map((person: any) => ({
+        family: String(person.lastName || '').trim(), given: String(person.firstName || '').trim(), role,
+      })).filter((person: Contributor) => person.family || person.given);
+      const contributors = [...people('author', 'author'), ...people('editor', 'editor'), ...people('translator', 'translator')];
       const year = Number(String(fields.year || '').match(/\d{4}/)?.[0]) || undefined;
       const isbn = literal(fields.isbn).split(/[;,\s]+/).filter(Boolean);
       const doi = literal(fields.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
