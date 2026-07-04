@@ -161,7 +161,7 @@ async function openLibrary(input: { isbn?: string; title?: string; authors?: str
 
 async function ollamaCandidate(text: string): Promise<{title:string;authors:string[];year:number|null;confidence:number}> {
   const format = { type:'object', properties:{ title:{type:'string'}, authors:{type:'array',items:{type:'string'}}, year:{type:['integer','null']}, confidence:{type:'number'} }, required:['title','authors','year','confidence'] };
-  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(60_000), body:JSON.stringify({
+  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(180_000), body:JSON.stringify({
     model: process.env.OLLAMA_MODEL || 'qwen3:1.7b', stream:false, think:false, format, options:{temperature:0,num_predict:128,num_ctx:4096},
     messages:[{role:'system',content:'Extract bibliographic search terms only from the supplied document evidence. Never invent an ISBN.'},{role:'user',content:text.slice(0,3000)+'\n\n[END]\n'+text.slice(-1000)}]
   }) });
@@ -281,7 +281,7 @@ async function identify(job: Claimed) {
 
 async function ollamaSummary(reference: any, text: string): Promise<{ summary: string; tags: string[] }> {
   const format = { type:'object', properties:{ summary:{type:'string'}, tags:{type:'array',items:{type:'string'} } }, required:['summary','tags'] };
-  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(90_000), body:JSON.stringify({
+  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, { method:'POST', headers:{'content-type':'application/json'}, signal:AbortSignal.timeout(240_000), body:JSON.stringify({
     model: process.env.OLLAMA_MODEL || 'qwen3:1.7b', stream:false, think:false, format, options:{temperature:0.2,num_predict:700,num_ctx:8192},
     messages:[{role:'system',content:'Write a concise scholarly summary of the supplied text. Return JSON only.'},
       {role:'user',content:`Title: ${reference.title}\n\nText evidence:\n${text.slice(0,7000)}\n\n[END SAMPLE]\n${text.slice(-1500)}`}]
@@ -337,7 +337,7 @@ async function extractGraphCandidates(reference: any, chunks: any[]): Promise<{
   };
   const evidence = chunks.slice(0, 12).map((chunk) => `[chunk ${chunk.ordinal}${chunk.locator ? ` · ${chunk.locator}` : ''}]\n${chunk.content.slice(0, 900)}`).join('\n\n');
   const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(120_000),
+    method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(360_000),
     body: JSON.stringify({
       model: process.env.OLLAMA_MODEL || 'qwen3:1.7b', stream: false, think: false, format,
       options: { temperature: 0, num_predict: 1200, num_ctx: 16384 },
