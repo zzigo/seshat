@@ -195,10 +195,13 @@ const graphEdges = edgesResult.rows;
       defs.appendChild(marker);
       svg.appendChild(defs);
 
+      const viewport = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      svg.appendChild(viewport);
+
       const linkGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      svg.appendChild(linkGroup);
+      viewport.appendChild(linkGroup);
       const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      svg.appendChild(nodeGroup);
+      viewport.appendChild(nodeGroup);
 
       const linkElements = links.map(link => {
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -301,20 +304,65 @@ const graphEdges = edgesResult.rows;
       }
       updatePositions();
 
+      let panX = 0;
+      let panY = 0;
+      let scale = 1;
+      let isPanning = false;
+      let startX = 0;
+      let startY = 0;
+
+      function updateViewport() {
+        viewport.setAttribute('transform', `translate(${panX}, ${panY}) scale(${scale})`);
+      }
+      updateViewport();
+
+      svg.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomFactor = 1.1;
+        const rectSvg = svg.getBoundingClientRect();
+        const mouseX = e.clientX - rectSvg.left;
+        const mouseY = e.clientY - rectSvg.top;
+
+        const prevScale = scale;
+        if (e.deltaY < 0) {
+          scale = Math.min(scale * zoomFactor, 10);
+        } else {
+          scale = Math.max(scale / zoomFactor, 0.1);
+        }
+        panX = mouseX - (mouseX - panX) * (scale / prevScale);
+        panY = mouseY - (mouseY - panY) * (scale / prevScale);
+        updateViewport();
+      }, { passive: false });
+
+      svg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isPanning = true;
+        startX = e.clientX - panX;
+        startY = e.clientY - panY;
+        svg.style.cursor = 'move';
+      });
+
       let selectedNode = null;
       nodeElements.forEach(({ g, node }) => {
-        g.addEventListener('mousedown', () => {
+        g.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
           selectedNode = node;
           g.style.cursor = 'grabbing';
         });
       });
 
       svg.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
         if (selectedNode) {
-          const rect = svg.getBoundingClientRect();
-          selectedNode.x = ((e.clientX - rect.left) / rect.width) * width;
-          selectedNode.y = ((e.clientY - rect.top) / rect.height) * height;
+          const clientXRel = e.clientX - rect.left;
+          const clientYRel = e.clientY - rect.top;
+          selectedNode.x = (clientXRel - panX) / scale;
+          selectedNode.y = (clientYRel - panY) / scale;
           updatePositions();
+        } else if (isPanning) {
+          panX = e.clientX - startX;
+          panY = e.clientY - startY;
+          updateViewport();
         }
       });
 
@@ -322,6 +370,10 @@ const graphEdges = edgesResult.rows;
         if (selectedNode) {
           nodeElements.forEach(({ g }) => g.style.cursor = 'grab');
           selectedNode = null;
+        }
+        if (isPanning) {
+          isPanning = false;
+          svg.style.cursor = 'default';
         }
       });
     }

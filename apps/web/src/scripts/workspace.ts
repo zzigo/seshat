@@ -642,10 +642,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           defs.appendChild(marker);
           svg.appendChild(defs);
 
+          const viewport = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          svg.appendChild(viewport);
+
           const linkGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-          svg.appendChild(linkGroup);
+          viewport.appendChild(linkGroup);
           const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-          svg.appendChild(nodeGroup);
+          viewport.appendChild(nodeGroup);
 
           const linkElements = links.map((link: any) => {
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -746,20 +749,65 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           }
           updatePositions();
 
+          let panX = 0;
+          let panY = 0;
+          let scale = 1;
+          let isPanning = false;
+          let startX = 0;
+          let startY = 0;
+
+          function updateViewport() {
+            viewport.setAttribute('transform', `translate(${panX}, ${panY}) scale(${scale})`);
+          }
+          updateViewport();
+
+          svg.addEventListener('wheel', (e: WheelEvent) => {
+            e.preventDefault();
+            const zoomFactor = 1.1;
+            const rectSvg = svg.getBoundingClientRect();
+            const mouseX = e.clientX - rectSvg.left;
+            const mouseY = e.clientY - rectSvg.top;
+
+            const prevScale = scale;
+            if (e.deltaY < 0) {
+              scale = Math.min(scale * zoomFactor, 10);
+            } else {
+              scale = Math.max(scale / zoomFactor, 0.1);
+            }
+            panX = mouseX - (mouseX - panX) * (scale / prevScale);
+            panY = mouseY - (mouseY - panY) * (scale / prevScale);
+            updateViewport();
+          }, { passive: false });
+
+          svg.addEventListener('mousedown', (e: MouseEvent) => {
+            if (e.button !== 0) return;
+            isPanning = true;
+            startX = e.clientX - panX;
+            startY = e.clientY - panY;
+            svg.style.cursor = 'move';
+          });
+
           let selectedNode: any = null;
           nodeElements.forEach(({ g, node }: any) => {
-            g.addEventListener('mousedown', () => {
+            g.addEventListener('mousedown', (e: MouseEvent) => {
+              e.stopPropagation();
               selectedNode = node;
               g.style.cursor = 'grabbing';
             });
           });
 
           svg.addEventListener('mousemove', (e: MouseEvent) => {
+            const rectSvg = svg.getBoundingClientRect();
             if (selectedNode) {
-              const rectSvg = svg.getBoundingClientRect();
-              selectedNode.x = ((e.clientX - rectSvg.left) / rectSvg.width) * width;
-              selectedNode.y = ((e.clientY - rectSvg.top) / rectSvg.height) * height;
+              const clientXRel = e.clientX - rectSvg.left;
+              const clientYRel = e.clientY - rectSvg.top;
+              selectedNode.x = (clientXRel - panX) / scale;
+              selectedNode.y = (clientYRel - panY) / scale;
               updatePositions();
+            } else if (isPanning) {
+              panX = e.clientX - startX;
+              panY = e.clientY - startY;
+              updateViewport();
             }
           });
 
@@ -767,6 +815,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             if (selectedNode) {
               nodeElements.forEach(({ g }: any) => { g.style.cursor = 'grab'; });
               selectedNode = null;
+            }
+            if (isPanning) {
+              isPanning = false;
+              svg.style.cursor = 'default';
             }
           });
         });
