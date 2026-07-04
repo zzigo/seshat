@@ -4,7 +4,10 @@ import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
 
 const actions: Record<string, EnrichmentStage> = {
   'reprocess-metadata': 'identify',
+  extract: 'extract',
+  identify: 'identify',
   summarize: 'summarize',
+  relate: 'relate',
 };
 
 export const POST: APIRoute = async ({ request, locals }) => {

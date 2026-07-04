@@ -103,12 +103,12 @@ const graphEdges = edgesResult.rows;
     </div>
     <div>
       <div class="panel-heading"><div><div class="eyebrow">Enrichment</div><h2>Pipeline</h2></div></div>
-      <div class="job-pipeline">
+      <div class="job-pipeline" data-reference-id={reference.id}>
         {reference.jobs.map((job, index) => (
-          <article class:list={['job-card', job.status]}>
+          <button type="button" class:list={['job-card', job.status]} data-run-stage={job.stage} title={`Click to run/reprocess ${labels[job.stage] || job.stage}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             <div><strong>{labels[job.stage] || job.stage}</strong><small>{job.status}</small></div>
-          </article>
+          </button>
         ))}
       </div>
     </div>
@@ -350,6 +350,33 @@ const graphEdges = edgesResult.rows;
       } finally {
         button.disabled = false;
       }
+    });
+
+    // Click on job card to queue/reprocess
+    document.querySelectorAll<HTMLButtonElement>('[data-run-stage]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const stage = btn.dataset.runStage;
+        const refId = btn.parentElement?.dataset.referenceId;
+        if (!stage || !refId) return;
+        const small = btn.querySelector('small');
+        if (small) small.textContent = 'queueing…';
+        btn.disabled = true;
+        try {
+          const response = await fetch('/api/library/actions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [refId], action: stage })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Failed to queue stage');
+          if (small) small.textContent = 'queued';
+          setTimeout(() => window.location.reload(), 500);
+        } catch (error: any) {
+          if (small) small.textContent = 'failed to queue';
+          alert(error.message || 'Error queueing stage');
+          btn.disabled = false;
+        }
+      });
     });
   </script>
 </Shell>

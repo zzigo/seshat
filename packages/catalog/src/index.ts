@@ -1277,8 +1277,11 @@ export class PostgresCatalog {
 
   async queueEnrichment(ownerKey: string, id: string, stage: EnrichmentStage): Promise<boolean> {
     await this.ensureSchema();
-    const downstream: EnrichmentStage[] = stage === 'identify' ? ['summarize', 'relate']
-      : stage === 'summarize' ? ['relate'] : [];
+    const downstream: EnrichmentStage[] =
+      stage === 'extract' ? ['identify', 'summarize', 'relate']
+      : stage === 'identify' ? ['summarize', 'relate']
+      : stage === 'summarize' ? ['relate']
+      : [];
     const result = await this.pool.query(
       `UPDATE catalog_jobs j
        SET status = CASE

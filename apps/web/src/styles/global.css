@@ -169,6 +169,17 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .job-card small { display: block; margin-top: 7px; color: var(--muted); font: 9px monospace; letter-spacing: .1em; text-transform: uppercase; }
 .job-card.queued { border-color: var(--green-bright); background: rgba(61,122,88,.06); }
 .job-card.blocked { opacity: .62; }
+button.job-card {
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+button.job-card:hover {
+  background: rgba(23, 35, 29, 0.05);
+}
 .structure-panel { margin: 0 0 110px; padding-top: 55px; border-top: 1px solid var(--line); }
 .structure-list { margin: 0; padding: 0; border: 1px solid var(--ink); list-style: none; }
 .structure-list li { display: grid; grid-template-columns: 44px 1fr; gap: 14px; padding: 15px 18px 15px calc(18px + var(--indent)); border-bottom: 1px solid var(--line); }

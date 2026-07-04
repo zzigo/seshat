@@ -240,8 +240,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void replaceAssociatedFile(referenceId, file); });
     input.click();
   };
-  const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'summarize') => {
-    const label = action === 'reprocess-metadata' ? 'metadata re-processing' : 'AI summary';
+  const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'summarize' | 'extract' | 'relate') => {
+    let label = 'AI summary';
+    let message = 'Preparing AI summary';
+    if (action === 'reprocess-metadata') { label = 'metadata re-processing'; message = 'Identifying title, author, year and publisher'; }
+    else if (action === 'extract') { label = 'text extraction'; message = 'Extracting text and document structure'; }
+    else if (action === 'relate') { label = 'entity relation extraction'; message = 'Extracting entity relations graph'; }
+
     if (!ids.length) { setSaveState('no editable references selected', 'error'); return; }
     setSaveState(`queueing ${label}…`, 'saving');
     const response = await fetch('/api/library/actions', {
@@ -253,8 +258,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if (!response.ok) { setSaveState(result.error || `Could not queue ${label}`, 'error'); return; }
     setSaveState(`${result.queued} ${result.queued === 1 ? 'item' : 'items'} queued for ${label}`);
     for (const id of ids) {
-      updateActivity(`${action}-${id}`, { state: 'working', referenceId: id,
-        message: `${references.get(id)?.title || id} · ${action === 'reprocess-metadata' ? 'Identifying title, author, year and publisher' : 'Preparing AI summary'}` });
+      updateActivity(`${action}-${id}`, { state: 'working', referenceId: id, message: `${references.get(id)?.title || id} · ${message}` });
       const reference = references.get(id);
       void followPipeline(id, `${action}-${id}`, reference?.filename || reference?.title || id).catch((error) => {
         updateActivity(`${action}-${id}`, { state: 'error', message: `${reference?.title || id} · ${error instanceof Error ? error.message : 'status unavailable'}` });
@@ -273,8 +277,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
+    { label: `Extract text & structure${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'extract') },
     { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
+    { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
     { label: `Delete selected${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
     ];
   };
