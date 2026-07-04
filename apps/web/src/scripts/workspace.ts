@@ -17,7 +17,7 @@ type ReferenceRow = {
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
 type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[] };
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
-type ToolKind = 'analysis' | 'annotation' | 'agent';
+type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
@@ -530,6 +530,462 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         });
         return;
       }
+      if (kind === 'graph') {
+        element.classList.remove('future-tool-pod');
+        element.classList.add('graph-tool-pod');
+        element.style.display = 'flex';
+        element.style.flexDirection = 'column';
+        element.style.height = '100%';
+        element.style.overflow = 'hidden';
+        element.style.background = 'var(--paper)';
+
+        const header = document.createElement('header');
+        header.className = 'pod-heading';
+        header.style.padding = '12px 16px';
+        header.style.borderBottom = '1px solid var(--line)';
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+
+        const titleDiv = document.createElement('div');
+        const titleLabel = document.createElement('div');
+        titleLabel.className = 'eyebrow';
+        titleLabel.textContent = reference ? 'Document Graph' : 'Global Graph';
+        const titleH2 = document.createElement('h2');
+        titleH2.style.margin = '4px 0 0';
+        titleH2.style.fontSize = '15px';
+        titleH2.style.fontFamily = 'Georgia, serif';
+        titleH2.textContent = reference ? reference.title : 'All catalogued knowledge';
+        titleDiv.append(titleLabel, titleH2);
+        
+        const countSpan = document.createElement('span');
+        countSpan.style.fontSize = '11px';
+        countSpan.style.color = 'var(--muted)';
+        countSpan.textContent = 'Loading graph...';
+        
+        header.append(titleDiv, countSpan);
+        element.appendChild(header);
+
+        const container = document.createElement('div');
+        container.style.flex = '1';
+        container.style.position = 'relative';
+        container.style.overflow = 'hidden';
+        element.appendChild(container);
+
+        const url = referenceId ? `/api/library/${referenceId}/graph` : '/api/library/graph';
+        void fetch(url).then(r => r.json()).then(data => {
+          if (disposed) return;
+          const nodes = (data.nodes || []) as any[];
+          const edges = (data.edges || []) as any[];
+          countSpan.textContent = `${nodes.length} nodes · ${edges.length} edges`;
+          
+          if (!nodes.length) {
+            container.innerHTML = `<div class="graph-empty" style="padding:40px;text-align:center;color:var(--muted);font-family:monospace;font-size:12px;">No entities or relationships found.</div>`;
+            return;
+          }
+
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('width', '100%');
+          svg.setAttribute('height', '100%');
+          svg.style.display = 'block';
+          container.appendChild(svg);
+
+          const rect = container.getBoundingClientRect();
+          const width = rect.width || 600;
+          const height = rect.height || 400;
+          svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+          const simNodes = nodes.map((n: any) => ({
+            ...n,
+            x: width / 2 + (Math.random() - 0.5) * 150,
+            y: height / 2 + (Math.random() - 0.5) * 150,
+            vx: 0,
+            vy: 0
+          }));
+
+          const nodeMap = new Map(simNodes.map((n: any) => [n.id, n]));
+          const links = edges.map((e: any) => ({
+            ...e,
+            sourceNode: nodeMap.get(e.source),
+            targetNode: nodeMap.get(e.target)
+          })).filter((l: any) => l.sourceNode && l.targetNode);
+
+          const colors: Record<string, string> = {
+            document: '#a855f7',
+            person: '#3b82f6',
+            concept: '#10b981',
+            organization: '#f59e0b',
+            place: '#ec4899',
+            method: '#06b6d4',
+            chunk: '#64748b'
+          };
+
+          const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+          const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+          marker.setAttribute('id', 'arrow-pod');
+          marker.setAttribute('viewBox', '0 0 10 10');
+          marker.setAttribute('refX', '18');
+          marker.setAttribute('refY', '5');
+          marker.setAttribute('markerWidth', '6');
+          marker.setAttribute('markerHeight', '6');
+          marker.setAttribute('orient', 'auto-start-reverse');
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+          path.setAttribute('fill', '#cbd5e1');
+          marker.appendChild(path);
+          defs.appendChild(marker);
+          svg.appendChild(defs);
+
+          const linkGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          svg.appendChild(linkGroup);
+          const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          svg.appendChild(nodeGroup);
+
+          const linkElements = links.map((link: any) => {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('stroke', '#cbd5e1');
+            line.setAttribute('stroke-width', '1.5');
+            line.setAttribute('marker-end', 'url(#arrow-pod)');
+            linkGroup.appendChild(line);
+            return { line, link };
+          });
+
+          const nodeElements = simNodes.map((node: any) => {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.style.cursor = 'grab';
+
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('r', node.kind === 'document' ? '12' : '8');
+            circle.setAttribute('fill', colors[node.kind] || '#94a3b8');
+            circle.setAttribute('stroke', '#ffffff');
+            circle.setAttribute('stroke-width', '2');
+            g.appendChild(circle);
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.textContent = node.label;
+            text.setAttribute('dx', '14');
+            text.setAttribute('dy', '4');
+            text.setAttribute('font-size', '10px');
+            text.setAttribute('fill', '#334155');
+            text.setAttribute('font-weight', '500');
+            text.setAttribute('font-family', 'system-ui, sans-serif');
+            g.appendChild(text);
+
+            nodeGroup.appendChild(g);
+            return { g, node };
+          });
+
+          const iterations = 80;
+          const k = 0.05;
+          const rep = 400;
+
+          for (let it = 0; it < iterations; it++) {
+            for (let i = 0; i < simNodes.length; i++) {
+              for (let j = i + 1; j < simNodes.length; j++) {
+                const n1 = simNodes[i];
+                const n2 = simNodes[j];
+                const dx = n2.x - n1.x;
+                const dy = n2.y - n1.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                if (dist < 200) {
+                  const force = rep / (dist * dist);
+                  const fx = (dx / dist) * force;
+                  const fy = (dy / dist) * force;
+                  n1.vx -= fx;
+                  n1.vy -= fy;
+                  n2.vx += fx;
+                  n2.vy += fy;
+                }
+              }
+            }
+
+            for (const link of links) {
+              const n1 = link.sourceNode;
+              const n2 = link.targetNode;
+              const dx = n2.x - n1.x;
+              const dy = n2.y - n1.y;
+              const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              const restLen = 60;
+              const force = k * (dist - restLen);
+              const fx = (dx / dist) * force;
+              const fy = (dy / dist) * force;
+              n1.vx += fx;
+              n1.vy += fy;
+              n2.vx -= fx;
+              n2.vy -= fy;
+            }
+
+            for (const node of simNodes) {
+              const dx = width / 2 - node.x;
+              const dy = height / 2 - node.y;
+              node.vx += dx * 0.01;
+              node.vy += dy * 0.01;
+              node.x += node.vx;
+              node.y += node.vy;
+              node.vx *= 0.65;
+              node.vy *= 0.65;
+            }
+          }
+
+          function updatePositions() {
+            linkElements.forEach(({ line, link }: any) => {
+              line.setAttribute('x1', link.sourceNode.x);
+              line.setAttribute('y1', link.sourceNode.y);
+              line.setAttribute('x2', link.targetNode.x);
+              line.setAttribute('y2', link.targetNode.y);
+            });
+            nodeElements.forEach(({ g, node }: any) => {
+              g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+            });
+          }
+          updatePositions();
+
+          let selectedNode: any = null;
+          nodeElements.forEach(({ g, node }: any) => {
+            g.addEventListener('mousedown', () => {
+              selectedNode = node;
+              g.style.cursor = 'grabbing';
+            });
+          });
+
+          svg.addEventListener('mousemove', (e: MouseEvent) => {
+            if (selectedNode) {
+              const rectSvg = svg.getBoundingClientRect();
+              selectedNode.x = ((e.clientX - rectSvg.left) / rectSvg.width) * width;
+              selectedNode.y = ((e.clientY - rectSvg.top) / rectSvg.height) * height;
+              updatePositions();
+            }
+          });
+
+          window.addEventListener('mouseup', () => {
+            if (selectedNode) {
+              nodeElements.forEach(({ g }: any) => { g.style.cursor = 'grab'; });
+              selectedNode = null;
+            }
+          });
+        });
+        return;
+      }
+      if (kind === 'search') {
+        element.classList.remove('future-tool-pod');
+        element.classList.add('search-tool-pod');
+        element.style.display = 'flex';
+        element.style.flexDirection = 'column';
+        element.style.height = '100%';
+        element.style.overflow = 'hidden';
+        element.style.background = 'var(--paper)';
+
+        const header = document.createElement('header');
+        header.className = 'pod-heading';
+        header.style.padding = '12px 16px';
+        header.style.borderBottom = '1px solid var(--line)';
+
+        const titleH2 = document.createElement('h2');
+        titleH2.style.margin = '0 0 8px';
+        titleH2.style.fontSize = '16px';
+        titleH2.style.fontFamily = 'Georgia, serif';
+        titleH2.textContent = 'Hybrid Corpus Search';
+        header.appendChild(titleH2);
+
+        const searchForm = document.createElement('form');
+        searchForm.style.display = 'flex';
+        searchForm.style.flexDirection = 'column';
+        searchForm.style.gap = '8px';
+
+        const formRow = document.createElement('div');
+        formRow.style.display = 'flex';
+        formRow.style.gap = '8px';
+
+        const searchInput = document.createElement('input');
+        searchInput.type = 'search';
+        searchInput.placeholder = 'Search exact phrase, semantic concept...';
+        searchInput.style.flex = '1';
+        searchInput.style.padding = '6px 10px';
+        searchInput.style.border = '1px solid var(--line)';
+        searchInput.style.background = '#ffffff';
+        searchInput.style.fontSize = '13px';
+
+        const searchButton = document.createElement('button');
+        searchButton.type = 'submit';
+        searchButton.textContent = 'Search';
+        searchButton.style.padding = '6px 14px';
+        searchButton.style.background = 'var(--ink)';
+        searchButton.style.color = 'var(--paper)';
+        searchButton.style.border = '0';
+        searchButton.style.fontSize = '13px';
+        searchButton.style.fontWeight = '600';
+        searchButton.style.cursor = 'pointer';
+
+        formRow.append(searchInput, searchButton);
+        searchForm.appendChild(formRow);
+
+        const modesDiv = document.createElement('div');
+        modesDiv.style.display = 'flex';
+        modesDiv.style.gap = '12px';
+        modesDiv.style.fontSize = '11px';
+        modesDiv.style.color = 'var(--muted)';
+
+        ['hybrid', 'lexical', 'semantic', 'graph'].forEach((m, idx) => {
+          const label = document.createElement('label');
+          label.style.display = 'flex';
+          label.style.alignItems = 'center';
+          label.style.gap = '4px';
+          label.style.cursor = 'pointer';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'search-mode';
+          radio.value = m;
+          if (idx === 0) radio.checked = true;
+          label.append(radio, document.createTextNode(m));
+          modesDiv.appendChild(label);
+        });
+        searchForm.appendChild(modesDiv);
+        header.appendChild(searchForm);
+        element.appendChild(header);
+
+        const status = document.createElement('div');
+        status.style.padding = '6px 16px';
+        status.style.fontSize = '11px';
+        status.style.color = 'var(--muted)';
+        status.style.borderBottom = '1px solid var(--line)';
+        status.textContent = 'Ready to inspect the corpus.';
+        element.appendChild(status);
+
+        const resultsContainer = document.createElement('div');
+        resultsContainer.style.flex = '1';
+        resultsContainer.style.overflowY = 'auto';
+        resultsContainer.style.padding = '16px';
+        element.appendChild(resultsContainer);
+
+        const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[char] || char);
+        const renderSnippet = (value: string) => esc(value).replaceAll('‹', '<mark>').replaceAll('›', '</mark>');
+
+        searchForm.addEventListener('submit', async (evSubmit) => {
+          evSubmit.preventDefault();
+          const query = searchInput.value.trim();
+          if (query.length < 2) return;
+
+          status.textContent = 'Searching lexical, vector and graph evidence…';
+          resultsContainer.innerHTML = '';
+          const modeVal = (searchForm.querySelector('input[name="search-mode"]:checked') as HTMLInputElement)?.value || 'hybrid';
+
+          try {
+            const params = new URLSearchParams({ q: query, mode: modeVal });
+            const response = await fetch(`/api/search/corpus?${params}`);
+            const payloadData = await response.json();
+            if (!response.ok) throw new Error(payloadData.error || 'Search failed');
+
+            status.textContent = `${payloadData.items.length} evidence fragments · vector ${payloadData.capabilities.vector ? 'online' : 'deferred'}`;
+
+            const grouped = new Map<string, any[]>();
+            payloadData.items.forEach((item: any) => grouped.set(item.referenceId, [...(grouped.get(item.referenceId) || []), item]));
+
+            if (grouped.size === 0) {
+              resultsContainer.innerHTML = '<div style="color:var(--muted);font-family:monospace;font-size:12px;text-align:center;padding:40px;">No evidence found in the indexed corpus.</div>';
+              return;
+            }
+
+            [...grouped.values()].forEach((items) => {
+              const first = items[0];
+              const groupArt = document.createElement('article');
+              groupArt.className = 'corpus-result-group';
+              groupArt.style.marginBottom = '24px';
+
+              const grpHdr = document.createElement('header');
+              grpHdr.style.display = 'flex';
+              grpHdr.style.justifyContent = 'space-between';
+              grpHdr.style.alignItems = 'start';
+              grpHdr.style.borderBottom = '1px solid var(--line)';
+              grpHdr.style.paddingBottom = '6px';
+              grpHdr.style.marginBottom = '12px';
+
+              const titleWrapper = document.createElement('div');
+              const citeSpan = document.createElement('span');
+              citeSpan.style.fontFamily = 'monospace';
+              citeSpan.style.fontSize = '11px';
+              citeSpan.style.color = 'var(--muted)';
+              citeSpan.textContent = `@${first.citeKey}`;
+
+              const h3 = document.createElement('h3');
+              h3.style.margin = '4px 0 0';
+              h3.style.fontSize = '15px';
+              h3.style.fontFamily = 'Georgia, serif';
+              
+              const titleLink = document.createElement('a');
+              titleLink.href = '#';
+              titleLink.textContent = first.title;
+              titleLink.style.textDecoration = 'none';
+              titleLink.style.color = 'var(--green)';
+              titleLink.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                controller.openDocument(first.referenceId);
+              });
+
+              h3.appendChild(titleLink);
+              titleWrapper.append(citeSpan, h3);
+
+              const occurrences = items.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
+              const occStr = document.createElement('strong');
+              occStr.style.fontSize = '11px';
+              occStr.style.color = 'var(--muted)';
+              occStr.textContent = `${occurrences || items.length} ${occurrences === 1 ? 'occurrence' : 'occurrences'}`;
+
+              grpHdr.append(titleWrapper, occStr);
+              groupArt.appendChild(grpHdr);
+
+              const ol = document.createElement('ol');
+              ol.style.listStyle = 'none';
+              ol.style.padding = '0';
+              ol.style.margin = '0';
+
+              items.forEach((item) => {
+                const li = document.createElement('li');
+                li.style.marginBottom = '12px';
+
+                const a = document.createElement('a');
+                a.href = '#';
+                a.style.display = 'block';
+                a.style.textDecoration = 'none';
+                a.style.color = 'inherit';
+                a.addEventListener('click', (ev) => {
+                  ev.preventDefault();
+                  controller.openDocument(item.referenceId);
+                });
+
+                const b = document.createElement('b');
+                b.style.fontSize = '9px';
+                b.style.fontFamily = 'monospace';
+                b.style.color = 'var(--green)';
+                b.style.textTransform = 'uppercase';
+                b.textContent = item.locator || item.section || `fragment ${item.metadata?.ordinal ?? ''}`;
+
+                const p = document.createElement('p');
+                p.style.margin = '4px 0';
+                p.style.fontSize = '13px';
+                p.style.fontFamily = 'Georgia, serif';
+                p.style.lineHeight = '1.4';
+                p.innerHTML = renderSnippet(item.snippet);
+
+                const channelsSmall = document.createElement('small');
+                channelsSmall.style.fontSize = '9px';
+                channelsSmall.style.fontFamily = 'monospace';
+                channelsSmall.style.color = 'var(--muted)';
+                channelsSmall.textContent = item.channels.map(esc).join(' · ');
+
+                a.append(b, p, channelsSmall);
+                li.appendChild(a);
+                ol.appendChild(li);
+              });
+
+              groupArt.appendChild(ol);
+              resultsContainer.appendChild(groupArt);
+            });
+          } catch (err: any) {
+            status.textContent = err?.message || 'Search failed';
+          }
+        });
+        return;
+      }
       const glyph = kind === 'analysis' ? '⌁' : kind === 'annotation' ? '✎' : '✣';
       const heading = document.createElement('div'); heading.className = 'future-tool-glyph'; heading.textContent = glyph; element.appendChild(heading);
       const title = document.createElement('h2'); title.textContent = kind === 'agent' ? 'Agent workspace' : `${kind[0].toUpperCase()}${kind.slice(1)} workspace`; element.appendChild(title);
@@ -634,7 +1090,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       else addPanel('document-preview', 'document-preview', ref.title, 'right');
     },
     openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
-    openTool(kind: ToolKind, referenceId = activeReference || undefined) { const suffix = referenceId || 'global'; addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1), 'right'); },
+    openTool(kind: ToolKind, referenceId = activeReference || undefined) {
+      const suffix = referenceId || 'global';
+      let title = kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1);
+      if (kind === 'graph') title = referenceId ? 'Document Graph' : 'Global Graph';
+      if (kind === 'search') title = 'Corpus Search';
+      addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, title, 'right');
+    },
     openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
   };
 
