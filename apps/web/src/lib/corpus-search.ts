@@ -1,5 +1,5 @@
 import type { CatalogChunkSearchResult } from '@seshat/catalog';
-import { OllamaEmbedder, QdrantVectorIndex, reciprocalRankFusion, type RetrievalChannel } from '@seshat/retrieval';
+import { OllamaEmbedder, QdrantVectorIndex, reciprocalRankFusion, type RetrievalChannel, computeSparseVector, rerankCandidates } from '@seshat/retrieval';
 import { getCatalog } from './catalog';
 
 export type CorpusSearchMode = 'hybrid' | 'lexical' | 'semantic' | 'graph';
@@ -62,7 +62,7 @@ export async function searchCorpus(options: {
     : Promise.resolve([]);
   const vectorPromise = wantsVector && vectorIndex.enabled
     ? Promise.all([embedder.embed([options.query]), ownerKeysPromise])
-      .then(([embeddings, owners]) => vectorIndex.query(embeddings[0], owners, limit * 3))
+      .then(([embeddings, owners]) => vectorIndex.query(embeddings[0], owners, limit * 3, computeSparseVector(options.query)))
       .catch((error) => { console.error('[seshat:vector-search]', error); return []; })
     : Promise.resolve([]);
 
@@ -71,20 +71,36 @@ export async function searchCorpus(options: {
     lexical.map((item) => ({ chunkId: item.chunkId, score: item.score, channel: 'lexical' as const })),
     vector.map((item) => ({ chunkId: item.chunkId, score: item.score, channel: 'vector' as const })),
     graph.map((item) => ({ chunkId: item.chunkId, score: item.score, channel: 'graph' as const })),
-  ], { channelWeights: { lexical: 1.2, vector: 1, graph: .8 } }).slice(0, limit);
+  ], { channelWeights: { lexical: 1.2, vector: 1, graph: .8 } });
+
+  const candidatePool = fused.slice(0, limit * 2);
+  const candidatePoolIds = candidatePool.map((item) => item.chunkId);
 
   const lexicalById = new Map(lexical.map((item) => [item.chunkId, item]));
-  const missingIds = fused.map((item) => item.chunkId).filter((id) => !lexicalById.has(id));
+  const missingIds = candidatePoolIds.filter((id) => !lexicalById.has(id));
   const missing = await catalog.accessibleChunks(options.ownerKey, missingIds, options.libraryId);
   const chunksById = new Map([...lexical, ...missing].map((item) => [item.chunkId, item]));
-  const items = fused.flatMap((candidate): CorpusSearchResult[] => {
+
+  const reranked = rerankCandidates(
+    options.query,
+    candidatePool.flatMap((candidate) => {
+      const chunk = chunksById.get(candidate.chunkId);
+      if (!chunk) return [];
+      return [{ chunkId: candidate.chunkId, content: chunk.content, score: candidate.score }];
+    })
+  ).slice(0, limit);
+
+  const fusedCandidateMap = new Map(candidatePool.map((item) => [item.chunkId, item]));
+
+  const items = reranked.flatMap((candidate): CorpusSearchResult[] => {
     const chunk = chunksById.get(candidate.chunkId);
-    if (!chunk) return [];
+    const fusedInfo = fusedCandidateMap.get(candidate.chunkId);
+    if (!chunk || !fusedInfo) return [];
     return [{
       ...chunk,
       snippet: lexicalById.get(candidate.chunkId)?.snippet || plainSnippet(chunk.content, options.query),
       fusedScore: candidate.score,
-      channels: candidate.channels,
+      channels: fusedInfo.channels,
       occurrences: occurrenceCount(chunk.content, options.query),
     }];
   });

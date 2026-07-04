@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgresCatalog } from '@seshat/catalog';
 import { isValidIsbn, normalizeContributor, normalizeIsbn } from '@seshat/core';
-import { Neo4jGraphMirror, OllamaEmbedder, QdrantVectorIndex, normalizeDoclingChunk } from '@seshat/retrieval';
+import { Neo4jGraphMirror, OllamaEmbedder, QdrantVectorIndex, normalizeDoclingChunk, computeSparseVector } from '@seshat/retrieval';
 
 const exec = promisify(execFile);
 const catalog = new PostgresCatalog(process.env.DATABASE_URL || '');
@@ -425,6 +425,7 @@ async function indexVectorBatch(): Promise<boolean> {
     await vectorIndex.upsert(chunks.map((chunk, index) => ({
       id: chunk.id,
       vector: embeddings[index],
+      sparse: computeSparseVector(chunk.content),
       payload: {
         ownerKey: chunk.ownerKey, referenceId: chunk.referenceId, ordinal: chunk.ordinal,
         title: chunk.title, citeKey: chunk.citeKey, page: chunk.page, locator: chunk.locator,
