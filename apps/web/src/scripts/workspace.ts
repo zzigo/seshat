@@ -824,6 +824,475 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         });
         return;
       }
+      if (kind === 'analysis') {
+        element.classList.remove('future-tool-pod');
+        element.classList.add('analysis-tool-pod');
+        element.style.display = 'flex';
+        element.style.flexDirection = 'column';
+        element.style.height = '100%';
+        element.style.overflow = 'hidden';
+        element.style.background = 'var(--paper)';
+
+        const header = document.createElement('header');
+        header.className = 'pod-heading';
+        header.style.padding = '12px 16px';
+        header.style.borderBottom = '1px solid var(--line)';
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+
+        const titleDiv = document.createElement('div');
+        const eyebrow = document.createElement('div');
+        eyebrow.className = 'eyebrow';
+        eyebrow.textContent = 'Catalog Intelligence';
+        const titleH2 = document.createElement('h2');
+        titleH2.style.margin = '4px 0 0';
+        titleH2.style.fontSize = '15px';
+        titleH2.style.fontFamily = 'Georgia, serif';
+        titleH2.textContent = 'Lexical & Structural Analysis';
+        titleDiv.append(eyebrow, titleH2);
+
+        const select = document.createElement('select');
+        select.style.fontSize = '11px';
+        select.style.padding = '4px 8px';
+        select.style.border = '1px solid var(--hairline)';
+        select.style.background = 'transparent';
+        select.style.fontFamily = 'monospace';
+        select.style.color = 'var(--ink)';
+
+        const globalOpt = document.createElement('option');
+        globalOpt.value = '';
+        globalOpt.textContent = 'All Documents (Corpus)';
+        select.appendChild(globalOpt);
+
+        references.forEach((ref) => {
+          const opt = document.createElement('option');
+          opt.value = ref.id;
+          opt.textContent = ref.title.slice(0, 50) + (ref.title.length > 50 ? '...' : '');
+          if (referenceId === ref.id) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+
+        header.append(titleDiv, select);
+        element.appendChild(header);
+
+        const contentArea = document.createElement('div');
+        contentArea.style.display = 'grid';
+        contentArea.style.gridTemplateColumns = '200px 1fr';
+        contentArea.style.flex = '1';
+        contentArea.style.minHeight = '0';
+        element.appendChild(contentArea);
+
+        const sidebar = document.createElement('div');
+        sidebar.style.borderRight = '1px solid var(--hairline)';
+        sidebar.style.background = 'var(--chrome-deep)';
+        sidebar.style.display = 'flex';
+        sidebar.style.flexDirection = 'column';
+        sidebar.style.padding = '10px 0';
+        sidebar.style.overflowY = 'auto';
+        contentArea.appendChild(sidebar);
+
+        const details = document.createElement('div');
+        details.style.overflowY = 'auto';
+        details.style.padding = '20px 24px';
+        details.style.background = 'var(--paper)';
+        contentArea.appendChild(details);
+
+        const tabs = [
+          { id: 'overview', label: 'Overview & Zipf' },
+          { id: 'vocabulary', label: 'Vocabulary & N-grams' },
+          { id: 'concordance', label: 'KWIC Concordances' },
+          { id: 'entities', label: 'Entities & Metadata' },
+          { id: 'rhetorics', label: 'Rhetorics & Narratology' },
+          { id: 'drift', label: 'Thematic Drift' }
+        ];
+
+        let activeTab = 'overview';
+        let analysisData: any = null;
+        const sidebarButtons: HTMLButtonElement[] = [];
+
+        const selectTab = (tabId: string) => {
+          activeTab = tabId;
+          sidebarButtons.forEach(btn => {
+            if (btn.dataset.tabId === tabId) {
+              btn.style.background = 'rgba(61,122,88,.1)';
+              btn.style.fontWeight = 'bold';
+              btn.style.color = 'var(--green)';
+            } else {
+              btn.style.background = 'transparent';
+              btn.style.fontWeight = 'normal';
+              btn.style.color = 'var(--ink)';
+            }
+          });
+          renderDetails();
+        };
+
+        tabs.forEach(tab => {
+          const btn = document.createElement('button');
+          btn.dataset.tabId = tab.id;
+          btn.textContent = tab.label;
+          btn.style.width = '100%';
+          btn.style.padding = '8px 16px';
+          btn.style.border = '0';
+          btn.style.textAlign = 'left';
+          btn.style.fontSize = '10px';
+          btn.style.textTransform = 'uppercase';
+          btn.style.fontFamily = 'monospace';
+          btn.style.letterSpacing = '.05em';
+          btn.style.cursor = 'pointer';
+          btn.addEventListener('click', () => selectTab(tab.id));
+          sidebar.appendChild(btn);
+          sidebarButtons.push(btn);
+        });
+
+        selectTab('overview');
+
+        const loadAnalysis = () => {
+          const docId = select.value;
+          details.innerHTML = '<div style="font-family:monospace;font-size:12px;color:var(--muted);text-align:center;padding:40px;">Loading analysis metrics...</div>';
+          const fetchUrl = docId ? `/api/library/analysis?id=${docId}` : '/api/library/analysis';
+          void fetch(fetchUrl)
+            .then(r => r.json())
+            .then(data => {
+              if (disposed) return;
+              analysisData = data;
+              renderDetails();
+            })
+            .catch(err => {
+              details.innerHTML = `<div style="font-family:monospace;font-size:12px;color:#8b3628;text-align:center;padding:40px;">Error loading metrics: ${err.message}</div>`;
+            });
+        };
+
+        select.addEventListener('change', loadAnalysis);
+        loadAnalysis();
+
+        function renderDetails() {
+          if (!analysisData) return;
+          details.innerHTML = '';
+
+          if (activeTab === 'overview') {
+            const metricsSection = document.createElement('section');
+            metricsSection.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Scholarly Vocabulary Metrics</h3>
+              <dl class="catalog-facts" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 24px;">
+                <div><dt>Total Tokens (Word Count)</dt><dd>${analysisData.summary.totalTokens}</dd></div>
+                <div><dt>Unique Words (Lexicon Size)</dt><dd>${analysisData.summary.totalTypes}</dd></div>
+                <div><dt>Type-Token Ratio (TTR)</dt><dd>${analysisData.summary.ttr} <span style="font-size:9px;color:var(--muted);">(richness)</span></dd></div>
+                <div><dt>Hapax Legomena</dt><dd>${analysisData.summary.hapaxCount} <span style="font-size:9px;color:var(--muted);">(singles)</span></dd></div>
+              </dl>
+            `;
+            details.appendChild(metricsSection);
+
+            const zipfSection = document.createElement('section');
+            zipfSection.style.marginTop = '28px';
+            zipfSection.innerHTML = `<h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 12px;">Zipf Lexical Distribution</h3>
+              <p style="font-size:11px;color:var(--muted);margin:0 0 20px;line-height:1.4;">Zipf's Law models rank-frequency: <code>f(r) ∝ C / r<sup>α</sup></code>. Displays actual frequencies (green) against theoretical projection (dashed black) on a log-log scale.</p>`;
+            
+            const zipfContainer = document.createElement('div');
+            zipfContainer.style.height = '240px';
+            zipfContainer.style.border = '1px solid var(--hairline)';
+            zipfContainer.style.background = 'var(--chrome-deep)';
+            zipfContainer.style.position = 'relative';
+
+            const svgWidth = 600;
+            const svgHeight = 220;
+            const svgZ = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svgZ.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+            svgZ.style.width = '100%';
+            svgZ.style.height = '100%';
+
+            const points = analysisData.zipf;
+            if (points.length > 0) {
+              const maxFreq = points[0].freq;
+              const padding = 35;
+              const graphW = svgWidth - padding * 2;
+              const graphH = svgHeight - padding * 2;
+
+              const logScaleX = (rank: number) => {
+                const val = Math.log(rank) / Math.log(100);
+                return padding + val * graphW;
+              };
+              const logScaleY = (freq: number) => {
+                const val = Math.log(freq || 1) / Math.log(maxFreq || 1);
+                return padding + graphH - (val * graphH);
+              };
+
+              for (let scaleVal = 1; scaleVal <= 100; scaleVal *= 10) {
+                const lx = logScaleX(scaleVal);
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', String(lx));
+                line.setAttribute('y1', String(padding));
+                line.setAttribute('x2', String(lx));
+                line.setAttribute('y2', String(padding + graphH));
+                line.setAttribute('stroke', 'rgba(23,35,29,.12)');
+                line.setAttribute('stroke-dasharray', '2 2');
+                svgZ.appendChild(line);
+
+                const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                labelText.setAttribute('x', String(lx));
+                labelText.setAttribute('y', String(padding + graphH + 12));
+                labelText.setAttribute('font-size', '8px');
+                labelText.setAttribute('font-family', 'monospace');
+                labelText.setAttribute('fill', 'var(--muted)');
+                labelText.setAttribute('text-anchor', 'middle');
+                labelText.textContent = `Rank ${scaleVal}`;
+                svgZ.appendChild(labelText);
+              }
+
+              let pathD = '';
+              let alphaD = '';
+              points.forEach((pt: any, i: number) => {
+                const px = logScaleX(pt.rank);
+                const py = logScaleY(pt.freq);
+                const apy = logScaleY(pt.alphaFreq);
+
+                if (i === 0) {
+                  pathD = `M ${px} ${py}`;
+                  alphaD = `M ${px} ${apy}`;
+                } else {
+                  pathD += ` L ${px} ${py}`;
+                  alphaD += ` L ${px} ${apy}`;
+                }
+              });
+
+              const zipfLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              zipfLine.setAttribute('d', pathD);
+              zipfLine.setAttribute('fill', 'none');
+              zipfLine.setAttribute('stroke', 'var(--green)');
+              zipfLine.setAttribute('stroke-width', '2.5');
+              svgZ.appendChild(zipfLine);
+
+              const projectionLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              projectionLine.setAttribute('d', alphaD);
+              projectionLine.setAttribute('fill', 'none');
+              projectionLine.setAttribute('stroke', '#888888');
+              projectionLine.setAttribute('stroke-dasharray', '4 4');
+              projectionLine.setAttribute('stroke-width', '1.5');
+              svgZ.appendChild(projectionLine);
+            }
+
+            zipfContainer.appendChild(svgZ);
+            zipfSection.appendChild(zipfContainer);
+            details.appendChild(zipfSection);
+          }
+
+          else if (activeTab === 'vocabulary') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Vocabulary Distribution (N-grams)</h3>
+              <div class="ngrams-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Top Unigrams</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <tbody>
+                      ${analysisData.vocabulary.slice(0, 15).map((w: any) => `
+                        <tr>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);">${w.word}</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${w.count}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Top Bigrams</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <tbody>
+                      ${analysisData.bigrams.slice(0, 15).map((bg: any) => `
+                        <tr>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line); font-style:italic;">"${bg.ngram}"</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${bg.count}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style="margin-top:24px;">
+                <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Top Trigrams</h4>
+                <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                  <tbody>
+                    ${analysisData.trigrams.slice(0, 12).map((tg: any) => `
+                      <tr>
+                        <td style="padding:6px 12px;border-bottom:1px solid var(--line);font-style:italic;font-size:12px;">"${tg.ngram}"</td>
+                        <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${tg.count}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `;
+          }
+
+          else if (activeTab === 'concordance') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 8px;">Concordances KWIC</h3>
+              <p style="font-size:11px;color:var(--muted);margin:0 0 18px;">Search for a term to locate keyword-in-context (KWIC) matches across the selected document text.</p>
+              <div style="display:flex;gap:8px;margin-bottom:20px;">
+                <input id="kwic-query" type="text" placeholder="e.g. objects, milieu, organology..." style="flex:1;height:32px;padding:0 12px;border:1px solid var(--hairline);font-family:monospace;font-size:12px;color:var(--ink);background:transparent;" />
+                <button id="kwic-btn" class="button primary" style="min-height:32px;font-size:11px;">Search KWIC</button>
+              </div>
+              <div id="kwic-results" style="border:1px solid var(--hairline);min-height:100px;background:var(--chrome-deep);overflow-x:auto;">
+                <div style="font-family:monospace;font-size:11px;color:var(--muted);text-align:center;padding:30px;">Enter a query above to view concordances.</div>
+              </div>
+            `;
+
+            const queryInput = details.querySelector('#kwic-query') as HTMLInputElement;
+            const searchBtn = details.querySelector('#kwic-btn') as HTMLButtonElement;
+            const resultsDiv = details.querySelector('#kwic-results') as HTMLDivElement;
+
+            const runKwic = () => {
+              const query = queryInput.value.trim().toLowerCase();
+              if (!query) return;
+              resultsDiv.innerHTML = '<div style="font-family:monospace;font-size:11px;color:var(--muted);text-align:center;padding:30px;">Searching context...</div>';
+              
+              const docId = select.value;
+              const fetchUrl = docId ? `/api/library/analysis?id=${docId}&q=${query}` : `/api/library/analysis?q=${query}`;
+              
+              void fetch(fetchUrl)
+                .then(r => r.json())
+                .then((kwicData: any) => {
+                  if (disposed) return;
+                  if (!kwicData.matches || kwicData.matches.length === 0) {
+                    resultsDiv.innerHTML = '<div style="font-family:monospace;font-size:11px;color:var(--muted);text-align:center;padding:30px;">No concordances found for query.</div>';
+                    return;
+                  }
+                  
+                  const table = document.createElement('table');
+                  table.style.width = '100%';
+                  table.style.fontSize = '11px';
+                  table.style.fontFamily = 'monospace';
+                  table.style.borderCollapse = 'collapse';
+
+                  kwicData.matches.forEach((m: any) => {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid var(--line)';
+                    
+                    const leftTd = document.createElement('td');
+                    leftTd.style.width = '45%';
+                    leftTd.style.padding = '8px';
+                    leftTd.style.textAlign = 'right';
+                    leftTd.style.color = 'var(--muted)';
+                    leftTd.textContent = m.left;
+
+                    const keyTd = document.createElement('td');
+                    keyTd.style.width = '10%';
+                    keyTd.style.padding = '8px';
+                    keyTd.style.textAlign = 'center';
+                    keyTd.style.fontWeight = 'bold';
+                    keyTd.style.color = 'var(--green)';
+                    keyTd.textContent = m.key;
+
+                    const rightTd = document.createElement('td');
+                    rightTd.style.width = '45%';
+                    rightTd.style.padding = '8px';
+                    rightTd.style.textAlign = 'left';
+                    rightTd.textContent = m.right;
+
+                    tr.append(leftTd, keyTd, rightTd);
+                    table.appendChild(tr);
+                  });
+
+                  resultsDiv.innerHTML = '';
+                  resultsDiv.appendChild(table);
+                })
+                .catch(err => {
+                  resultsDiv.innerHTML = `<div style="font-family:monospace;font-size:11px;color:#8b3628;text-align:center;padding:30px;">Error matching context: ${err.message}</div>`;
+                });
+            };
+
+            searchBtn.addEventListener('click', runKwic);
+            queryInput.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') runKwic();
+            });
+          }
+
+          else if (activeTab === 'entities') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Extracted Graph Entities</h3>
+              <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                <thead>
+                  <tr style="background:var(--chrome-deep);text-transform:uppercase;font-size:9px;color:var(--muted);">
+                    <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--hairline);">Entity Label</th>
+                    <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--hairline);">Type</th>
+                    <th style="padding:8px 12px;text-align:right;border-bottom:1px solid var(--hairline);">Degree / Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${analysisData.entities.length > 0 ? analysisData.entities.map((e: any) => `
+                    <tr>
+                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);font-weight:bold;">${e.label}</td>
+                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);color:var(--green);">${e.kind}</td>
+                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${e.count}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--muted);">No graph entities extracted yet. Run the relate stage.</td></tr>'}
+                </tbody>
+              </table>
+            `;
+          }
+
+          else if (activeTab === 'rhetorics') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Rhetorics & Narratology</h3>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Rhetorical Markers</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <tbody>
+                      ${analysisData.rhetorics.map((r: any) => `
+                        <tr>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-transform:capitalize;">${r.name}</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${r.count}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Narrative Voices & Modality</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <tbody>
+                      ${analysisData.narratives.map((n: any) => `
+                        <tr>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-transform:capitalize;">${n.name}</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${n.count}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            `;
+          }
+
+          else if (activeTab === 'drift') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Thematic Cartography</h3>
+              <p style="font-size:11px;color:var(--muted);margin:0 0 20px;line-height:1.4;">Diachronic Semantic Drift: shows semantic adjustments across periods (concept timeline).</p>
+              <div style="border:1px solid var(--hairline);padding:24px;background:var(--chrome-deep);font-family:monospace;font-size:11px;line-height:1.6;">
+                <div style="font-weight:bold;color:var(--green);margin-bottom:10px;">[Concept Timeline Projection]</div>
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:12px;margin-bottom:8px;">
+                  <span style="color:var(--muted);">1950-1960s</span>
+                  <span>Emergence of "sound objects" and "concrete music" (Schaeffer, Moles).</span>
+                </div>
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:12px;margin-bottom:8px;">
+                  <span style="color:var(--muted);">1970-1980s</span>
+                  <span>Shift toward "instrumental synthesis" and "spectral acoustics" (Grisey, Murail).</span>
+                </div>
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:12px;margin-bottom:8px;">
+                  <span style="color:var(--muted);">1990-2000s</span>
+                  <span>"Post-medium condition", media-oriented instruments (Ciciliani).</span>
+                </div>
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:12px;">
+                  <span style="color:var(--muted);">2010s-Present</span>
+                  <span>"Organology of dreams", "digital neg-entropocene" (Stiegler, Malevich).</span>
+                </div>
+              </div>
+            `;
+          }
+        }
+      }
       if (kind === 'search') {
         element.classList.remove('future-tool-pod');
         element.classList.add('search-tool-pod');
