@@ -205,11 +205,12 @@ export class OllamaEmbedder {
 
   async embed(input: string[]): Promise<number[][]> {
     if (!input.length) return [];
+    const safeInput = input.map((str) => String(str || '').slice(0, 6000));
     const response = await fetch(`${cleanBaseUrl(this.baseUrl)}/api/embed`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       signal: AbortSignal.timeout(120_000),
-      body: JSON.stringify({ model: this.model, input, truncate: true }),
+      body: JSON.stringify({ model: this.model, input: safeInput, truncate: true }),
     });
     if (!response.ok) throw new Error(`OLLAMA_EMBED_${response.status}`);
     const payload = await response.json() as { embeddings?: number[][] };
