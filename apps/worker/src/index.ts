@@ -335,7 +335,7 @@ async function extractGraphCandidates(reference: any, chunks: any[]): Promise<{
       }, required: ['from','to','relation','chunkOrdinal'] } },
     }, required: ['entities','relations'],
   };
-  const evidence = chunks.slice(0, 24).map((chunk) => `[chunk ${chunk.ordinal}${chunk.locator ? ` · ${chunk.locator}` : ''}]\n${chunk.content.slice(0, 900)}`).join('\n\n');
+  const evidence = chunks.slice(0, 12).map((chunk) => `[chunk ${chunk.ordinal}${chunk.locator ? ` · ${chunk.locator}` : ''}]\n${chunk.content.slice(0, 900)}`).join('\n\n');
   const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(120_000),
     body: JSON.stringify({
@@ -348,7 +348,13 @@ async function extractGraphCandidates(reference: any, chunks: any[]): Promise<{
     }),
   });
   if (!response.ok) throw new Error(`OLLAMA_GRAPH_${response.status}`);
-  const parsed = JSON.parse((await response.json()).message.content);
+  let parsed: any = { entities: [], relations: [] };
+  try {
+    const rawContent = (await response.json()).message.content;
+    parsed = JSON.parse(rawContent);
+  } catch (error) {
+    console.warn('[worker:graph-json-parse-failed]', error);
+  }
   return {
     entities: Array.isArray(parsed.entities) ? parsed.entities.slice(0, 120) : [],
     relations: Array.isArray(parsed.relations) ? parsed.relations.slice(0, 180) : [],
