@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PostgresCatalog } from '@seshat/catalog';
 import { isValidIsbn, normalizeContributor, normalizeIsbn } from '@seshat/core';
+import { Neo4jGraphMirror, OllamaEmbedder, QdrantVectorIndex, normalizeDoclingChunk } from '@seshat/retrieval';
 
 const exec = promisify(execFile);
 const catalog = new PostgresCatalog(process.env.DATABASE_URL || '');
@@ -15,14 +16,17 @@ const r2 = new S3Client({ region: 'auto', endpoint: process.env.R2_ENDPOINT,
   credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID || '', secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '' } });
 const python = process.env.SESHAT_PYTHON || join(process.cwd(), '.venv/bin/python');
 const pollMs = Number(process.env.WORKER_POLL_MS || 4000);
+const embedder = new OllamaEmbedder();
+const vectorIndex = new QdrantVectorIndex();
+const graphMirror = new Neo4jGraphMirror();
 
-type Claimed = { id: string; reference_id: string; stage: 'extract' | 'identify' | 'summarize'; attempts: number };
+type Claimed = { id: string; reference_id: string; stage: 'extract' | 'identify' | 'summarize' | 'relate'; attempts: number };
 
 async function claim(): Promise<Claimed | null> {
   await catalog.ensureSchema();
   const result = await catalog.pool.query<Claimed>(`
     WITH candidate AS (
-      SELECT id FROM catalog_jobs WHERE status='queued' AND stage IN ('extract','identify','summarize')
+      SELECT id FROM catalog_jobs WHERE status='queued' AND stage IN ('extract','identify','summarize','relate')
       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
     ) UPDATE catalog_jobs j SET status='running', attempts=attempts+1, updated_at=now()
       FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.reference_id,j.stage,j.attempts`);
@@ -78,6 +82,12 @@ async function extract(job: Claimed) {
     await exec(python, ['-m', 'seshat_ingest.cli', source, '--reference-id', job.reference_id,
       '--artifact-id', original.id, '--output', output], { env: { ...process.env, PYTHONPATH: join(process.cwd(), 'services/ingest') }, maxBuffer: 10 * 1024 * 1024 });
     const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
+    const chunkRows = (await readFile(join(output, 'chunks.jsonl'), 'utf8'))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const chunks = chunkRows.map((row, index) => normalizeDoclingChunk(job.reference_id, index, row))
+      .filter((chunk): chunk is NonNullable<typeof chunk> => Boolean(chunk));
     let wordCount = 0;
     for (const item of manifest.artifacts) {
       await assertJobRunning(job);
@@ -90,8 +100,9 @@ async function extract(job: Claimed) {
         VALUES($1,$2,$3,'r2',$4,$5,$6,$7,$8,$9) ON CONFLICT(object_key) DO NOTHING`,
         [randomUUID(), job.reference_id, item.kind, key, bucket, item.media_type, item.size_bytes, item.sha256, stored.ETag?.replaceAll('"','')]);
     }
+    await catalog.replaceChunks(job.reference_id, reference.owner_key, chunks);
     await catalog.pool.query('UPDATE catalog_references SET word_count=$2,updated_at=now() WHERE id=$1', [job.reference_id, wordCount]);
-    await complete(job, 'identify', { parser: manifest.parser, sourceSha256: manifest.source_sha256, wordCount });
+    await complete(job, 'identify', { parser: manifest.parser, sourceSha256: manifest.source_sha256, wordCount, chunks: chunks.length });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
@@ -302,12 +313,140 @@ async function summarize(job: Claimed) {
   await complete(job, 'relate', { provider:'ollama', model:process.env.OLLAMA_MODEL || 'qwen3:1.7b', tags:result.tags });
 }
 
+const graphSlug = (value: unknown): string => String(value || '')
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'unknown';
+const graphKey = (kind: string, label: string): string => `${kind}:${graphSlug(label)}`;
+const edgeKey = (ownerKey: string, referenceId: string, from: string, relation: string, to: string, chunkId = ''): string =>
+  createHash('sha256').update([ownerKey, referenceId, from, relation, to, chunkId].join('\0')).digest('hex');
+
+async function extractGraphCandidates(reference: any, chunks: any[]): Promise<{
+  entities: Array<{ label: string; kind: string; chunkOrdinal?: number }>;
+  relations: Array<{ from: string; to: string; relation: string; chunkOrdinal?: number }>;
+}> {
+  const format = {
+    type: 'object',
+    properties: {
+      entities: { type: 'array', items: { type: 'object', properties: {
+        label: { type: 'string' }, kind: { type: 'string' }, chunkOrdinal: { type: ['integer','null'] },
+      }, required: ['label','kind','chunkOrdinal'] } },
+      relations: { type: 'array', items: { type: 'object', properties: {
+        from: { type: 'string' }, to: { type: 'string' }, relation: { type: 'string' }, chunkOrdinal: { type: ['integer','null'] },
+      }, required: ['from','to','relation','chunkOrdinal'] } },
+    }, required: ['entities','relations'],
+  };
+  const evidence = chunks.slice(0, 24).map((chunk) => `[chunk ${chunk.ordinal}${chunk.locator ? ` · ${chunk.locator}` : ''}]\n${chunk.content.slice(0, 900)}`).join('\n\n');
+  const response = await fetch(`${process.env.OLLAMA_URL || 'http://127.0.0.1:11434'}/api/chat`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(120_000),
+    body: JSON.stringify({
+      model: process.env.OLLAMA_MODEL || 'qwen3:1.7b', stream: false, think: false, format,
+      options: { temperature: 0, num_predict: 1200, num_ctx: 16384 },
+      messages: [
+        { role: 'system', content: 'Extract a compact scholarly knowledge graph. Use only explicit evidence. Entity kinds: person, concept, work, organization, place, method, instrument. Relations must be short uppercase predicates. Preserve the supplied chunk ordinal as evidence.' },
+        { role: 'user', content: `Document: ${reference.title}\n\n${evidence}` },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`OLLAMA_GRAPH_${response.status}`);
+  const parsed = JSON.parse((await response.json()).message.content);
+  return {
+    entities: Array.isArray(parsed.entities) ? parsed.entities.slice(0, 120) : [],
+    relations: Array.isArray(parsed.relations) ? parsed.relations.slice(0, 180) : [],
+  };
+}
+
+async function relate(job: Claimed) {
+  const { reference } = await referenceData(job.reference_id);
+  const chunkResult = await catalog.pool.query(
+    'SELECT id,ordinal,content,page,locator,section,metadata FROM catalog_chunks WHERE reference_id=$1 ORDER BY ordinal',
+    [job.reference_id],
+  );
+  const chunks = chunkResult.rows;
+  const extracted = await extractGraphCandidates(reference, chunks);
+  const documentKey = `document:${job.reference_id}`;
+  const nodes = new Map<string, { key: string; kind: string; label: string; properties: Record<string, unknown> }>();
+  const edges: Array<{ key: string; from: string; relation: string; to: string; chunkId?: string; weight: number; properties?: Record<string, unknown> }> = [];
+  const addNode = (kind: string, label: string, properties: Record<string, unknown> = {}) => {
+    const key = kind === 'document' ? documentKey : graphKey(kind, label);
+    if (label.trim()) nodes.set(key, { key, kind, label: label.trim(), properties });
+    return key;
+  };
+  const addEdge = (from: string, relation: string, to: string, chunkId?: string, weight = 1) => {
+    const normalizedRelation = graphSlug(relation).replaceAll('-', '_').toUpperCase();
+    edges.push({ key: edgeKey(reference.owner_key, job.reference_id, from, normalizedRelation, to, chunkId), from, relation: normalizedRelation, to, chunkId, weight });
+  };
+
+  addNode('document', reference.title, { citeKey: reference.cite_key, referenceId: job.reference_id });
+  for (const person of reference.contributors || []) {
+    const label = person.literal || [person.given, person.family].filter(Boolean).join(' ');
+    if (label) addEdge(addNode('person', label), 'AUTHORED', documentKey, undefined, 1.4);
+  }
+  for (const tag of reference.tags || []) addEdge(documentKey, 'TAGGED', addNode('concept', tag), undefined, 1.1);
+  for (const chunk of chunks) {
+    const chunkKey = `chunk:${chunk.id}`;
+    addNode('chunk', chunk.locator || `chunk ${chunk.ordinal + 1}`, { chunkId: chunk.id, ordinal: chunk.ordinal, page: chunk.page });
+    addEdge(documentKey, 'CONTAINS', chunkKey, chunk.id, .5);
+  }
+  for (const entity of extracted.entities) {
+    const kind = graphSlug(entity.kind || 'concept');
+    const entityKey = addNode(kind, String(entity.label || ''));
+    const evidence = chunks.find((chunk) => chunk.ordinal === Number(entity.chunkOrdinal));
+    if (entityKey && evidence) addEdge(documentKey, 'DISCUSSES', entityKey, evidence.id, 1.2);
+  }
+  const entityKeys = new Map(extracted.entities.map((entity) => [String(entity.label || '').trim().toLowerCase(), graphKey(graphSlug(entity.kind || 'concept'), String(entity.label || ''))]));
+  for (const relation of extracted.relations) {
+    const from = entityKeys.get(String(relation.from || '').trim().toLowerCase());
+    const to = entityKeys.get(String(relation.to || '').trim().toLowerCase());
+    const evidence = chunks.find((chunk) => chunk.ordinal === Number(relation.chunkOrdinal));
+    if (from && to) addEdge(from, relation.relation || 'RELATED_TO', to, evidence?.id, 1.5);
+  }
+  const graphNodes = [...nodes.values()];
+  await catalog.replaceGraphForReference(reference.owner_key, job.reference_id, graphNodes, edges);
+  await graphMirror.sync(reference.owner_key, graphNodes, edges).catch((error) => console.error('[worker:neo4j-mirror]', error));
+  await complete(job, '', { nodes: graphNodes.length, edges: edges.length, neo4jMirrored: graphMirror.enabled });
+}
+
+async function indexVectorBatch(): Promise<boolean> {
+  if (!vectorIndex.enabled) return false;
+  const deletions = await catalog.pendingVectorDeletions();
+  if (deletions.length) {
+    try {
+      await vectorIndex.delete(deletions);
+      await catalog.completeVectorDeletions(deletions);
+    } catch (error) {
+      console.error('[worker:vector-delete]', error);
+      return false;
+    }
+  }
+  const chunks = await catalog.claimVectorChunks(Number(process.env.VECTOR_BATCH_SIZE || 8));
+  if (!chunks.length) return false;
+  try {
+    const embeddings = await embedder.embed(chunks.map((chunk) => chunk.content));
+    await vectorIndex.upsert(chunks.map((chunk, index) => ({
+      id: chunk.id,
+      vector: embeddings[index],
+      payload: {
+        ownerKey: chunk.ownerKey, referenceId: chunk.referenceId, ordinal: chunk.ordinal,
+        title: chunk.title, citeKey: chunk.citeKey, page: chunk.page, locator: chunk.locator,
+        section: chunk.section, tags: chunk.tags, language: chunk.language,
+      },
+    })));
+    await catalog.markVectorChunks(chunks.map((chunk) => chunk.id), 'complete', embedder.model);
+  } catch (error) {
+    await catalog.markVectorChunks(chunks.map((chunk) => chunk.id), 'failed', embedder.model, String((error as any)?.message || error));
+    console.error('[worker:vector]', error);
+  }
+  return true;
+}
+
 async function tick() {
-  const job = await claim(); if (!job) return;
+  const job = await claim();
+  if (!job) { await indexVectorBatch(); return; }
   try {
     if (job.stage === 'extract') await extract(job);
     else if (job.stage === 'identify') await identify(job);
-    else await summarize(job);
+    else if (job.stage === 'summarize') await summarize(job);
+    else await relate(job);
   }
   catch (error) { console.error(`[worker:${job.stage}]`, error); await fail(job, error); }
 }
@@ -320,5 +459,6 @@ async function run() {
 
 await catalog.ensureSchema();
 await catalog.pool.query(`UPDATE catalog_jobs SET status='queued', error='worker restart recovery', updated_at=now() WHERE status='running'`);
-console.log(`[seshat-worker] online concurrency=1 model=${process.env.OLLAMA_MODEL || 'qwen3:1.7b'}`);
+await catalog.pool.query(`UPDATE catalog_chunks SET vector_status='pending',vector_error='worker restart recovery',updated_at=now() WHERE vector_status='running'`);
+console.log(`[seshat-worker] online concurrency=1 model=${process.env.OLLAMA_MODEL || 'qwen3:1.7b'} vector=${vectorIndex.enabled ? vectorIndex.collection : 'deferred'} graph=${graphMirror.enabled ? 'postgres+neo4j' : 'postgres'}`);
 void run();

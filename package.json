@@ -9,12 +9,13 @@
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build --workspace @seshat/web && npm run build --workspace @seshat/worker",
-    "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero && npm run build --workspace @seshat/catalog",
+    "build:packages": "npm run build --workspace @seshat/core && npm run build --workspace @seshat/zotero && npm run build --workspace @seshat/catalog && npm run build --workspace @seshat/retrieval",
     "test": "npm run build:packages && npm run test:packages && npm run test:python",
     "test:packages": "npm run test --workspaces --if-present",
     "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",
     "migrate:contributors": "node scripts/migrate-contributors.mjs",
     "backfill:words": "node scripts/backfill-word-counts.mjs",
+    "backfill:retrieval": "node scripts/backfill-retrieval.mjs",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

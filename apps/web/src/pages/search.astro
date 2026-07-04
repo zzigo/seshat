@@ -1,0 +1,69 @@
+---
+import Shell from '../components/Shell.astro';
+const email = String((Astro.locals.session as any)?.user?.email || '');
+if (!email) return Astro.redirect('/login?redirect=/search');
+---
+
+<Shell title="Corpus search — Seshat">
+  <section class="search-workspace">
+    <div class="eyebrow">GIN → Qdrant → evidence graph</div>
+    <h1>Search what the<br /><em>documents contain.</em></h1>
+    <form class="corpus-search-form" data-corpus-search>
+      <input name="q" type="search" minlength="2" maxlength="300" autocomplete="off" placeholder="Exact phrase, concept, person, method…" autofocus />
+      <button type="submit">Search</button>
+      <button type="submit" name="intent" value="reason" class="secondary">Reason with evidence</button>
+      <div class="search-modes" aria-label="Retrieval mode">
+        <label><input type="radio" name="mode" value="hybrid" checked /> hybrid</label>
+        <label><input type="radio" name="mode" value="lexical" /> exact</label>
+        <label><input type="radio" name="mode" value="semantic" /> semantic</label>
+        <label><input type="radio" name="mode" value="graph" /> graph</label>
+      </div>
+    </form>
+    <output class="search-status" data-search-status>Ready to inspect the corpus.</output>
+    <div class="corpus-results" data-corpus-results></div>
+  </section>
+
+  <script>
+    const form = document.querySelector<HTMLFormElement>('[data-corpus-search]');
+    const status = document.querySelector<HTMLOutputElement>('[data-search-status]');
+    const results = document.querySelector<HTMLElement>('[data-corpus-results]');
+    const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[char] || char);
+    const renderSnippet = (value: string) => esc(value).replaceAll('‹', '<mark>').replaceAll('›', '</mark>');
+    form?.addEventListener('submit', async (event: SubmitEvent) => {
+      event.preventDefault();
+      if (!status || !results) return;
+      const data = new FormData(form);
+      const query = String(data.get('q') || '').trim();
+      if (query.length < 2) return;
+      const reasoning = (event.submitter as HTMLButtonElement | null)?.value === 'reason';
+      status.value = 'Searching lexical, vector and graph evidence…';
+      results.replaceChildren();
+      const params = new URLSearchParams({ q: query, mode: String(data.get('mode') || 'hybrid') });
+      try {
+        const response = reasoning
+          ? await fetch('/api/search/corpus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) })
+          : await fetch(`/api/search/corpus?${params}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Search failed');
+        if (reasoning) {
+          status.value = `${payload.sources.length} evidence fragments used · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
+          results.innerHTML = `<article class="corpus-reasoning"><h2>Evidence-grounded reading</h2><div>${esc(payload.answer).replaceAll('\n', '<br />')}</div><ol>${payload.sources.map((source: any) => `<li><a href="/library/${encodeURIComponent(source.referenceId)}">[${source.number}] @${esc(source.citeKey)} · ${esc(source.title)}${source.locator ? ` · ${esc(source.locator)}` : ''}</a></li>`).join('')}</ol></article>`;
+          return;
+        }
+        status.value = `${payload.items.length} evidence fragments · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
+        const grouped = new Map<string, any[]>();
+        payload.items.forEach((item: any) => grouped.set(item.referenceId, [...(grouped.get(item.referenceId) || []), item]));
+        results.innerHTML = [...grouped.values()].map((items) => {
+          const first = items[0];
+          const occurrences = items.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
+          return `<article class="corpus-result-group">
+            <header><div><span>@${esc(first.citeKey)}</span><h2><a href="/library/${encodeURIComponent(first.referenceId)}">${esc(first.title)}</a></h2></div><strong>${occurrences || items.length} ${occurrences === 1 ? 'occurrence' : 'occurrences'}</strong></header>
+            <ol>${items.map((item) => `<li><a href="/library/${encodeURIComponent(item.referenceId)}${item.page ? `?page=${encodeURIComponent(item.page)}&q=${encodeURIComponent(query)}` : ''}"><b>${esc(item.locator || item.section || `fragment ${item.metadata?.ordinal ?? ''}`)}</b><p>${renderSnippet(item.snippet)}</p><small>${item.channels.map(esc).join(' · ')}</small></a></li>`).join('')}</ol>
+          </article>`;
+        }).join('') || '<div class="search-empty">No evidence found in the indexed corpus.</div>';
+      } catch (error: any) {
+        status.value = error?.message || 'Search failed';
+      }
+    });
+  </script>
+</Shell>

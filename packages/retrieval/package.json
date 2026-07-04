@@ -1,0 +1,22 @@
+{
+  "name": "@seshat/retrieval",
+  "version": "0.1.0",
+  "description": "Replaceable dense-vector, graph-mirror, and result-fusion adapters for Seshat.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT"
+}

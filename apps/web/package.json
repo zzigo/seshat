@@ -16,6 +16,7 @@
     "@retorquere/bibtex-parser": "^9.0.29",
     "@seshat/catalog": "^0.1.0",
     "@seshat/core": "*",
+    "@seshat/retrieval": "*",
     "astro": "^6.2.1",
     "auth-astro": "^4.2.0",
     "dockview-core": "^5.2.0",

@@ -188,6 +188,57 @@ export interface CitationSearchResult {
   updatedAt: string;
 }
 
+export interface CatalogChunkInput {
+  id: string;
+  ordinal: number;
+  content: string;
+  contentSha256: string;
+  page?: number;
+  locator?: string;
+  section?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CatalogChunkSearchResult {
+  chunkId: string;
+  referenceId: string;
+  title: string;
+  citeKey: string;
+  content: string;
+  snippet: string;
+  page?: number;
+  locator?: string;
+  section?: string;
+  metadata: Record<string, unknown>;
+  score: number;
+}
+
+export interface CatalogVectorChunk extends CatalogChunkInput {
+  referenceId: string;
+  ownerKey: string;
+  title: string;
+  citeKey: string;
+  tags: string[];
+  language?: string;
+}
+
+export interface CatalogGraphNodeInput {
+  key: string;
+  kind: string;
+  label: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface CatalogGraphEdgeInput {
+  key: string;
+  from: string;
+  relation: string;
+  to: string;
+  chunkId?: string;
+  weight?: number;
+  properties?: Record<string, unknown>;
+}
+
 export function buildInitialJobs(_referenceId: string, id: () => string = () => crypto.randomUUID()): CatalogJob[] {
   const timestamp = new Date().toISOString();
   return (['extract', 'identify', 'summarize', 'relate'] as const).map((stage, index) => ({
@@ -229,6 +280,64 @@ const schema = `
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher_place text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS url text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS word_count integer NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS catalog_chunks (
+    id text PRIMARY KEY,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    owner_key text NOT NULL,
+    ordinal integer NOT NULL,
+    content text NOT NULL,
+    content_sha256 text NOT NULL,
+    page integer,
+    locator text,
+    section text,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+    vector_status text NOT NULL DEFAULT 'pending' CHECK (vector_status IN ('pending','running','complete','failed')),
+    vector_attempts integer NOT NULL DEFAULT 0,
+    vector_model text,
+    vector_error text,
+    indexed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(reference_id, ordinal, content_sha256)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_chunks_search_idx ON catalog_chunks USING GIN(search_vector);
+  CREATE INDEX IF NOT EXISTS catalog_chunks_reference_idx ON catalog_chunks(reference_id, ordinal);
+  CREATE INDEX IF NOT EXISTS catalog_chunks_vector_queue_idx ON catalog_chunks(vector_status, updated_at);
+  ALTER TABLE catalog_chunks ADD COLUMN IF NOT EXISTS vector_attempts integer NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS catalog_vector_deletions (
+    chunk_id text PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE IF NOT EXISTS catalog_graph_nodes (
+    owner_key text NOT NULL,
+    node_key text NOT NULL,
+    kind text NOT NULL,
+    label text NOT NULL,
+    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key, node_key)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_graph_nodes_label_idx ON catalog_graph_nodes(owner_key, lower(label));
+  CREATE TABLE IF NOT EXISTS catalog_graph_edges (
+    edge_key text PRIMARY KEY,
+    owner_key text NOT NULL,
+    evidence_reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    from_key text NOT NULL,
+    relation text NOT NULL,
+    to_key text NOT NULL,
+    evidence_chunk_id text REFERENCES catalog_chunks(id) ON DELETE SET NULL,
+    weight real NOT NULL DEFAULT 1,
+    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS catalog_graph_edges_owner_from_idx ON catalog_graph_edges(owner_key, from_key);
+  CREATE INDEX IF NOT EXISTS catalog_graph_edges_owner_to_idx ON catalog_graph_edges(owner_key, to_key);
 
   CREATE TABLE IF NOT EXISTS catalog_artifacts (
     id text PRIMARY KEY,
@@ -437,6 +546,14 @@ export class PostgresCatalog {
       await client.query('UPDATE catalog_libraries SET owner_key=$2 WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
       await client.query('UPDATE catalog_references SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
       await client.query('UPDATE catalog_annotations SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query('UPDATE catalog_chunks SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query(`DELETE FROM catalog_graph_edges current USING catalog_graph_edges target
+        WHERE current.owner_key=$1 AND target.owner_key=$2 AND current.edge_key=target.edge_key`, [currentOwnerKey, targetOwnerKey]);
+      await client.query('UPDATE catalog_graph_edges SET owner_key=$2,updated_at=now() WHERE owner_key=$1', [currentOwnerKey, targetOwnerKey]);
+      await client.query(`INSERT INTO catalog_graph_nodes(owner_key,node_key,kind,label,properties)
+        SELECT $2,node_key,kind,label,properties FROM catalog_graph_nodes WHERE owner_key=$1
+        ON CONFLICT(owner_key,node_key) DO UPDATE SET properties=catalog_graph_nodes.properties || excluded.properties,updated_at=now()`, [currentOwnerKey, targetOwnerKey]);
+      await client.query('DELETE FROM catalog_graph_nodes WHERE owner_key=$1', [currentOwnerKey]);
       await client.query(`DELETE FROM catalog_library_shares current USING catalog_library_shares target
         WHERE current.grantee_owner_key=$1 AND target.grantee_owner_key=$2 AND current.library_id=target.library_id`, [currentOwnerKey, targetOwnerKey]);
       await client.query('UPDATE catalog_library_shares SET grantee_owner_key=$2 WHERE grantee_owner_key=$1', [currentOwnerKey, targetOwnerKey]);
@@ -604,6 +721,226 @@ export class PostgresCatalog {
       [ownerKey, Math.max(1, Math.min(200, limit))],
     );
     return Promise.all(result.rows.map((row) => this.hydrate(row, ownerKey)));
+  }
+
+  async replaceChunks(referenceId: string, ownerKey: string, chunks: CatalogChunkInput[]): Promise<void> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const reference = await client.query(
+        'SELECT id FROM catalog_references WHERE id=$1 AND owner_key=$2 FOR UPDATE',
+        [referenceId, ownerKey],
+      );
+      if (!reference.rows[0]) throw new Error('REFERENCE_NOT_FOUND');
+      await client.query(
+        `INSERT INTO catalog_vector_deletions(chunk_id)
+         SELECT id FROM catalog_chunks WHERE reference_id=$1
+         ON CONFLICT(chunk_id) DO NOTHING`,
+        [referenceId],
+      );
+      await client.query('DELETE FROM catalog_chunks WHERE reference_id=$1', [referenceId]);
+      for (const chunk of chunks) {
+        await client.query(
+          `INSERT INTO catalog_chunks
+            (id,reference_id,owner_key,ordinal,content,content_sha256,page,locator,section,metadata)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
+          [chunk.id, referenceId, ownerKey, chunk.ordinal, chunk.content, chunk.contentSha256,
+            chunk.page ?? null, chunk.locator ?? null, chunk.section ?? null, JSON.stringify(chunk.metadata || {})],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async claimVectorChunks(limit = 12): Promise<CatalogVectorChunk[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `WITH candidates AS (
+         SELECT id FROM catalog_chunks WHERE vector_status IN ('pending','failed') AND vector_attempts < 3
+         ORDER BY updated_at, ordinal FOR UPDATE SKIP LOCKED LIMIT $1
+       ), claimed AS (
+         UPDATE catalog_chunks chunk SET vector_status='running',vector_attempts=vector_attempts+1,vector_error=NULL,updated_at=now()
+         FROM candidates WHERE chunk.id=candidates.id RETURNING chunk.*
+       )
+       SELECT claimed.*,reference.title,reference.cite_key,reference.tags,reference.language
+       FROM claimed JOIN catalog_references reference ON reference.id=claimed.reference_id
+       ORDER BY claimed.updated_at,claimed.ordinal`,
+      [Math.max(1, Math.min(64, limit))],
+    );
+    return result.rows.map((row) => ({
+      id: row.id, referenceId: row.reference_id, ownerKey: row.owner_key, ordinal: row.ordinal,
+      content: row.content, contentSha256: row.content_sha256, page: row.page ?? undefined,
+      locator: row.locator ?? undefined, section: row.section ?? undefined, metadata: row.metadata || {},
+      title: row.title, citeKey: row.cite_key, tags: row.tags || [], language: row.language ?? undefined,
+    }));
+  }
+
+  async pendingVectorDeletions(limit = 200): Promise<string[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'SELECT chunk_id FROM catalog_vector_deletions ORDER BY created_at LIMIT $1',
+      [Math.max(1, Math.min(1000, limit))],
+    );
+    return result.rows.map((row) => String(row.chunk_id));
+  }
+
+  async completeVectorDeletions(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    await this.ensureSchema();
+    await this.pool.query('DELETE FROM catalog_vector_deletions WHERE chunk_id=ANY($1::text[])', [ids]);
+  }
+
+  async markVectorChunks(ids: string[], status: 'pending' | 'complete' | 'failed', model?: string, error?: string): Promise<void> {
+    if (!ids.length) return;
+    await this.ensureSchema();
+    await this.pool.query(
+      `UPDATE catalog_chunks SET vector_status=$2,vector_model=$3,vector_error=$4,
+         indexed_at=CASE WHEN $2='complete' THEN now() ELSE indexed_at END,updated_at=now()
+       WHERE id=ANY($1::text[])`,
+      [ids, status, model || null, error?.slice(0, 1000) || null],
+    );
+  }
+
+  private mapChunkSearchRow(row: any): CatalogChunkSearchResult {
+    return {
+      chunkId: row.id, referenceId: row.reference_id, title: row.title, citeKey: row.cite_key,
+      content: row.content, snippet: row.snippet || row.content.slice(0, 320),
+      page: row.page ?? undefined, locator: row.locator ?? undefined, section: row.section ?? undefined,
+      metadata: row.metadata || {}, score: Number(row.score || 0),
+    };
+  }
+
+  async lexicalSearch(ownerKey: string, query: string, limit = 40, libraryId?: string): Promise<CatalogChunkSearchResult[]> {
+    await this.ensureSchema();
+    const normalized = query.trim().slice(0, 300);
+    if (!normalized) return [];
+    const result = await this.pool.query(
+      `WITH RECURSIVE shared_libraries AS (
+         SELECT library.id FROM catalog_library_shares share JOIN catalog_libraries library ON library.id=share.library_id
+         WHERE share.grantee_owner_key=$1
+         UNION SELECT child.id FROM catalog_libraries child JOIN shared_libraries parent ON child.parent_id=parent.id
+       ), search_query AS (SELECT websearch_to_tsquery('simple',$2) AS value)
+       SELECT chunk.*,reference.title,reference.cite_key,
+         ts_rank_cd(chunk.search_vector,search_query.value,32) AS score,
+         ts_headline('simple',chunk.content,search_query.value,
+           'MaxWords=38,MinWords=12,ShortWord=2,StartSel=‹,StopSel=›,FragmentDelimiter= … ') AS snippet
+       FROM catalog_chunks chunk
+       JOIN catalog_references reference ON reference.id=chunk.reference_id
+       CROSS JOIN search_query
+       WHERE (chunk.search_vector @@ search_query.value OR chunk.content ILIKE ('%' || $2 || '%'))
+         AND (reference.owner_key=$1 OR EXISTS (
+           SELECT 1 FROM catalog_library_items visible JOIN shared_libraries shared ON shared.id=visible.library_id
+           WHERE visible.reference_id=reference.id
+         ))
+         AND ($4::text IS NULL OR EXISTS (
+           SELECT 1 FROM catalog_library_items scoped WHERE scoped.reference_id=reference.id AND scoped.library_id=$4
+         ))
+       ORDER BY score DESC,reference.updated_at DESC,chunk.ordinal
+       LIMIT $3`,
+      [ownerKey, normalized, Math.max(1, Math.min(200, limit)), libraryId || null],
+    );
+    return result.rows.map((row) => this.mapChunkSearchRow(row));
+  }
+
+  async accessibleChunks(ownerKey: string, chunkIds: string[], libraryId?: string): Promise<CatalogChunkSearchResult[]> {
+    await this.ensureSchema();
+    const ids = [...new Set(chunkIds)].slice(0, 500);
+    if (!ids.length) return [];
+    const result = await this.pool.query(
+      `WITH RECURSIVE shared_libraries AS (
+         SELECT library.id FROM catalog_library_shares share JOIN catalog_libraries library ON library.id=share.library_id
+         WHERE share.grantee_owner_key=$1
+         UNION SELECT child.id FROM catalog_libraries child JOIN shared_libraries parent ON child.parent_id=parent.id
+       )
+       SELECT chunk.*,reference.title,reference.cite_key,''::text AS snippet,0::real AS score
+       FROM catalog_chunks chunk JOIN catalog_references reference ON reference.id=chunk.reference_id
+       WHERE chunk.id=ANY($2::text[])
+         AND (reference.owner_key=$1 OR EXISTS (
+           SELECT 1 FROM catalog_library_items visible JOIN shared_libraries shared ON shared.id=visible.library_id
+           WHERE visible.reference_id=reference.id
+         ))
+         AND ($3::text IS NULL OR EXISTS (
+           SELECT 1 FROM catalog_library_items scoped WHERE scoped.reference_id=reference.id AND scoped.library_id=$3
+         ))`,
+      [ownerKey, ids, libraryId || null],
+    );
+    return result.rows.map((row) => this.mapChunkSearchRow(row));
+  }
+
+  async accessibleOwnerKeys(ownerKey: string): Promise<string[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `SELECT $1::text AS owner_key
+       UNION SELECT DISTINCT library.owner_key
+       FROM catalog_library_shares share JOIN catalog_libraries library ON library.id=share.library_id
+       WHERE share.grantee_owner_key=$1`,
+      [ownerKey],
+    );
+    return result.rows.map((row) => String(row.owner_key)).filter(Boolean);
+  }
+
+  async replaceGraphForReference(
+    ownerKey: string,
+    referenceId: string,
+    nodes: CatalogGraphNodeInput[],
+    edges: CatalogGraphEdgeInput[],
+  ): Promise<void> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM catalog_graph_edges WHERE owner_key=$1 AND evidence_reference_id=$2', [ownerKey, referenceId]);
+      for (const node of nodes) {
+        await client.query(
+          `INSERT INTO catalog_graph_nodes(owner_key,node_key,kind,label,properties)
+           VALUES($1,$2,$3,$4,$5::jsonb)
+           ON CONFLICT(owner_key,node_key) DO UPDATE SET kind=excluded.kind,label=excluded.label,
+             properties=catalog_graph_nodes.properties || excluded.properties,updated_at=now()`,
+          [ownerKey, node.key, node.kind, node.label, JSON.stringify(node.properties || {})],
+        );
+      }
+      for (const edge of edges) {
+        await client.query(
+          `INSERT INTO catalog_graph_edges
+            (edge_key,owner_key,evidence_reference_id,from_key,relation,to_key,evidence_chunk_id,weight,properties)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+           ON CONFLICT(edge_key) DO UPDATE SET weight=excluded.weight,properties=excluded.properties,updated_at=now()`,
+          [edge.key, ownerKey, referenceId, edge.from, edge.relation, edge.to, edge.chunkId || null,
+            edge.weight ?? 1, JSON.stringify(edge.properties || {})],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+
+  async graphSearch(ownerKeys: string | string[], query: string, limit = 30): Promise<Array<{ chunkId: string; score: number }>> {
+    await this.ensureSchema();
+    const normalized = query.trim().slice(0, 300);
+    if (!normalized) return [];
+    const owners = Array.isArray(ownerKeys) ? ownerKeys : [ownerKeys];
+    const result = await this.pool.query(
+      `WITH matched_nodes AS (
+         SELECT owner_key,node_key,CASE WHEN lower(label)=lower($2) THEN 3 ELSE 1 END::real AS match_score
+         FROM catalog_graph_nodes
+         WHERE owner_key=ANY($1::text[]) AND (label ILIKE ('%' || $2 || '%') OR properties::text ILIKE ('%' || $2 || '%'))
+         LIMIT 40
+       ), evidence AS (
+         SELECT edge.evidence_chunk_id AS chunk_id,max(node.match_score * edge.weight)::real AS score
+         FROM catalog_graph_edges edge JOIN matched_nodes node
+           ON edge.owner_key=node.owner_key AND (node.node_key=edge.from_key OR node.node_key=edge.to_key)
+         WHERE edge.owner_key=ANY($1::text[]) AND edge.evidence_chunk_id IS NOT NULL
+         GROUP BY edge.evidence_chunk_id
+       ) SELECT chunk_id,score FROM evidence ORDER BY score DESC LIMIT $3`,
+      [owners, normalized, Math.max(1, Math.min(100, limit))],
+    );
+    return result.rows.map((row) => ({ chunkId: row.chunk_id, score: Number(row.score || 0) }));
   }
 
   async searchCitations(
