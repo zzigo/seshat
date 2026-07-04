@@ -205,6 +205,26 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .corpus-reasoning h2 { margin: 0 0 20px; font-size: 36px; }
 .corpus-reasoning ol { margin: 26px 0 0; padding: 20px 0 0 22px; border-top: 1px solid var(--line); font: 10px/1.8 monospace; }
 
+.graph-panel {
+  margin-top: 50px;
+  border-top: 1px solid var(--line);
+  padding-top: 40px;
+}
+.graph-container {
+  margin-top: 24px;
+  border: 1px solid var(--ink);
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.graph-empty {
+  padding: 60px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  text-align: center;
+  font: 12px monospace;
+}
+
 @media (max-width: 760px) {
   .masthead, main, footer { width: min(100% - 28px, 1180px); }
   .identity-name { display: none; }
