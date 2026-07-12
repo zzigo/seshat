@@ -116,10 +116,11 @@ export interface CatalogAnnotationInput {
 }
 
 export interface CatalogDashboardStats {
-  totals: { items: number; words: number; libraries: number; annotations: number };
+  totals: { items: number; words: number; libraries: number; annotations: number; concepts: number };
   topAuthors: Array<{ name: string; count: number }>;
   publicationYears: Array<{ year: number; count: number }>;
   topTags: Array<{ name: string; count: number }>;
+  topConcepts: Array<{ name: string; count: number }>;
 }
 
 export interface CatalogDocumentInput {
@@ -653,12 +654,13 @@ export class PostgresCatalog {
 
   async dashboardStats(ownerKey: string): Promise<CatalogDashboardStats> {
     await this.ensureSchema();
-    const [totals, authors, years, tags] = await Promise.all([
+    const [totals, authors, years, tags, concepts] = await Promise.all([
       this.pool.query(
         `SELECT (SELECT count(*) FROM catalog_references WHERE owner_key=$1)::int AS items,
                 (SELECT COALESCE(sum(word_count),0) FROM catalog_references WHERE owner_key=$1)::bigint AS words,
                 (SELECT count(*) FROM catalog_libraries WHERE owner_key=$1)::int AS libraries,
-                (SELECT count(*) FROM catalog_annotations WHERE owner_key=$1)::int AS annotations`, [ownerKey],
+                (SELECT count(*) FROM catalog_annotations WHERE owner_key=$1)::int AS annotations,
+                (SELECT count(*) FROM catalog_graph_nodes WHERE owner_key=$1 AND lower(kind) IN ('topic','concept'))::int AS concepts`, [ownerKey],
       ),
       this.pool.query(
         `SELECT COALESCE(NULLIF(trim(person->>'family'),''),NULLIF(trim(person->>'literal'),''),NULLIF(trim(person->>'given'),'')) AS name,
@@ -677,13 +679,22 @@ export class PostgresCatalog {
         `SELECT tag AS name,count(*)::int AS count FROM catalog_references CROSS JOIN LATERAL unnest(tags) tag
          WHERE owner_key=$1 AND trim(tag)<>'' GROUP BY tag ORDER BY count DESC,name LIMIT 20`, [ownerKey],
       ),
+      this.pool.query(
+        `SELECT concept.label AS name,count(DISTINCT paper.node_key)::int AS count
+         FROM catalog_graph_nodes concept
+         JOIN catalog_graph_edges edge ON edge.owner_key=concept.owner_key AND (edge.from_key=concept.node_key OR edge.to_key=concept.node_key)
+         JOIN catalog_graph_nodes paper ON paper.owner_key=concept.owner_key AND paper.node_key=CASE WHEN edge.from_key=concept.node_key THEN edge.to_key ELSE edge.from_key END
+         WHERE concept.owner_key=$1 AND lower(concept.kind) IN ('topic','concept') AND lower(paper.kind) IN ('paper','work','document','publication','article')
+         GROUP BY concept.node_key,concept.label ORDER BY count DESC,name LIMIT 30`, [ownerKey],
+      ),
     ]);
     const row = totals.rows[0] || {};
     return {
-      totals: { items: Number(row.items || 0), words: Number(row.words || 0), libraries: Number(row.libraries || 0), annotations: Number(row.annotations || 0) },
+      totals: { items: Number(row.items || 0), words: Number(row.words || 0), libraries: Number(row.libraries || 0), annotations: Number(row.annotations || 0), concepts: Number(row.concepts || 0) },
       topAuthors: authors.rows.map((item) => ({ name: item.name, count: Number(item.count) })),
       publicationYears: years.rows.map((item) => ({ year: Number(item.year), count: Number(item.count) })),
       topTags: tags.rows.map((item) => ({ name: item.name, count: Number(item.count) })),
+      topConcepts: concepts.rows.map((item) => ({ name: item.name, count: Number(item.count) })),
     };
   }
 

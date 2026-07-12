@@ -16,6 +16,7 @@
     "migrate:contributors": "node scripts/migrate-contributors.mjs",
     "backfill:words": "node scripts/backfill-word-counts.mjs",
     "backfill:retrieval": "node scripts/backfill-retrieval.mjs",
+    "backfill:openalex-graphs": "node scripts/backfill-openalex-graphs.mjs",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

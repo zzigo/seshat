@@ -27,11 +27,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (context.url.pathname === '/workspace') {
     response.headers.set('Content-Security-Policy', [
       "default-src 'self'",
-      "script-src 'self'",
+      "script-src 'self' https://static.cloudflareinsights.com",
+      "script-src-elem 'self' https://static.cloudflareinsights.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data: blob:",
-      "connect-src 'self'",
+      "connect-src 'self' https://cloudflareinsights.com",
       "frame-src 'self' blob:",
       "worker-src 'self' blob:",
       "object-src 'none'",

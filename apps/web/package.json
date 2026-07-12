@@ -21,6 +21,7 @@
     "astro": "^6.2.1",
     "auth-astro": "^4.2.0",
     "dockview-core": "^5.2.0",
+    "d3-force-3d": "^3.0.6",
     "foliate-js": "github:johnfactotum/foliate-js#78914aef4466eb960965702401634c2cb348e9b1",
     "force-graph": "^1.51.4",
     "handsontable": "^17.1.0",
