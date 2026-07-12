@@ -2727,6 +2727,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
   }
 
+  let lastTreeTap:{referenceId:string;time:number;x:number;y:number}|null=null;
   const renderTree = (query = '') => {
     tree.replaceChildren();
     const makeButton = (label: string, directCount: number, libraryId: string | null, recursiveCount = directCount, hideEmptyDirect = false) => {
@@ -3078,14 +3079,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           setSaveState(`${selectedReferences.size} selected`);
         });
         item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
-        let lastTreeTouchTime = 0;
-        item.addEventListener('touchstart', (event) => {
-          const now = Date.now();
-          if (now - lastTreeTouchTime < 300) {
-            event.preventDefault();
-            controller.openDocument(reference.id, event.altKey);
-          }
-          lastTreeTouchTime = now;
+        item.addEventListener('touchend', (event) => {
+          if(event.changedTouches.length!==1)return;const touch=event.changedTouches[0];const now=Date.now();const previous=lastTreeTap;const isDouble=Boolean(previous&&previous.referenceId===reference.id&&now-previous.time<450&&Math.hypot(touch.clientX-previous.x,touch.clientY-previous.y)<28);
+          if(isDouble){event.preventDefault();event.stopPropagation();lastTreeTap=null;controller.openDocument(reference.id);return;}
+          lastTreeTap={referenceId:reference.id,time:now,x:touch.clientX,y:touch.clientY};
         }, { passive: false });
         item.addEventListener('contextmenu', (event) => {
           if (!selectedReferences.has(reference.id)) {
