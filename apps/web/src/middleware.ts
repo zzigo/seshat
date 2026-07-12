@@ -32,6 +32,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data: blob:",
+      "media-src 'self' blob:",
       "connect-src 'self' https://cloudflareinsights.com https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co https://cdn.jsdelivr.net",
       "frame-src 'self' blob:",
       "worker-src 'self' blob:",
