@@ -105,7 +105,7 @@ ss -ltn
 
 Then test through the public UI:
 
-1. Open `https://seshat.zztt.org` and authenticate through Authentik.
+1. Open `https://seshat.zztt.org` and authenticate through Logto.
 2. Drop a small supported document while remaining in the table workspace.
 3. Observe the bottom status console advance through extraction and identification.
 4. Open the original, text and structure pods.

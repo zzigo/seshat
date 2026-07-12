@@ -6,6 +6,7 @@ const env = (key: string): string | undefined =>
 
 const development = env('NODE_ENV') !== 'production';
 const googleConfigured = Boolean(env('GOOGLE_CLIENT_ID') && env('GOOGLE_CLIENT_SECRET'));
+const logtoConfigured = Boolean(env('LOGTO_ISSUER_URL') && env('LOGTO_CLIENT_ID') && env('LOGTO_CLIENT_SECRET'));
 
 if (typeof process !== 'undefined') process.env.AUTH_TRUST_HOST = 'true';
 
@@ -30,12 +31,12 @@ export default defineConfig({
       allowDangerousEmailAccountLinking: true,
     })] : []),
     {
-      id: 'authentik',
-      name: 'Authentik',
+      id: logtoConfigured ? 'logto' : 'authentik',
+      name: logtoConfigured ? 'Logto' : 'Authentik',
       type: 'oidc',
-      issuer: env('OIDC_ISSUER_URL') || 'https://auth.musiki.org.ar/application/o/seshat/',
-      clientId: env('OIDC_CLIENT_ID'),
-      clientSecret: env('OIDC_CLIENT_SECRET'),
+      issuer: logtoConfigured ? env('LOGTO_ISSUER_URL') : env('OIDC_ISSUER_URL') || 'https://auth.musiki.org.ar/application/o/seshat/',
+      clientId: logtoConfigured ? env('LOGTO_CLIENT_ID') : env('OIDC_CLIENT_ID'),
+      clientSecret: logtoConfigured ? env('LOGTO_CLIENT_SECRET') : env('OIDC_CLIENT_SECRET'),
       authorization: { params: { scope: 'openid profile email' } },
       checks: ['pkce', 'state'],
       client: { token_endpoint_auth_method: 'client_secret_post' },
@@ -61,7 +62,7 @@ export default defineConfig({
     async session({ session, token }) {
       if (session.user) {
         (session.user as any).id = String((token as any).identitySubject || token.sub || '');
-        (session.user as any).provider = String((token as any).identityProvider || 'authentik');
+        (session.user as any).provider = String((token as any).identityProvider || (logtoConfigured ? 'logto' : 'authentik'));
         (session.user as any).groups = Array.isArray((token as any).groups) ? (token as any).groups : [];
       }
       return session;

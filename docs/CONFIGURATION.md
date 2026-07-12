@@ -11,9 +11,12 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 |---|---:|---|---|
 | `AUTH_URL` | Production: yes | `http://localhost:4331` in example | External origin for Auth.js and Astro site |
 | `AUTH_SECRET` | Yes | none | Auth.js signing/encryption secret |
-| `OIDC_ISSUER_URL` | Yes for Authentik | Authentik Seshat issuer fallback in `auth.config.ts` | OIDC discovery/issuer |
-| `OIDC_CLIENT_ID` | Yes for Authentik | none | Authentik OAuth client |
-| `OIDC_CLIENT_SECRET` | Yes for Authentik | none | Authentik OAuth secret |
+| `LOGTO_ISSUER_URL` | Production: yes | none | Primary Logto OIDC discovery/issuer |
+| `LOGTO_CLIENT_ID` | Production: yes | none | Logto application client ID |
+| `LOGTO_CLIENT_SECRET` | Production: yes | none | Logto application client secret |
+| `OIDC_ISSUER_URL` | Migration fallback | Authentik Seshat issuer fallback in `auth.config.ts` | Legacy generic OIDC discovery/issuer |
+| `OIDC_CLIENT_ID` | Migration fallback | none | Legacy generic OIDC client |
+| `OIDC_CLIENT_SECRET` | Migration fallback | none | Legacy generic OIDC secret |
 | `SESHAT_ADMIN_EMAILS` | No | empty | Comma-separated account-recovery administrators |
 | `SESHAT_ADMIN_GROUPS` | No | `authentik Admins,Seshat Admins` | Authentik groups allowed to recover a previous catalog identity |
 | `GOOGLE_CLIENT_ID` | Optional | none | Enables direct Google login when paired with its secret |
@@ -49,9 +52,9 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 AUTH_URL=http://localhost:4331
 AUTH_SECRET=replace-with-a-long-random-value
 
-OIDC_ISSUER_URL=https://your-authentik.example/application/o/seshat/
-OIDC_CLIENT_ID=replace-me
-OIDC_CLIENT_SECRET=replace-me
+LOGTO_ISSUER_URL=https://your-logto.example/oidc
+LOGTO_CLIENT_ID=replace-me
+LOGTO_CLIENT_SECRET=replace-me
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/seshat
 WASABI_ENDPOINT=https://s3.us-east-2.wasabisys.com

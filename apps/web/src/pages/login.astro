@@ -8,6 +8,9 @@ if ((Astro.locals.session as any)?.user?.email) return Astro.redirect(redirect);
 const origin = process.env.AUTH_URL || process.env.SITE_URL || Astro.url.origin;
 const callbackUrl = `${origin.replace(/\/$/, '')}${redirect}`;
 const googleConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const logtoConfigured = Boolean(process.env.LOGTO_ISSUER_URL && process.env.LOGTO_CLIENT_ID && process.env.LOGTO_CLIENT_SECRET);
+const oidcProvider = logtoConfigured ? 'logto' : 'authentik';
+const oidcName = logtoConfigured ? 'Logto' : 'Authentik';
 ---
 
 <Shell title="Sign in — Seshat">
@@ -16,8 +19,8 @@ const googleConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOO
     <h1>Enter the<br /><em>House of Books.</em></h1>
     <p>Your Seshat library is separate from Musiki, while your identity belongs to the same ecosystem.</p>
     <div class="auth-actions">
-      <SignIn provider="authentik" options={{ callbackUrl }}>
-        <span class="button primary auth-button">Continue with Authentik</span>
+      <SignIn provider={oidcProvider} options={{ callbackUrl }}>
+        <span class="button primary auth-button">Continue with {oidcName}</span>
       </SignIn>
       {googleConfigured && (
         <SignIn provider="google" options={{ callbackUrl }}>

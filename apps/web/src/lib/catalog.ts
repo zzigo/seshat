@@ -19,7 +19,7 @@ export const ownerKeyFor = (email: string): string => ownerAliases.get(normalize
 export const sessionIdentity = (session: any) => {
   const email = normalizedEmail(String(session?.user?.email || ''));
   const subject = String(session?.user?.id || '').trim();
-  const provider = String(session?.user?.provider || 'authentik').trim().toLowerCase();
+  const provider = String(session?.user?.provider || 'logto').trim().toLowerCase();
   return { email, subject, provider, identityKey: `${provider}:${subject || email}` };
 };
 
