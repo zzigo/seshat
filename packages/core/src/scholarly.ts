@@ -13,7 +13,7 @@ const stableDigest=(value:string|Uint8Array):string=>{
 export type PaperResolutionStatus = 'resolved' | 'ambiguous' | 'unresolved';
 export type KnowledgeNodeKind = 'paper' | 'author' | 'topic' | 'venue' | 'institution' | 'collection';
 export type KnowledgeEdgeKind = 'cites' | 'authored-by' | 'has-topic' | 'published-in' | 'affiliated-with'
-  | 'belongs-to-collection' | 'bibliographic-coupling' | 'co-citation' | 'shared-author' | 'shared-topic';
+  | 'belongs-to-collection' | 'bibliographic-coupling' | 'co-citation' | 'shared-author' | 'shared-topic' | 'related-to';
 
 export interface ExtractedReference { raw:string; title?:string; authors?:string[]; year?:number; doi?:string; confidence:number }
 export interface FieldProvenance { source:'pdf-metadata'|'heuristic'|'openalex'|'user'; method:string; confidence:number; raw?:string; retrievedAt:string }

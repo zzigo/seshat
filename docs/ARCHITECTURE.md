@@ -206,6 +206,6 @@ PDF papers follow a deterministic pipeline alongside the general document pipeli
 2. `OpenAlexClient` resolves DOI first, then OpenAlex ID, then conservative title/year/author candidates. Close matches remain `ambiguous` until a user confirms one.
 3. Enrichment is cached in PostgreSQL and merged without replacing fields listed in `source.curation.manualFields`.
 4. `catalog_papers` stores extraction, resolution, OpenAlex payload, expansion bounds, and provenance. The existing `catalog_graph_nodes` and `catalog_graph_edges` tables store the heterogeneous graph; no graph database is required.
-5. `scholarly-v1` builds stable paper, author, topic, venue, institution, and collection nodes. It records directed citations and deterministic bibliographic-coupling, co-citation, shared-author, shared-topic, and collection associations with inspectable evidence.
+5. `scholarly-v1` builds stable paper, author, topic, venue, institution, and collection nodes. It records directed citations parsed from the document bibliography and returned by OpenAlex, OpenAlex related-work suggestions, and deterministic bibliographic-coupling, co-citation, shared-author, shared-topic, and collection associations with inspectable evidence. Parsed citations are matched back to local catalog papers by DOI or normalized title and year when possible.
 
 Expansion is deliberately one citation hop and capped at 100 references and 50 citing works per paper. Re-running the pipeline is idempotent because nodes and edges use stable IDs and pipeline-scoped replacement.
