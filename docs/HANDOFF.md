@@ -16,7 +16,7 @@ The product direction is a source-aware catalog that understands its documents b
 - A Zotero adapter package kept outside the canonical domain model.
 - A PostgreSQL catalog/queue package and initial schema.
 - An Astro 6 server-rendered web application in English with Authentik OIDC and optional Google authentication.
-- Cloudflare R2 document storage using the same general storage pattern as Musiki; the VPS does not host durable documents.
+- Wasabi document storage using the same general storage pattern as Musiki; the VPS does not host durable documents.
 - Workspace-wide file dropping: documents remain in the main table view while status messages report processing; `.bib` files enter a parsing/organization flow.
 - Multiple hierarchical libraries in a tree sidebar.
 - Handsontable-based bulk-edit catalog and Dockview-based document/analysis workspace.
@@ -24,7 +24,7 @@ The product direction is a source-aware catalog that understands its documents b
 - A Node worker and Python Docling service producing Markdown, Docling JSON, hierarchical chunks and a compact structure map.
 - Bibliographic identification that first inspects extracted content, uses local Ollama inference, validates through Google Books and falls back to Open Library.
 - Automatic title, author and year updates while preserving manually curated fields.
-- Immediate row deletion that cancels work, removes all known R2 objects and then deletes catalog rows, without a confirmation dialog.
+- Immediate row deletion that cancels work, removes all known Wasabi objects and then deletes catalog rows, without a confirmation dialog.
 - A bearer-authenticated, owner-scoped citation search endpoint for trusted editors such as Musiki; browser clients must use their application's server-side proxy.
 - Production deployment behind Caddy with PM2 web/worker processes.
 
@@ -66,7 +66,7 @@ Do not use the VPS as a development branch or document host. Production `.env` r
 - `seshat-web` and `seshat-worker` were online in PM2.
 - Caddy served `seshat.zztt.org` and reverse-proxied to `127.0.0.1:4331`.
 - PostgreSQL ran in the existing `authentik-postgresql` Docker container and listened on loopback.
-- R2 contained originals and Docling derivatives; the VPS retained only temporary extraction files and caches.
+- Wasabi contained originals and Docling derivatives; the VPS retained only temporary extraction files and caches.
 - The catalog contained 4 references, 20 artifacts, 16 jobs and 2 libraries.
 - All 4 extraction and identification jobs were complete; 4 summaries were queued and 4 relation jobs were blocked behind them.
 - Stored artifact totals were approximately 14.8 MiB across originals, Markdown, structure, chunks and Docling JSON.
@@ -79,7 +79,7 @@ These counts are a diagnostic snapshot and will naturally become stale.
 - Installed production Node dependencies and built packages, web and worker applications.
 - Created the Python virtual environment and installed Docling plus CPU Torch dependencies.
 - Configured the Seshat database/schema in the shared PostgreSQL service.
-- Added the production `.env` with Authentik, database, R2 and restricted Google Books credentials.
+- Added the production `.env` with Authentik, database, Wasabi and restricted Google Books credentials.
 - Installed/configured the local Ollama model used by identification.
 - Added PM2 definitions for the web server and worker.
 - Added the Caddy virtual host for `seshat.zztt.org` and verified HTTPS routing.
@@ -87,14 +87,14 @@ These counts are a diagnostic snapshot and will naturally become stale.
 
 ## Design decisions to preserve
 
-- PostgreSQL owns metadata, membership and jobs; R2 owns durable binaries and generated document artifacts.
-- Uploaded files are tied to a reference through cataloged artifact records and deterministic R2 prefixes.
+- PostgreSQL owns metadata, membership and jobs; Wasabi owns durable binaries and generated document artifacts.
+- Uploaded files are tied to a reference through cataloged artifact records and deterministic Wasabi prefixes.
 - The shared package boundary is code and infrastructure, not user data.
 - Zotero remains an import/export adapter. Do not leak Zotero-specific fields into every consumer.
 - Automatic curation must retain field provenance and never overwrite values marked manual.
 - File drop should not navigate away from the main workspace.
 - Document structure is a pod, not a separate extraction page.
-- Deletion is intentionally immediate. Error handling must preserve recoverability if R2 deletion fails.
+- Deletion is intentionally immediate. Error handling must preserve recoverability if Wasabi deletion fails.
 
 ## Known gaps and risks
 
@@ -102,7 +102,7 @@ These counts are a diagnostic snapshot and will naturally become stale.
 2. There is no tested automated PostgreSQL backup/restore procedure.
 3. There is no CI pipeline, browser end-to-end suite, coverage threshold or deployment automation.
 4. Schema evolution currently has one initial SQL file and no migration runner.
-5. The health endpoint does not check database, R2, worker backlog, Docling or Ollama.
+5. The health endpoint does not check database, Wasabi, worker backlog, Docling or Ollama.
 6. Application-level upload rate limiting and quotas are absent.
 7. `security.checkOrigin` is disabled in Astro and should be reviewed with the Auth.js/API deployment model.
 8. Handsontable is configured under a non-commercial/evaluation license; confirm the appropriate long-term license.
@@ -115,7 +115,7 @@ Do not place secrets, API keys or database URLs in issues, logs or these documen
 
 Contributor names are stored structurally. `npm run migrate:contributors` previews the conservative legacy-literal conversion; add `-- --apply` only after reviewing aggregate counts. The migration automatically handles `Family, Given` and simple two-token personal names, preserves institutions and leaves ambiguous multi-token literals for the UI editor.
 
-User ownership is bound to Authentik provider + stable subject in `catalog_identities`; email remains mutable. Account recovery lives at `/dashboard`, is limited to configured admin groups/emails, refuses non-empty merges and never rewrites R2 keys. Existing extracted documents can receive exact word counts with `npm run backfill:words -- --apply`.
+User ownership is bound to Authentik provider + stable subject in `catalog_identities`; email remains mutable. Account recovery lives at `/dashboard`, is limited to configured admin groups/emails, refuses non-empty merges and never rewrites Wasabi keys. Existing extracted documents can receive exact word counts with `npm run backfill:words -- --apply`.
 
 ## Recommended next sequence
 

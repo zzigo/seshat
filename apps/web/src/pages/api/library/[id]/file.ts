@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DeleteObjectsCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
-import { getR2Bucket, getR2Client } from '../../../../lib/r2';
+import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const allowed = new Set(['pdf', 'docx', 'txt', 'epub']);
@@ -38,13 +38,14 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     return Response.json({ error: `That file is already attached to “${duplicate.title}”.` }, { status: 409 });
   }
 
-  const bucket = getR2Bucket();
-  const objectKey = `seshat/${ownerKey}/${reference.id}/original/${Date.now()}-${safeName(file.name)}`;
+  const bucket = getWasabiBucket();
+  const storageRoot = String((reference.source as any).wasabiStorageRoot || process.env.WASABI_KEY_PREFIX || 'zzttuntref');
+  const objectKey = `${storageRoot}/.seshat/${reference.id}/original/${Date.now()}-${safeName(file.name)}`;
   const mimeType = file.type || mediaTypes[ext] || 'application/octet-stream';
-  const r2 = getR2Client();
+  const storage = getWasabiClient();
   let uploaded = false;
   try {
-    const stored = await r2.send(new PutObjectCommand({
+    const stored = await storage.send(new PutObjectCommand({
       Bucket: bucket, Key: objectKey, Body: bytes, ContentType: mimeType,
       Metadata: { sha256, 'reference-id': reference.id }, CacheControl: 'private, no-store',
     }));
@@ -53,19 +54,19 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
       originalFilename: file.name,
       originalSha256: sha256,
       artifact: {
-        id: randomUUID(), kind: 'original', provider: 'r2', objectKey, bucket, mimeType,
+        id: randomUUID(), kind: 'original', provider: 'wasabi', objectKey, bucket, mimeType,
         sizeBytes: file.size, sha256, etag: stored.ETag?.replaceAll('"', ''),
       },
     });
     if (!updated) throw new Error('REFERENCE_NOT_FOUND');
-    const oldObjects = reference.artifacts.filter((artifact) => artifact.objectKey !== objectKey && artifact.bucket === bucket);
+    const oldObjects = reference.artifacts.filter((artifact) => artifact.provider !== 'wasabi-linked' && artifact.objectKey !== objectKey && artifact.bucket === bucket);
     if (oldObjects.length) {
-      await r2.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: oldObjects.map(({ objectKey: Key }) => ({ Key })) } }))
+      await storage.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: oldObjects.map(({ objectKey: Key }) => ({ Key })) } }))
         .catch((error) => console.error('[seshat:file:cleanup]', error));
     }
     return Response.json({ ok: true, reference: updated });
   } catch (error: any) {
-    if (uploaded) await r2.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: [{ Key: objectKey }] } })).catch(() => undefined);
+    if (uploaded) await storage.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: [{ Key: objectKey }] } })).catch(() => undefined);
     console.error('[seshat:file]', error);
     const conflict = String(error?.code || '') === '23505';
     return Response.json({ error: conflict ? 'That file is already attached to another reference.' : 'The associated file could not be replaced.' }, { status: conflict ? 409 : 500 });

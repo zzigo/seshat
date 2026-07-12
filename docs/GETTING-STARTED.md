@@ -9,11 +9,11 @@
 | npm | npm 10; the repository declares `npm@10.9.3` |
 | Python | `>=3.11` for `seshat-ingest` |
 | PostgreSQL | A reachable database and permission to create the Seshat tables |
-| Cloudflare R2 | Bucket plus S3 endpoint/access credentials |
+| Wasabi | Bucket plus S3 endpoint/access credentials |
 | Identity | Authentik OIDC client; Google OAuth is optional |
 | Ollama | Required only when running the enrichment worker locally |
 
-There is no Docker Compose or automated local infrastructure setup. PostgreSQL, R2 and identity must be supplied separately.
+There is no Docker Compose or automated local infrastructure setup. PostgreSQL, Wasabi and identity must be supplied separately.
 
 ## Clone and install JavaScript dependencies
 
@@ -32,7 +32,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Fill `.env` with local Auth.js/OIDC, PostgreSQL and R2 values. Do not reuse or copy the production file. See [CONFIGURATION.md](CONFIGURATION.md) for every variable.
+Fill `.env` with local Auth.js/OIDC, PostgreSQL and Wasabi values. Do not reuse or copy the production file. See [CONFIGURATION.md](CONFIGURATION.md) for every variable.
 
 ## Install the Python ingestion service
 
@@ -78,7 +78,7 @@ Start the web application:
 npm run dev --workspace @seshat/web
 ```
 
-Open `http://localhost:4331`. The public landing and health route work without login. The authenticated workspace requires the configured identity provider, PostgreSQL and R2.
+Open `http://localhost:4331`. The public landing and health route work without login. The authenticated workspace requires the configured identity provider, PostgreSQL and Wasabi.
 
 To run the enrichment worker after building:
 
@@ -117,9 +117,9 @@ Delete the smoke directory when finished. Production performs this cleanup autom
 
 The root `.env` is missing `DATABASE_URL`, or the process was started from a directory where the env file was not loaded. Export it explicitly for direct Node runs or start through a tool that loads `.env`.
 
-### `R2_NOT_CONFIGURED` or `R2_BUCKET_NOT_CONFIGURED`
+### `WASABI_NOT_CONFIGURED` or `WASABI_BUCKET_NOT_CONFIGURED`
 
-Check all four R2 values: endpoint, access key ID, secret access key and bucket.
+Check the Wasabi endpoint, region, access key ID, secret access key and bucket. Seshat does not use Musiki's Wasabi configuration.
 
 ### OIDC callback returns to localhost or the wrong host
 

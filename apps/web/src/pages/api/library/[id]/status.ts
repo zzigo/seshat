@@ -12,6 +12,19 @@ export const GET: APIRoute = async ({ locals, params }) => {
   const failed = reference.jobs.find((job) => job.status === 'failed');
   const identify = reference.jobs.find((job) => job.stage === 'identify');
   const summarize = reference.jobs.find((job) => job.stage === 'summarize');
+  const hasOriginal = reference.artifacts.some((artifact) => artifact.kind === 'original');
+  const hasText = reference.artifacts.some((artifact) => artifact.kind === 'markdown');
+  const format = referenceFileType(reference);
+  const paper = format === 'pdf' ? await getCatalog().getPaper(ownerKeyFor(email), reference.id) : null;
+  const paperStatus = !paper ? null : paper.resolutionStatus === 'ambiguous'
+    ? 'ambiguous'
+    : paper.resolutionStatus === 'resolved'
+      ? 'ready'
+      : active?.stage === 'extract'
+        ? 'extracting'
+        : active?.stage === 'scholarly'
+          ? 'resolving'
+          : paper.resolutionStatus;
   return Response.json({
     reference: {
       id: reference.id,
@@ -28,14 +41,24 @@ export const GET: APIRoute = async ({ locals, params }) => {
       publisher: reference.publisher || '',
       publisherPlace: reference.publisherPlace || '',
       url: reference.url || '',
-      format: referenceFileType(reference),
-      fileType: referenceFileType(reference).toUpperCase() || '—',
+      format,
+      fileType: format.toUpperCase() || '—',
       filename: String((reference.source as any).originalFilename || reference.title),
       libraryIds: reference.libraryIds,
-      status: failed ? 'failed' : active?.stage || 'catalogued',
+      status: failed ? 'failed' : (active?.stage || (!hasOriginal ? 'missing file' : !hasText ? 'no extracted text' : 'ready')),
+      hasOriginal,
       hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
-      hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+      hasText,
+      needsOcr: format === 'pdf' && hasOriginal && (!hasText || reference.wordCount < 20),
+      paperStatus,
     },
+    paper: paper ? {
+      status: paper.resolutionStatus,
+      method: paper.resolutionMethod,
+      confidence: paper.resolutionConfidence,
+      openAlexId: paper.openAlexId,
+      candidates: paper.candidates,
+    } : null,
     pipeline: reference.jobs,
     ready: identify?.status === 'complete' && summarize?.status === 'complete',
     failed: failed?.error || null,

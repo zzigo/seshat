@@ -7,12 +7,12 @@ const queueRelate = process.argv.includes('--queue-relate');
 const catalog = new PostgresCatalog(process.env.DATABASE_URL || '');
 await catalog.ensureSchema();
 
-const r2 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
+const storage = new S3Client({
+  region: process.env.WASABI_REGION || 'us-east-2',
+  endpoint: process.env.WASABI_ENDPOINT || 'https://s3.us-east-2.wasabisys.com',
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    accessKeyId: process.env.WASABI_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.WASABI_SECRET_ACCESS_KEY || '',
   },
 });
 
@@ -30,8 +30,8 @@ const failures = [];
 
 for (const row of result.rows) {
   try {
-    const object = await r2.send(new GetObjectCommand({
-      Bucket: row.bucket || process.env.R2_BUCKET,
+    const object = await storage.send(new GetObjectCommand({
+      Bucket: row.bucket || process.env.WASABI_BUCKET || 'untref-licmusica',
       Key: row.object_key,
     }));
     if (!object.Body) throw new Error('empty_object');

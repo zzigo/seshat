@@ -42,7 +42,7 @@ const batch = Astro.url.searchParams.get('batch') || '';
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'Cataloguing failed.');
             article.classList.add('catalogued');
-            detail.textContent = format(row.size) + (result.duplicate ? ' · already in your catalog' : ' · original preserved in R2');
+            detail.textContent = format(row.size) + (result.duplicate ? ' · already in your catalog' : ' · original preserved in Wasabi');
             const link = document.createElement('a');
             link.className = 'route-badge';
             link.href = '/library/' + encodeURIComponent(result.reference.id);

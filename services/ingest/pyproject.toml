@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
   "docling>=2.102,<3",
+  "rapidocr>=3.9,<4",
+  "onnxruntime>=1.20,<2",
 ]
 
 [project.scripts]
@@ -17,4 +19,3 @@ seshat-ingest = "seshat_ingest.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["seshat_ingest"]
-

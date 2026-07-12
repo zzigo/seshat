@@ -102,7 +102,7 @@ When implementing a new stage:
 - check `source.curation.manualFields` before writing metadata;
 - bound model time, context and output;
 - ensure retries are idempotent;
-- keep binaries in R2 and temporary local files under a removable temp directory.
+- keep binaries in Wasabi and temporary local files under a removable temp directory.
 
 ## Workspace conventions
 

@@ -7,7 +7,7 @@ The ingestion package converts an ephemeral local PDF or EPUB into four derivati
 - `chunks.jsonl`: structure-aware chunks with evidence metadata;
 - `manifest.json`: hashes, provenance, parser version, and artifact inventory.
 
-R2 transport is deliberately outside the parser. A deployment downloads an object into
+Wasabi transport is deliberately outside the parser. A deployment downloads an object into
 a temporary directory, runs this package, uploads derivatives, records their object keys
 in the bibliography database, and removes the temporary directory.
 

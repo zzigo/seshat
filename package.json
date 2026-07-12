@@ -19,11 +19,15 @@
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
+    "@types/screenfull": "^4.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "npm@10.9.3"
+  "packageManager": "npm@10.9.3",
+  "dependencies": {
+    "screenfull": "^6.0.2"
+  }
 }

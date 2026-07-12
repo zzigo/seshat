@@ -3,7 +3,8 @@ import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { generateCiteKey } from '@seshat/core';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
-import { getR2Bucket, getR2Client } from '../../../lib/r2';
+import { storageRootFor } from '../../../lib/bibliography-paths';
+import { getWasabiBucket, getWasabiClient } from '../../../lib/wasabi';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const allowed = new Set(['pdf', 'docx', 'txt', 'epub']);
@@ -54,13 +55,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const artifactId = randomUUID();
   const title = titleFromName(file.name);
   const mimeType = file.type || mediaTypes[ext] || 'application/octet-stream';
-  const objectKey = `seshat/${ownerKey}/${referenceId}/original/${safeName(file.name)}`;
-  const bucket = getR2Bucket();
-  const r2 = getR2Client();
+  const storageRoot = storageRootFor({ email, name: String((locals.session as any)?.user?.name || '') }).root;
+  const objectKey = `${storageRoot}/.seshat/${referenceId}/original/${safeName(file.name)}`;
+  const bucket = getWasabiBucket();
+  const storage = getWasabiClient();
   let uploaded = false;
 
   try {
-    const stored = await r2.send(new PutObjectCommand({
+    const stored = await storage.send(new PutObjectCommand({
       Bucket: bucket,
       Key: objectKey,
       Body: bytes,
@@ -81,11 +83,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
         itemKey: referenceId,
         importedAt: new Date().toISOString(),
         originalFilename: file.name,
+        wasabiStorageRoot: storageRoot,
       },
       artifact: {
         id: artifactId,
         kind: 'original',
-        provider: 'r2',
+        provider: 'wasabi',
         objectKey,
         bucket,
         mimeType,
@@ -96,7 +99,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
     return Response.json({ ok: true, duplicate: false, reference }, { status: 201 });
   } catch (error: any) {
-    if (uploaded) await r2.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })).catch(() => undefined);
+    if (uploaded) await storage.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })).catch(() => undefined);
     console.error('[seshat:intake]', error);
     const configuration = String(error?.message || '').includes('NOT_CONFIGURED');
     return Response.json(

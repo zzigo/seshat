@@ -80,7 +80,7 @@ When changing ingestion output, verify both the returned manifest and generated 
 
 ## Integration checks for production-facing changes
 
-No automated integration suite currently covers PostgreSQL, R2, Authentik, Dockview or Handsontable. For changes in those areas, add proportionate manual checks:
+No automated integration suite currently covers PostgreSQL, Wasabi, Authentik, Dockview or Handsontable. For changes in those areas, add proportionate manual checks:
 
 ### Upload/worker
 
@@ -88,7 +88,7 @@ No automated integration suite currently covers PostgreSQL, R2, Authentik, Dockv
 2. Confirm a table row appears without navigation.
 3. Observe HUD transitions from upload to extraction to identification.
 4. Open original, text and structure pods.
-5. Confirm PostgreSQL job states and R2 artifacts if debugging.
+5. Confirm PostgreSQL job states and Wasabi artifacts if debugging.
 
 ### Metadata
 
@@ -99,7 +99,7 @@ No automated integration suite currently covers PostgreSQL, R2, Authentik, Dockv
 
 ### Deletion
 
-Use a disposable test document only. Click the leading `×`, then confirm the row and pods disappear and the reference prefix is absent in R2. Deletion is intentionally immediate and has no confirmation dialog.
+Use a disposable test document only. Click the leading `×`, then confirm the row and pods disappear and the reference prefix is absent in Wasabi. Deletion is intentionally immediate and has no confirmation dialog.
 
 ### Authentication
 
@@ -114,7 +114,7 @@ Priority coverage gaps:
 - `PostgresCatalog` against a disposable PostgreSQL database;
 - API validation and ownership boundaries;
 - worker retries/cancellation/provider matching;
-- R2 deletion behavior;
+- Wasabi deletion behavior;
 - workspace table save/delete state;
 - Dockview layout restoration;
 - authentication callback behavior behind Caddy.
@@ -122,3 +122,6 @@ Priority coverage gaps:
 ## CI
 
 No GitHub Actions or other CI workflow is committed. Local verification is therefore the release gate. Adding CI for `npm ci`, `npm test`, `npm run typecheck`, `npm run build` and the Python version matrix is a high-value next step.
+# Scholarly pipeline tests
+
+Run `npm test --workspace @seshat/core` for normalization, PDF-text extraction heuristics, mocked OpenAlex resolution and ambiguity, duplicate hashing, association metrics, stable graph identity, bounded expansion, manual-field precedence, deduplication, and ForceGraph schema conversion. OpenAlex tests use a mocked fetch implementation and do not consume API quota.

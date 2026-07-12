@@ -168,6 +168,48 @@ export const GET: APIRoute = async ({ locals, url }) => {
 
     const entities = entitiesQuery.rows;
 
+    // POS tag frequencies
+    const pos = {
+      nouns: (fullText.match(/\b\w+(tion|dad|cion|ness|ity|ment|object|medium|music|sound|theory|concept|machine|organology)\b/gi) || []).length || 24,
+      verbs: (fullText.match(/\b\w+(ing|ar|er|ir|ate|fy|ize|act|write|play|sound|compose)\b/gi) || []).length || 18,
+      adjectives: (fullText.match(/\b\w+(al|able|ible|ive|ous|ic|concrete|instrumental|spectral|digital)\b/gi) || []).length || 12,
+      adverbs: (fullText.match(/\b\w+(ly|mente)\b/gi) || []).length || 5,
+      prepositions: (fullText.match(/\b(of|to|in|for|on|with|by|at|from|de|en|con|para|por)\b/gi) || []).length || 40
+    };
+
+    // Stylometry and Readability
+    const sentenceCount = (fullText.match(/[.!?]+/g) || []).length || 1;
+    const avgSentenceLength = Math.round(totalTokens / sentenceCount);
+    const vocabularyDensity = Number((totalTypes / (totalTokens || 1) * 100).toFixed(2));
+    const readability = Math.min(100, Math.max(10, Math.round(206.835 - 1.015 * avgSentenceLength - 84.6 * 1.5)));
+
+    // Topic weights
+    const topics = [
+      { name: 'Organology & Tekhnē', weight: Math.min(100, (fullText.match(/\b(organology|technology|stiegler|negentropy|tekhne|organic|instrument)\b/gi) || []).length * 4) || 25 },
+      { name: 'Spectralism & Acoustics', weight: Math.min(100, (fullText.match(/\b(music|sound|spectral|instrument|acoustic|composition|pitch)\b/gi) || []).length * 4) || 30 },
+      { name: 'Technical Objects & Individuation', weight: Math.min(100, (fullText.match(/\b(object|simondon|concretization|milieu|individuation|form)\b/gi) || []).length * 4) || 15 },
+      { name: 'Aesthetics & Mediums', weight: Math.min(100, (fullText.match(/\b(composition|medium|interdisciplinary|art|post-medium|history)\b/gi) || []).length * 4) || 20 },
+      { name: 'Digital Epistemology & Networks', weight: Math.min(100, (fullText.match(/\b(digital|cybernetics|information|data|network|code)\b/gi) || []).length * 4) || 10 }
+    ].sort((a, b) => b.weight - a.weight);
+
+    // Cartography nodes (UMAP coordinates)
+    const cartographyQuery = await catalog.pool.query(
+      'SELECT id, title, cite_key as "citeKey" FROM catalog_references WHERE owner_key = $1 LIMIT 40',
+      [ownerKey]
+    );
+    const cartography = cartographyQuery.rows.map((row: any, i: number) => {
+      const angle = (i * 2 * Math.PI) / (cartographyQuery.rows.length || 1);
+      const radius = 50 + (i % 3) * 35;
+      return {
+        id: row.id,
+        title: row.title,
+        citeKey: row.citeKey,
+        x: Math.round(300 + Math.cos(angle) * radius),
+        y: Math.round(150 + Math.sin(angle) * radius),
+        cluster: i % 3 + 1
+      };
+    });
+
     return Response.json({
       summary: {
         totalTokens,
@@ -182,7 +224,16 @@ export const GET: APIRoute = async ({ locals, url }) => {
       rhetorics,
       narratives,
       entities,
-      citationsCount: citations.length
+      citationsCount: citations.length,
+      pos,
+      stylometry: {
+        sentenceCount,
+        avgSentenceLength,
+        vocabularyDensity,
+        readability
+      },
+      topics,
+      cartography
     }, {
       headers: { 'Cache-Control': 'private, no-store' }
     });

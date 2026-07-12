@@ -64,18 +64,19 @@ const { authenticated, workspace = false } = Astro.props;
     dragDepth += 1;
     layer?.classList.add('visible');
     layer?.setAttribute('aria-hidden', 'false');
-  });
+  }, true);
   window.addEventListener('dragover', (event) => {
     if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
-  });
+  }, true);
   window.addEventListener('dragleave', () => {
     dragDepth = Math.max(0, dragDepth - 1);
     if (dragDepth === 0) {
       layer?.classList.remove('visible');
       layer?.setAttribute('aria-hidden', 'true');
     }
-  });
+  }, true);
   window.addEventListener('drop', async (event) => {
+    if ((event.target as HTMLElement | null)?.closest?.('.tree-reference')) return;
     event.preventDefault();
     dragDepth = 0;
     layer?.classList.remove('visible');
@@ -103,5 +104,5 @@ const { authenticated, workspace = false } = Astro.props;
     } catch {
       showToast('The browser could not stage this batch. Try fewer or smaller files.');
     }
-  });
+  }, true);
 </script>

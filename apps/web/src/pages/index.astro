@@ -24,7 +24,7 @@ const sample: BibliographicItem = {
     id: 'demo:original',
     kind: 'original',
     storage: {
-      provider: 'r2',
+      provider: 'wasabi',
       objectKey: 'demo/clarke2005/original.pdf',
       mimeType: 'application/pdf',
     },
@@ -103,7 +103,7 @@ const stageLabel: Record<string, string> = {
       <section class="pipeline" aria-label="Seshat processing pipeline">
         <div class="pipeline-step"><b>01</b><span>Zotero / DOI / ISBN</span><small>collect</small></div>
         <i>→</i>
-        <div class="pipeline-step"><b>02</b><span>R2 original</span><small>preserve</small></div>
+        <div class="pipeline-step"><b>02</b><span>Wasabi original</span><small>preserve</small></div>
         <i>→</i>
         <div class="pipeline-step"><b>03</b><span>Docling structure</span><small>understand</small></div>
         <i>→</i>
@@ -135,7 +135,7 @@ const stageLabel: Record<string, string> = {
             <div><dt>Citekey</dt><dd>@{sample.citeKey}</dd></div>
             <div><dt>Fingerprint</dt><dd>{report.fingerprint}</dd></div>
             <div><dt>Source</dt><dd>Zotero · revision {sample.source.version}</dd></div>
-            <div><dt>Original</dt><dd>Cloudflare R2 · linked</dd></div>
+            <div><dt>Original</dt><dd>Wasabi · linked</dd></div>
           </dl>
         </article>
       </section>

@@ -1,0 +1,4 @@
+import type { APIRoute } from 'astro';
+import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
+
+export const POST:APIRoute=async({locals,params})=>{const email=String((locals.session as any)?.user?.email||'').trim().toLowerCase();if(!email)return Response.json({error:'authentication_required'},{status:401});const catalog=getCatalog(),ownerKey=ownerKeyFor(email);if(!await catalog.getPaper(ownerKey,params.id||''))return Response.json({error:'paper_not_found'},{status:404});if(!process.env.OPENALEX_API_KEY)return Response.json({error:'OpenAlex is not configured. Add OPENALEX_API_KEY on the server.'},{status:503});const queued=await catalog.queueEnrichment(ownerKey,params.id||'','scholarly');return queued?Response.json({ok:true,status:'resolving'},{status:202}):Response.json({error:'could_not_queue_enrichment'},{status:409});};

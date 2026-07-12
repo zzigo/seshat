@@ -1,5 +1,5 @@
 ---
-import { SignOut } from 'auth-astro/components';
+import crypto from 'node:crypto';
 import { contributorSummary } from '@seshat/core';
 import DropLayer from '../components/DropLayer.astro';
 import { getCatalog, ownerKeyFor } from '../lib/catalog';
@@ -11,9 +11,30 @@ import 'handsontable/styles/ht-theme-main.css';
 import '../styles/workspace.css';
 
 const email = String((Astro.locals.session as any)?.user?.email || '');
+const emailHash = crypto.createHash('md5').update(email.trim().toLowerCase()).digest('hex');
+const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=32&d=identicon`;
 const ownerKey = ownerKeyFor(email);
 const catalog = getCatalog();
-const [references, libraries] = await Promise.all([catalog.list(ownerKey, 200), catalog.listLibraries(ownerKey)]);
+await catalog.ensureSchema();
+const [references, libraries, keywordStyleRows] = await Promise.all([
+  catalog.list(ownerKey, 200), catalog.listLibraries(ownerKey),
+  catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
+]);
+const keywordList = (source: any): string[] => {
+  const raw = source?.keywords ?? source?.bibtex?.keywords ?? [];
+  return [...new Set((Array.isArray(raw) ? raw : String(raw || '').split(/[,;\n]+/)).map((value) => String(value).trim()).filter(Boolean))];
+};
+const referenceState = (reference: typeof references[number]): string => {
+  const active = reference.jobs.find((job) => job.status === 'running' || job.status === 'queued');
+  const failed = reference.jobs.find((job) => job.status === 'failed');
+  const hasOriginal = reference.artifacts.some((artifact) => artifact.kind === 'original');
+  const hasText = reference.artifacts.some((artifact) => artifact.kind === 'markdown');
+  if (active) return active.stage;
+  if (failed) return 'failed';
+  if (!hasOriginal) return 'missing file';
+  if (!hasText) return 'no extracted text';
+  return 'ready';
+};
 const payload = {
   references: references.map((reference) => ({
     id: reference.id,
@@ -26,6 +47,7 @@ const payload = {
     isbn: ((reference.identifiers.isbn as string[] | undefined) || []).join('; '),
     language: reference.language || '',
     tags: reference.tags.join(', '),
+    keywords: keywordList(reference.source),
     abstract: reference.abstract || '',
     publisher: reference.publisher || '',
     publisherPlace: reference.publisherPlace || '',
@@ -33,14 +55,18 @@ const payload = {
     format: referenceFileType(reference),
     fileType: referenceFileType(reference).toUpperCase() || '—',
     filename: String((reference.source as any).originalFilename || reference.title),
+    dateAdded: reference.createdAt,
     libraryIds: reference.libraryIds,
-    status: reference.jobs.find((job) => job.status === 'running' || job.status === 'queued')?.stage
-      || reference.jobs.find((job) => job.status === 'failed')?.status || 'catalogued',
+    status: referenceState(reference),
+    hasOriginal: reference.artifacts.some((artifact) => artifact.kind === 'original'),
     hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
     hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+    needsOcr: referenceFileType(reference) === 'pdf' && reference.artifacts.some((artifact) => artifact.kind === 'original')
+      && (!reference.artifacts.some((artifact) => artifact.kind === 'markdown') || reference.wordCount < 20),
     access: reference.access,
   })),
   libraries,
+  keywordStyles: Object.fromEntries(keywordStyleRows.rows.map((row:any) => [row.keyword,row.color])),
 };
 const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
 ---
@@ -51,32 +77,54 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content="Seshat curatorial workspace" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Seshat" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>Workspace — Seshat</title>
   </head>
   <body class="workspace-body">
-    <div class="workspace-app" data-seshat-workspace>
+    <div class="workspace-app properties-open" data-seshat-workspace>
       <header class="workspace-bar">
         <a class="workspace-brand" href="/" aria-label="Seshat home"><span>𓋇</span><strong>Seshat</strong></a>
-        <div class="workspace-context"><span>Curatorial workspace</span><b>{references.length} references</b></div>
         <nav class="workspace-tools" aria-label="Workspace tools">
-          <button type="button" data-open-tool="analysis">Analysis</button>
-          <button type="button" data-open-tool="annotation">Annotation</button>
           <button type="button" data-open-tool="agent">AI agent</button>
           <button type="button" data-open-tool="graph">Knowledge Graph</button>
           <button type="button" data-open-tool="search">Corpus Search</button>
         </nav>
-        <div class="workspace-session"><span data-save-state>ready</span><a href="/dashboard">{(Astro.locals.session as any)?.user?.name || email}</a><SignOut><span>sign out</span></SignOut></div>
+        <div class="workspace-session">
+          <button type="button" data-toggle-theme title="Toggle dark/light theme" style="border:0; background:transparent; font-size:13px; color:var(--muted); cursor:pointer; padding:0 8px;">☼</button>
+          <button type="button" data-workspace-help title="Help and shortcuts" aria-label="Help and shortcuts">?</button>
+          <button type="button" data-toggle-fullscreen title="Toggle Fullscreen Mode" style="border:0; background:transparent; font-size:11px; color:var(--muted); cursor:pointer; padding:0 6px;">⛶</button>
+          <span data-save-state>ready</span>
+          <a class="workspace-avatar-link" href="/dashboard" title="Go to Dashboard">
+            <img src={avatarUrl} alt="Avatar" class="workspace-avatar-img" />
+          </a>
+        </div>
       </header>
+      <button type="button" data-expand-sidebar class="expand-sidebar-handle" title="Expand sidebar" aria-label="Expand sidebar" hidden>&gt;</button>
       <div class="workspace-shell">
         <aside class="workspace-sidebar">
           <div class="tree-toolbar">
             <input type="search" placeholder="Search catalog…" data-tree-search aria-label="Search catalog" />
             <button type="button" data-new-library title="New library or folder">＋</button>
+            <button type="button" data-collapse-sidebar class="sidebar-collapse-button" title="Collapse sidebar" aria-label="Collapse sidebar">&lt;</button>
           </div>
           <div class="library-tree" data-library-tree></div>
-          <div class="tree-footer"><span>Drop files anywhere</span><span>R2 + Docling</span></div>
+          <details class="keyword-pod" open>
+            <summary>Keywords <span data-keyword-count>0</span></summary>
+            <input type="search" placeholder="Filter keywords…" data-keyword-filter aria-label="Filter keywords" />
+            <div class="keyword-cloud" data-keyword-cloud></div>
+          </details>
+          <div class="sidebar-resizer" data-sidebar-resizer role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
         </aside>
         <section class="workspace-stage dockview-theme-light" data-dockview-host aria-label="Document workspace"></section>
+        <aside class="workspace-properties" data-properties-sidebar>
+          <header><span>Item properties</span><button type="button" data-close-properties aria-label="Hide item properties">×</button></header>
+          <div data-properties-content></div>
+        </aside>
       </div>
       <footer class="workspace-console" data-workspace-console>
         <button type="button" class="console-toggle" data-console-toggle aria-expanded="false"><span class="console-pulse">●</span><strong>Activity</strong></button>
@@ -89,8 +137,159 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
     <DropLayer authenticated={true} workspace={true} />
     <script>
       import { mountSeshatWorkspace } from '../scripts/workspace';
+      import screenfull from 'screenfull';
+      const initialTheme = localStorage.getItem('seshat-theme') || 'light';
+      document.documentElement.setAttribute('data-theme', initialTheme);
+      document.documentElement.classList.toggle('dark-theme', initialTheme === 'dark');
       const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');
       if (root) mountSeshatWorkspace(root);
+
+      // Sidebar folding
+      const expandBtn = document.querySelector<HTMLButtonElement>('[data-expand-sidebar]');
+      const collapseBtn = document.querySelector<HTMLButtonElement>('[data-collapse-sidebar]');
+      const sidebarResizer = document.querySelector<HTMLElement>('[data-sidebar-resizer]');
+      const clampSidebarWidth = (value: number) => Math.max(190, Math.min(440, Math.round(value)));
+      const setSidebarWidth = (value: number) => {
+        const width = clampSidebarWidth(value); root?.style.setProperty('--sidebar-width', `${width}px`);
+        localStorage.setItem('seshat-sidebar-width', String(width)); window.dispatchEvent(new Event('resize'));
+      };
+      setSidebarWidth(Number(localStorage.getItem('seshat-sidebar-width')) || 248);
+
+      const updateSidebarState = (collapsed: boolean) => {
+        if (collapsed) {
+          root?.classList.add('collapsed-sidebar');
+          if (expandBtn) {
+            expandBtn.textContent = '>';
+            expandBtn.title = 'Expand sidebar';
+            expandBtn.setAttribute('aria-label', 'Expand sidebar');
+            expandBtn.hidden = false;
+          }
+        } else {
+          root?.classList.remove('collapsed-sidebar');
+          if (expandBtn) {
+            expandBtn.hidden = true;
+          }
+        }
+        localStorage.setItem('seshat-sidebar', collapsed ? 'collapsed' : 'visible');
+        // Dispatch window resize events to trigger Dockview/grid redraws
+        window.dispatchEvent(new Event('resize'));
+        setTimeout(() => {
+          window.dispatchEvent(new Event('resize'));
+        }, 180);
+      };
+
+      const savedSidebar = localStorage.getItem('seshat-sidebar') || 'visible';
+      let isCollapsed = savedSidebar === 'collapsed';
+      updateSidebarState(isCollapsed);
+
+      expandBtn?.addEventListener('click', () => {
+        isCollapsed = !isCollapsed;
+        updateSidebarState(isCollapsed);
+      });
+      collapseBtn?.addEventListener('click', () => { isCollapsed = true; updateSidebarState(true); });
+      sidebarResizer?.addEventListener('pointerdown', (event) => {
+        event.preventDefault(); sidebarResizer.setPointerCapture(event.pointerId); root?.classList.add('resizing-sidebar');
+        const move = (moveEvent: PointerEvent) => setSidebarWidth(moveEvent.clientX);
+        const stop = () => { root?.classList.remove('resizing-sidebar'); sidebarResizer.removeEventListener('pointermove', move); sidebarResizer.removeEventListener('pointerup', stop); sidebarResizer.removeEventListener('pointercancel', stop); };
+        sidebarResizer.addEventListener('pointermove', move); sidebarResizer.addEventListener('pointerup', stop); sidebarResizer.addEventListener('pointercancel', stop);
+      });
+      sidebarResizer?.addEventListener('dblclick', () => setSidebarWidth(248));
+      sidebarResizer?.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault(); const current = Number.parseFloat(getComputedStyle(root!).getPropertyValue('--sidebar-width')) || 248;
+        setSidebarWidth(current + (event.key === 'ArrowRight' ? 16 : -16));
+      });
+      let edgeGesture: { id:number; startX:number; startY:number; collapsed:boolean } | null = null;
+      window.addEventListener('pointerdown', (event) => {
+        if (!matchMedia('(max-width: 1000px)').matches || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return;
+        const sidebarWidth = Number.parseFloat(getComputedStyle(root!).getPropertyValue('--sidebar-width')) || 248;
+        if ((isCollapsed && event.clientX <= 28) || (!isCollapsed && event.clientX <= sidebarWidth)) edgeGesture = { id:event.pointerId,startX:event.clientX,startY:event.clientY,collapsed:isCollapsed };
+      }, { capture:true,passive:true });
+      window.addEventListener('pointermove', (event) => {
+        if (!edgeGesture || event.pointerId !== edgeGesture.id) return;
+        const dx=event.clientX-edgeGesture.startX,dy=event.clientY-edgeGesture.startY;
+        if (Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 58) return;
+        if (edgeGesture.collapsed && dx > 0) { isCollapsed=false; updateSidebarState(false); }
+        else if (!edgeGesture.collapsed && dx < 0) { isCollapsed=true; updateSidebarState(true); }
+        edgeGesture=null;
+      }, { capture:true,passive:true });
+      const endEdgeGesture = (event:PointerEvent) => { if (edgeGesture?.id === event.pointerId) edgeGesture=null; };
+      window.addEventListener('pointerup',endEdgeGesture,{capture:true,passive:true});
+      window.addEventListener('pointercancel',endEdgeGesture,{capture:true,passive:true});
+      window.addEventListener('seshat:set-sidebar', (event) => {
+        const collapsed = Boolean((event as CustomEvent<{ collapsed?: boolean }>).detail?.collapsed);
+        isCollapsed = collapsed; updateSidebarState(collapsed);
+      });
+      document.addEventListener('keydown', (event) => {
+        if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || (event.code !== 'Backslash' && event.key !== '\\')) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.matches('input,textarea,select,[contenteditable="true"]')) return;
+        event.preventDefault(); isCollapsed = !isCollapsed; updateSidebarState(isCollapsed);
+      });
+
+      // Fullscreen handling
+      const fullscreenBtn = document.querySelector('[data-toggle-fullscreen]');
+      const headerBar = document.querySelector('.workspace-bar');
+
+      const toggleFullscreen = () => {
+        const docEl = document.documentElement;
+        const targetEl = root || docEl;
+
+        if (screenfull && screenfull.isEnabled) {
+          if (screenfull.isFullscreen) {
+            void screenfull.exit();
+            docEl.classList.remove('virtual-fullscreen');
+          } else {
+            screenfull.request(targetEl).catch((err: any) => {
+              console.warn('screenfull request failed, falling back to pseudo-fullscreen', err);
+              docEl.classList.toggle('virtual-fullscreen');
+            });
+          }
+        } else {
+          docEl.classList.toggle('virtual-fullscreen');
+        }
+      };
+
+      if (screenfull && screenfull.isEnabled) {
+        screenfull.on('change', () => {
+          if (screenfull && !screenfull.isFullscreen) {
+            document.documentElement.classList.remove('virtual-fullscreen');
+          }
+        });
+      }
+
+      fullscreenBtn?.addEventListener('click', toggleFullscreen);
+      headerBar?.addEventListener('dblclick', (e) => {
+        if ((e.target as HTMLElement).closest('button, input, select, a')) return;
+        toggleFullscreen();
+      });
+
+      // Theme toggle
+      const themeBtn = document.querySelector('[data-toggle-theme]');
+      const stage = document.querySelector('[data-dockview-host]');
+
+      const updateThemeState = (theme: string) => {
+        if (theme === 'dark') {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          document.documentElement.classList.add('dark-theme');
+          stage?.classList.replace('dockview-theme-light', 'dockview-theme-dark');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'light');
+          document.documentElement.classList.remove('dark-theme');
+          stage?.classList.replace('dockview-theme-dark', 'dockview-theme-light');
+        }
+        window.dispatchEvent(new CustomEvent('seshat:theme-changed', { detail: { theme } }));
+      };
+
+      const savedTheme = localStorage.getItem('seshat-theme') || 'light';
+      updateThemeState(savedTheme);
+
+      themeBtn?.addEventListener('click', () => {
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        updateThemeState(nextTheme);
+        localStorage.setItem('seshat-theme', nextTheme);
+      });
     </script>
   </body>
 </html>

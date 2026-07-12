@@ -18,6 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@seshat/core": "*",
     "pg": "^8.16.3"
   },
   "devDependencies": {

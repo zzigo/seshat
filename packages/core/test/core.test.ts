@@ -27,7 +27,7 @@ const completeItem: BibliographicItem = {
   artifacts: [{
     id: 'artifact:original',
     kind: 'original',
-    storage: { provider: 'r2', objectKey: 'bibliography/clarke2005.pdf' },
+    storage: { provider: 'wasabi', objectKey: 'bibliography/clarke2005.pdf' },
     createdAt: '2026-06-30T00:00:00.000Z',
   }],
   createdAt: '2026-06-30T00:00:00.000Z',
@@ -75,4 +75,3 @@ test('reports malformed and incomplete metadata deterministically', () => {
     ['missing-title', 'missing-primary-contributor', 'implausible-year', 'invalid-doi', 'invalid-isbn', 'missing-original'],
   );
 });
-

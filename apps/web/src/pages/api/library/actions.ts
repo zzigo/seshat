@@ -5,6 +5,9 @@ import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
 const actions: Record<string, EnrichmentStage> = {
   'reprocess-metadata': 'identify',
   extract: 'extract',
+  scholarly: 'scholarly',
+  'enrich-openalex': 'scholarly',
+  'refresh-graph': 'scholarly',
   identify: 'identify',
   summarize: 'summarize',
   relate: 'relate',

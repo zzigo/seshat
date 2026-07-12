@@ -195,7 +195,9 @@ export async function mountAnnotationWorkspace(
     const actions = document.createElement('footer');
     if (annotation) { const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Delete'; remove.addEventListener('click', () => { void deleteAnnotation(annotation); dialog.close(); }); actions.appendChild(remove); }
     const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save'; actions.appendChild(save);
-    form.append(head, quote, colors, grid, noteLabel, actions); dialog.appendChild(form); document.body.appendChild(dialog);
+    form.append(head, quote, colors, grid, noteLabel, actions); dialog.appendChild(form);
+    const parentContainer = document.fullscreenElement || document.querySelector('.maximized-pod') || document.body;
+    parentContainer.appendChild(dialog);
     dialog.addEventListener('close', () => { dialogs.delete(dialog); dialog.remove(); });
     form.addEventListener('submit', (event) => {
       event.preventDefault(); const details = { color: selected.hex, category: selected.category, noteType: noteType.input.value || undefined,
@@ -234,7 +236,61 @@ export async function mountAnnotationWorkspace(
   };
   if (!options.indexOnly) {
     surface.addEventListener('mouseup', () => window.setTimeout(showPalette));
+    surface.addEventListener('touchend', () => window.setTimeout(showPalette));
     surface.addEventListener('keyup', (event) => { if (event.key === 'Shift' || event.key.startsWith('Arrow')) showPalette(); });
+
+    const readingScroll = surface.closest('.annotation-reading') as HTMLElement || surface.parentElement;
+    if (readingScroll) {
+      let textStartDist = 0;
+      let textZoom = 1.0;
+      let textZoomStart = 1.0;
+
+      readingScroll.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          textStartDist = Math.sqrt(dx * dx + dy * dy);
+          textZoomStart = textZoom;
+        }
+      }, { passive: false });
+
+      readingScroll.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+          e.preventDefault();
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (textStartDist > 0) {
+            const factor = dist / textStartDist;
+            textZoom = Math.max(0.5, Math.min(3.0, textZoomStart * factor));
+            surface.style.zoom = String(textZoom);
+            if (!('zoom' in document.documentElement.style)) {
+              surface.style.transform = `scale(${textZoom})`;
+              surface.style.transformOrigin = 'top center';
+            }
+          }
+        }
+      }, { passive: false });
+
+      readingScroll.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+          textStartDist = 0;
+        }
+      }, { passive: true });
+
+      readingScroll.addEventListener('wheel', (e) => {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          const delta = -e.deltaY * 0.01;
+          textZoom = Math.max(0.5, Math.min(3.0, textZoom + delta));
+          surface.style.zoom = String(textZoom);
+          if (!('zoom' in document.documentElement.style)) {
+            surface.style.transform = `scale(${textZoom})`;
+            surface.style.transformOrigin = 'top center';
+          }
+        }
+      }, { passive: false });
+    }
   }
   document.addEventListener('keydown', keyboard);
   document.addEventListener('pointerdown', outsidePointer);

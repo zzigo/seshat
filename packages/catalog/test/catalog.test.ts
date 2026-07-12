@@ -7,6 +7,7 @@ test('creates an ordered, gated enrichment pipeline', () => {
   const jobs = buildInitialJobs('reference-1', () => `job-${++index}`);
   assert.deepEqual(jobs.map(({ stage, status }) => ({ stage, status })), [
     { stage: 'extract', status: 'queued' },
+    { stage: 'scholarly', status: 'blocked' },
     { stage: 'identify', status: 'blocked' },
     { stage: 'summarize', status: 'blocked' },
     { stage: 'relate', status: 'blocked' },

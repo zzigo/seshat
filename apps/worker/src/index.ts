@@ -4,29 +4,34 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { PostgresCatalog } from '@seshat/catalog';
-import { isValidIsbn, normalizeContributor, normalizeIsbn } from '@seshat/core';
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { PostgresCatalog, persistResolution, rebuildScholarlyGraph } from '@seshat/catalog';
+import { OpenAlexClient, extractScholarlyMetadataFromText, isValidIsbn, normalizeContributor, normalizeIsbn, normalizeScholarlyTitle, zoteroStyleAttachmentName } from '@seshat/core';
 import { Neo4jGraphMirror, OllamaEmbedder, QdrantVectorIndex, normalizeDoclingChunk, computeSparseVector } from '@seshat/retrieval';
+import { PdfJsScholarlyExtractor } from './scholarly-pdf.js';
 
 const exec = promisify(execFile);
 const catalog = new PostgresCatalog(process.env.DATABASE_URL || '');
-const bucket = process.env.R2_BUCKET || '';
-const r2 = new S3Client({ region: 'auto', endpoint: process.env.R2_ENDPOINT,
-  credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID || '', secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '' } });
+const bucket = process.env.WASABI_BUCKET || 'untref-licmusica';
+const wasabiEndpoint = process.env.WASABI_ENDPOINT || 'https://s3.us-east-2.wasabisys.com';
+const storage = new S3Client({ region: process.env.WASABI_REGION || 'us-east-2', endpoint: /^https?:\/\//i.test(wasabiEndpoint) ? wasabiEndpoint : `https://${wasabiEndpoint}`,
+  credentials: { accessKeyId: process.env.WASABI_ACCESS_KEY_ID || '', secretAccessKey: process.env.WASABI_SECRET_ACCESS_KEY || '' } });
 const python = process.env.SESHAT_PYTHON || join(process.cwd(), '.venv/bin/python');
 const pollMs = Number(process.env.WORKER_POLL_MS || 4000);
 const embedder = new OllamaEmbedder();
 const vectorIndex = new QdrantVectorIndex();
 const graphMirror = new Neo4jGraphMirror();
+const scholarlyExtractor = new PdfJsScholarlyExtractor();
+const openAlex = new OpenAlexClient({baseUrl:process.env.OPENALEX_API_BASE_URL,mailto:process.env.OPENALEX_MAILTO,apiKey:process.env.OPENALEX_API_KEY,timeoutMs:Number(process.env.OPENALEX_TIMEOUT_MS||12000),retries:Number(process.env.OPENALEX_RETRIES||3),cacheTtlDays:Number(process.env.OPENALEX_CACHE_TTL_DAYS||30),cache:{get:(key)=>catalog.getOpenAlexCache(key),set:(key,value,expiresAt)=>catalog.setOpenAlexCache(key,value,expiresAt)}});
+const copySegment = (value: string): string => encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 
-type Claimed = { id: string; reference_id: string; stage: 'extract' | 'identify' | 'summarize' | 'relate'; attempts: number };
+type Claimed = { id: string; reference_id: string; stage: 'extract' | 'scholarly' | 'identify' | 'summarize' | 'relate'; attempts: number };
 
 async function claim(): Promise<Claimed | null> {
   await catalog.ensureSchema();
   const result = await catalog.pool.query<Claimed>(`
     WITH candidate AS (
-      SELECT id FROM catalog_jobs WHERE status='queued' AND stage IN ('extract','identify','summarize','relate')
+      SELECT id FROM catalog_jobs WHERE status='queued' AND stage IN ('extract','scholarly','identify','summarize','relate')
       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
     ) UPDATE catalog_jobs j SET status='running', attempts=attempts+1, updated_at=now()
       FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.reference_id,j.stage,j.attempts`);
@@ -44,8 +49,8 @@ async function assertJobRunning(job: Claimed) {
 }
 
 async function objectBytes(key: string): Promise<Uint8Array> {
-  const result = await r2.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  if (!result.Body) throw new Error(`R2 object missing: ${key}`);
+  const result = await storage.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error(`Wasabi object missing: ${key}`);
   return result.Body.transformToByteArray();
 }
 
@@ -56,6 +61,43 @@ async function referenceData(id: string) {
   ]);
   if (!reference.rows[0]) throw new Error(`Reference missing: ${id}`);
   return { reference: reference.rows[0], artifacts: artifacts.rows };
+}
+
+async function renameWasabiOriginal(reference: any, next: { title: string; contributors: unknown[]; issued?: Record<string, unknown> | null }) {
+  const result = await catalog.pool.query(
+    `SELECT * FROM catalog_artifacts WHERE reference_id=$1 AND kind='original' AND provider IN ('wasabi','wasabi-linked') ORDER BY created_at LIMIT 1`,
+    [reference.id],
+  );
+  const artifact = result.rows[0];
+  if (!artifact?.bucket || !artifact?.object_key) return;
+  const currentFilename = String(reference.source?.originalFilename || artifact.object_key.split('/').at(-1) || 'document');
+  const filename = zoteroStyleAttachmentName({ contributors: next.contributors, issued: next.issued || undefined, title: next.title, currentFilename });
+  const directory = artifact.object_key.includes('/') ? artifact.object_key.slice(0, artifact.object_key.lastIndexOf('/') + 1) : '';
+  const nextKey = `${directory}${filename}`;
+  if (nextKey === artifact.object_key) return;
+  const copySource = `${copySegment(artifact.bucket)}/${artifact.object_key.split('/').map(copySegment).join('/')}`;
+  let copied = false;
+  let catalogLinked = false;
+  try {
+    try {
+      await storage.send(new HeadObjectCommand({ Bucket: artifact.bucket, Key: nextKey }));
+      throw new Error('TARGET_ALREADY_EXISTS');
+    } catch (error: any) {
+      if (String(error?.message || '') === 'TARGET_ALREADY_EXISTS') throw error;
+      if (Number(error?.$metadata?.httpStatusCode) !== 404 && !['NotFound', 'NoSuchKey'].includes(String(error?.name || ''))) throw error;
+    }
+    const moved = await storage.send(new CopyObjectCommand({ Bucket: artifact.bucket, Key: nextKey, CopySource: copySource, MetadataDirective: 'COPY' }));
+    copied = true;
+    const verified = await storage.send(new HeadObjectCommand({ Bucket: artifact.bucket, Key: nextKey }));
+    if (Number(verified.ContentLength || 0) !== Number(artifact.size_bytes)) throw new Error('COPIED_SIZE_MISMATCH');
+    catalogLinked = await catalog.renameArtifact(reference.owner_key, reference.id, artifact.id, nextKey, filename, moved.CopyObjectResult?.ETag?.replaceAll('"', ''));
+    if (!catalogLinked) throw new Error('ARTIFACT_LINK_UPDATE_FAILED');
+    await storage.send(new DeleteObjectCommand({ Bucket: artifact.bucket, Key: artifact.object_key }))
+      .catch((error) => console.error('[seshat:worker:wasabi-old-object-cleanup]', error));
+  } catch (error) {
+    if (copied && !catalogLinked) await storage.send(new DeleteObjectCommand({ Bucket: artifact.bucket, Key: nextKey })).catch(() => undefined);
+    console.error('[seshat:worker:wasabi-rename]', reference.id, error);
+  }
 }
 
 async function complete(job: Claimed, next: string, payload: unknown = {}) {
@@ -78,14 +120,24 @@ async function extract(job: Claimed) {
     const filename = String(reference.source?.originalFilename || `source${extname(original.object_key)}`);
     const source = join(root, basename(filename));
     const output = join(root, 'out');
-    await writeFile(source, await objectBytes(original.object_key));
-    await exec(python, ['-m', 'seshat_ingest.cli', source, '--reference-id', job.reference_id,
-      '--artifact-id', original.id, '--output', output], { env: { ...process.env, PYTHONPATH: join(process.cwd(), 'services/ingest') }, maxBuffer: 10 * 1024 * 1024 });
-    const manifest = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
-    const chunkRows = (await readFile(join(output, 'chunks.jsonl'), 'utf8'))
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const originalBytes=await objectBytes(original.object_key); await writeFile(source,originalBytes);
+    const runIngest = async (ocr = false) => exec(python, ['-m', 'seshat_ingest.cli', source, '--reference-id', job.reference_id,
+      '--artifact-id', original.id, '--output', output, ...(ocr ? ['--ocr'] : [])],
+      { env: { ...process.env, PYTHONPATH: join(process.cwd(), 'services/ingest') }, maxBuffer: 10 * 1024 * 1024 });
+    const readExtraction = async () => ({
+      manifest: JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8')),
+      chunkRows: (await readFile(join(output, 'chunks.jsonl'), 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)),
+      markdown: await readFile(join(output, 'document.md'), 'utf8'),
+    });
+    await runIngest();
+    let extraction = await readExtraction();
+    const initialWords = (extraction.markdown.match(/\p{L}[\p{L}\p{N}'’\-]*/gu) || []).length;
+    if (extname(filename).toLowerCase() === '.pdf' && initialWords < 20) {
+      await rm(output, { recursive: true, force: true });
+      await runIngest(true);
+      extraction = await readExtraction();
+    }
+    const { manifest, chunkRows } = extraction;
     const chunks = chunkRows.map((row, index) => normalizeDoclingChunk(job.reference_id, index, row))
       .filter((chunk): chunk is NonNullable<typeof chunk> => Boolean(chunk));
     let wordCount = 0;
@@ -93,18 +145,28 @@ async function extract(job: Claimed) {
       await assertJobRunning(job);
       const bytes = await readFile(join(output, item.filename));
       if (item.kind === 'markdown') wordCount = (new TextDecoder().decode(bytes).match(/\p{L}[\p{L}\p{N}'’\-]*/gu) || []).length;
-      const key = `seshat/${reference.owner_key}/${job.reference_id}/derived/docling/${item.filename}`;
-      const stored = await r2.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: item.media_type, CacheControl: 'private, no-store' }));
+      const storageRoot = String(reference.source?.wasabiStorageRoot || `${process.env.WASABI_KEY_PREFIX || 'zzttuntref'}/seshat-derived/${reference.owner_key}`).replace(/\/+$/g, '');
+      const key = `${storageRoot}/.seshat/${job.reference_id}/derived/docling/${item.filename}`;
+      const stored = await storage.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: item.media_type, CacheControl: 'private, no-store' }));
       await catalog.pool.query(`INSERT INTO catalog_artifacts
         (id,reference_id,kind,provider,object_key,bucket,mime_type,size_bytes,sha256,etag)
-        VALUES($1,$2,$3,'r2',$4,$5,$6,$7,$8,$9) ON CONFLICT(object_key) DO NOTHING`,
+        VALUES($1,$2,$3,'wasabi',$4,$5,$6,$7,$8,$9) ON CONFLICT(object_key) DO NOTHING`,
         [randomUUID(), job.reference_id, item.kind, key, bucket, item.media_type, item.size_bytes, item.sha256, stored.ETag?.replaceAll('"','')]);
     }
     await catalog.replaceChunks(job.reference_id, reference.owner_key, chunks);
+    if (extname(filename).toLowerCase()==='.pdf') {
+      let pdfMetadata:any={}; try { const buffer=originalBytes.buffer.slice(originalBytes.byteOffset,originalBytes.byteOffset+originalBytes.byteLength) as ArrayBuffer; pdfMetadata=await scholarlyExtractor.extract(buffer); } catch(error){console.warn('[seshat:scholarly-pdf-extraction]',job.reference_id,error);}
+      const extracted=extractScholarlyMetadataFromText(extraction.markdown,{title:pdfMetadata.title,authors:pdfMetadata.authors,doi:pdfMetadata.doi,publicationYear:pdfMetadata.publicationYear}); if((pdfMetadata.references?.length||0)>extracted.references.length)extracted.references=pdfMetadata.references;
+      await catalog.upsertPaperExtraction(reference.owner_key,job.reference_id,{fileHash:manifest.source_sha256,normalizedTitle:normalizeScholarlyTitle(extracted.title||reference.title),metadata:{title:extracted.title,authors:extracted.authors,abstract:extracted.abstract,doi:extracted.doi,publicationYear:extracted.publicationYear,journal:extracted.journal,provenance:extracted.provenance},references:extracted.references,doi:extracted.doi,provenance:{extraction:{source:'local-extraction',method:'pdfjs+docling-markdown',generatedAt:new Date().toISOString(),confidence:extracted.provenance}}});
+    }
     await catalog.pool.query('UPDATE catalog_references SET word_count=$2,updated_at=now() WHERE id=$1', [job.reference_id, wordCount]);
-    await complete(job, 'identify', { parser: manifest.parser, sourceSha256: manifest.source_sha256, wordCount, chunks: chunks.length });
+    await complete(job, 'scholarly', { parser: manifest.parser, sourceSha256: manifest.source_sha256, wordCount, chunks: chunks.length, ocr: Boolean(manifest.ocr) });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+async function completeScholarly(job:Claimed,payload:Record<string,unknown>){const client=await catalog.pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE catalog_jobs SET status='complete',payload=$2::jsonb,error=NULL,updated_at=now() WHERE id=$1`,[job.id,JSON.stringify(payload)]);await client.query(`UPDATE catalog_jobs SET status='complete',payload=$2::jsonb,error=NULL,updated_at=now() WHERE reference_id=$1 AND stage IN ('identify','summarize','relate') AND status IN ('blocked','queued')`,[job.reference_id,JSON.stringify({skipped:'deterministic-scholarly-pipeline',generatedAt:new Date().toISOString()})]);await client.query('COMMIT');}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}
+
+async function scholarly(job:Claimed){const paper=await catalog.pool.query(`SELECT paper.*,reference.title,reference.contributors,reference.issued,reference.identifiers FROM catalog_papers paper JOIN catalog_references reference ON reference.id=paper.reference_id WHERE paper.reference_id=$1`,[job.reference_id]);const row=paper.rows[0];if(!row){await complete(job,'identify',{status:'not-a-pdf'});return;}const metadata=row.extracted_metadata||{};if(!openAlex.configured){await catalog.savePaperResolution(row.owner_key,job.reference_id,{status:'unresolved',method:'none',confidence:0,candidates:[],provenance:{openalex:{status:'configuration-required',generatedAt:new Date().toISOString()}}});await completeScholarly(job,{status:'unresolved',reason:'OPENALEX_API_KEY_REQUIRED'});return;}const resolution=await openAlex.resolve({doi:row.doi||metadata.doi,openAlexId:metadata.openAlexId,title:metadata.title||row.title,publicationYear:Number(metadata.publicationYear)||undefined,authors:Array.isArray(metadata.authors)?metadata.authors:[]});const saved=await persistResolution(catalog,row.owner_key,job.reference_id,resolution,undefined,openAlex);await completeScholarly(job,{status:saved?.resolutionStatus||resolution.status,method:resolution.method,confidence:resolution.confidence,candidates:resolution.candidates?.length||0,openAlexId:saved?.openAlexId});}
 
 function explicitIsbns(text: string): string[] {
   const candidates = text.match(/(?:ISBN(?:-1[03])?[:\s]*)?(?:97[89][\s-]?)?\d[\dXx\s-]{8,20}/g) || [];
@@ -211,12 +273,18 @@ async function persistInference(job: Claimed, reference: any, inference: any, te
     JSON.stringify(yearAccepted ? {year:numericYear} : reference.issued),
     JSON.stringify({identification:{provider:'docling-ollama',status:'inferred',confidence,
       accepted:{title:titleAccepted,authors:authorsAccepted,year:yearAccepted},inference}})]);
+  await renameWasabiOriginal(reference, {
+    title: titleAccepted ? candidateTitle : reference.title,
+    contributors: authorsAccepted ? acceptedAuthors.map((name:string) => normalizeContributor(name, { inferSimpleNames: true })).filter(Boolean) : reference.contributors,
+    issued: yearAccepted ? { year: numericYear } : reference.issued,
+  });
   await complete(job, 'summarize', { status:'inferred', provider:'docling-ollama', confidence,
     accepted:{title:titleAccepted,authors:authorsAccepted,year:yearAccepted} });
   return true;
 }
 
 async function identify(job: Claimed) {
+  const paper=await catalog.getPaper((await referenceData(job.reference_id)).reference.owner_key,job.reference_id); if(paper){await complete(job,'summarize',{status:'skipped',reason:'scholarly-pipeline'});return;}
   const { reference, artifacts } = await referenceData(job.reference_id);
   const markdown = artifacts.find((item) => item.kind === 'markdown');
   if (!markdown) throw new Error('Markdown derivative missing');
@@ -276,6 +344,7 @@ async function identify(job: Claimed) {
     [job.reference_id, title, JSON.stringify(contributors), JSON.stringify(issued),
       JSON.stringify(identifiers), volume.language || null, JSON.stringify({identification:{provider:matchedItem.provider || 'google-books',volumeId:matchedItem.id,inference}}),
       publisher, url]);
+  await renameWasabiOriginal(reference, { title, contributors, issued });
   await complete(job, 'summarize', { provider:matchedItem.provider || 'google-books', volumeId:matchedItem.id, explicit });
 }
 
@@ -300,9 +369,10 @@ async function summarize(job: Claimed) {
   if (!result.summary) throw new Error('Summary model returned empty output');
   const body = `# Summary\n\n${result.summary}\n\n${result.tags.length ? `## Tags\n\n${result.tags.map((tag) => `- ${tag}`).join('\n')}\n` : ''}`;
   const bytes = new TextEncoder().encode(body);
-  const key = `seshat/${reference.owner_key}/${job.reference_id}/derived/ai/summary.md`;
+  const storageRoot = String(reference.source?.wasabiStorageRoot || `${process.env.WASABI_KEY_PREFIX || 'zzttuntref'}/seshat-derived/${reference.owner_key}`).replace(/\/+$/g, '');
+  const key = `${storageRoot}/.seshat/${job.reference_id}/derived/ai/summary.md`;
   const sha256 = createHash('sha256').update(bytes).digest('hex');
-  const stored = await r2.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: 'text/markdown; charset=utf-8', CacheControl: 'private, no-store' }));
+  const stored = await storage.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: 'text/markdown; charset=utf-8', CacheControl: 'private, no-store' }));
   await catalog.pool.query(`INSERT INTO catalog_artifacts
     (id,reference_id,kind,provider,object_key,bucket,mime_type,size_bytes,sha256,etag)
     VALUES($1,$2,'summary','ollama',$3,$4,'text/markdown; charset=utf-8',$5,$6,$7)
@@ -363,6 +433,7 @@ async function extractGraphCandidates(reference: any, chunks: any[]): Promise<{
 
 async function relate(job: Claimed) {
   const { reference } = await referenceData(job.reference_id);
+  const paper=await catalog.getPaper(reference.owner_key,job.reference_id);if(paper){await rebuildScholarlyGraph(catalog,reference.owner_key);await complete(job,'',{pipeline:'scholarly-v1'});return;}
   const chunkResult = await catalog.pool.query(
     'SELECT id,ordinal,content,page,locator,section,metadata FROM catalog_chunks WHERE reference_id=$1 ORDER BY ordinal',
     [job.reference_id],
@@ -451,6 +522,7 @@ async function tick() {
   if (!job) { await indexVectorBatch(); return; }
   try {
     if (job.stage === 'extract') await extract(job);
+    else if (job.stage === 'scholarly') await scholarly(job);
     else if (job.stage === 'identify') await identify(job);
     else if (job.stage === 'summarize') await summarize(job);
     else await relate(job);

@@ -19,10 +19,13 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `GOOGLE_CLIENT_ID` | Optional | none | Enables direct Google login when paired with its secret |
 | `GOOGLE_CLIENT_SECRET` | Optional | none | Enables direct Google login when paired with its client ID |
 | `DATABASE_URL` | Yes | none | PostgreSQL connection for web and worker |
-| `R2_ENDPOINT` | Yes | none | Cloudflare R2 S3-compatible endpoint |
-| `R2_ACCESS_KEY_ID` | Yes | none | R2 credential |
-| `R2_SECRET_ACCESS_KEY` | Yes | none | R2 credential |
-| `R2_BUCKET` | Yes | none | R2 bucket containing originals and derivatives |
+| `WASABI_ENDPOINT` | Yes | `https://s3.us-east-2.wasabisys.com` | Wasabi S3-compatible endpoint used exclusively by Seshat |
+| `WASABI_REGION` | Yes | `us-east-2` | Wasabi region |
+| `WASABI_ACCESS_KEY_ID` | Yes | none | Server-side Wasabi credential |
+| `WASABI_SECRET_ACCESS_KEY` | Yes | none | Server-side Wasabi credential |
+| `WASABI_BUCKET` | Yes | `untref-licmusica` | Bucket containing originals and derivatives |
+| `WASABI_KEY_PREFIX` | No | `zzttuntref` | Key prefix above Seshat user roots |
+| `SESHAT_LIBRARY_ROOT_USERS` | No | `zztt,zzttuntref,lucianoazzigotti@gmail.com` | Users for whom `libros/` is an invisible storage root; other users use `lseshat/<user>/` |
 | `GOOGLE_BOOKS_API_KEY` | Recommended | fallback to `GOOGLE_API_KEY` | Server-side Google Books queries |
 | `GOOGLE_GENERATIVE_LANGUAGE_API_KEY` | Currently unused by worker | none | Reserved for Generative Language integration |
 | `GOOGLE_API_KEY` | Legacy fallback | none | Backward-compatible Google Books key fallback |
@@ -51,15 +54,18 @@ OIDC_CLIENT_ID=replace-me
 OIDC_CLIENT_SECRET=replace-me
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/seshat
-R2_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
-R2_ACCESS_KEY_ID=replace-me
-R2_SECRET_ACCESS_KEY=replace-me
-R2_BUCKET=replace-me
+WASABI_ENDPOINT=https://s3.us-east-2.wasabisys.com
+WASABI_REGION=us-east-2
+WASABI_ACCESS_KEY_ID=replace-me
+WASABI_SECRET_ACCESS_KEY=replace-me
+WASABI_BUCKET=untref-licmusica
+WASABI_KEY_PREFIX=zzttuntref
+SESHAT_LIBRARY_ROOT_USERS=zztt,zzttuntref,lucianoazzigotti@gmail.com
 
 GOOGLE_BOOKS_API_KEY=replace-me
 ```
 
-For a UI-only development session, PostgreSQL, R2 and identity are still needed for authenticated workspace pages. The public landing and health endpoint can run without catalog access.
+For a UI-only development session, PostgreSQL, Wasabi and identity are still needed for authenticated workspace pages. The public landing and health endpoint can run without catalog access. Cloudflare R2 is not read by Seshat; it remains a Musiki-only service.
 
 ## Google credentials
 
@@ -99,7 +105,7 @@ Important: use `pm2 startOrReload ecosystem.config.cjs --only ... --update-env` 
 Observed on 2026-07-01:
 
 - Root env file: `/opt/packages/seshat/.env`, owned by `zz`, mode `600` when configured.
-- The file contains Auth.js/OIDC, PostgreSQL, R2 and separate Google API variable names.
+- The file contains Auth.js/OIDC, PostgreSQL, Wasabi and separate Google API variable names.
 - Production values are loaded only from the VPS and are not copied into this repository.
 - The public origin is `https://seshat.zztt.org`; Caddy proxies it to `127.0.0.1:4331`.
 
@@ -109,6 +115,11 @@ There are no committed `.env.development` or `.env.production` files. Use:
 
 - local `.env` for development;
 - `/opt/packages/seshat/.env` for production;
-- separate identity clients, database URLs and R2 credentials for each consuming deployment.
+- separate identity clients, database URLs and Wasabi credentials for each consuming deployment.
 
 Do not reuse production secrets for Musiki AR, Musiki CH or SO PhD merely because they share packages.
+# OpenAlex
+
+`OPENALEX_API_KEY` enables scholarly resolution. Keep it only in deployment secrets or `.env`; never commit it. Optional controls are `OPENALEX_API_BASE_URL`, `OPENALEX_MAILTO`, `OPENALEX_TIMEOUT_MS`, `OPENALEX_RETRIES`, `OPENALEX_CACHE_TTL_DAYS`, and `OPENALEX_SHARED_TOPIC_THRESHOLD`.
+
+OpenAlex is used only by Seshat's scholarly pipeline. Seshat document objects remain exclusively in Wasabi, while Musiki's Cloudflare configuration is unchanged.

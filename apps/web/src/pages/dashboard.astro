@@ -5,6 +5,11 @@ import { getCatalog, isSessionAccountAdmin, ownerKeyFor, sessionIdentity } from 
 const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
 const stats = await getCatalog().dashboardStats(ownerKeyFor(identity.email));
 const admin = isSessionAccountAdmin(session);
+const linkedEmailsQuery = await getCatalog().pool.query(
+  'SELECT DISTINCT current_email FROM catalog_identities WHERE owner_key = $1 ORDER BY current_email ASC',
+  [ownerKeyFor(identity.email)]
+);
+const linkedEmails = linkedEmailsQuery.rows.map((row: any) => row.current_email).filter((email: string) => email.toLowerCase() !== identity.email.toLowerCase());
 const years = stats.publicationYears; const width = 760; const height = 250; const padX = 42; const padY = 32;
 const minYear = years[0]?.year || new Date().getFullYear(); const maxYear = years.at(-1)?.year || minYear;
 const maxCount = Math.max(1, ...years.map((item) => item.count)); const span = Math.max(1, maxYear - minYear);
@@ -57,30 +62,56 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
     </div>
 
     <section class="dashboard-panel account-panel">
-      <header><div><span>Identity</span><h2>Authentik account</h2></div><small>stable subject linked</small></header>
-      <dl><div><dt>Current email</dt><dd>{identity.email}</dd></div><div><dt>Provider</dt><dd>{identity.provider}</dd></div><div><dt>Subject</dt><dd>{identity.subject ? `${identity.subject.slice(0,8)}…` : 'refresh login required'}</dd></div></dl>
-      {admin ? (
-        <form data-recover-catalog>
-          <label><span>Previous Authentik email</span><input type="email" name="previousEmail" required placeholder="previous@email.example" /></label>
-          <button class="button primary" type="submit">Recover previous catalog</button>
+      <header><div><span>Identity</span><h2>Authentik account</h2></div><small>associated logins</small></header>
+      <dl>
+        <div><dt>Primary email</dt><dd>{identity.email}</dd></div>
+        <div><dt>Linked emails</dt><dd>{linkedEmails.length ? linkedEmails.join(', ') : 'None linked'}</dd></div>
+        <div><dt>Subject</dt><dd>{identity.subject ? `${identity.subject.slice(0,8)}…` : 'refresh login required'}</dd></div>
+      </dl>
+
+      <form data-associate-email>
+        <label><span>Link secondary login email</span><input type="email" name="secondaryEmail" required placeholder="secondary@email.example" /></label>
+        <button class="button primary" type="submit">Link login email</button>
+        <output aria-live="polite"></output>
+        <p>This allows you to log in with a second email/identity (e.g. Authentik account or Google) and access the same catalog workspace. Catalogs will merge if the email already has catalog items.</p>
+      </form>
+
+      {admin && (
+        <form data-recover-catalog style="border-top:1px dashed var(--line); margin-top:16px; padding-top:16px;">
+          <label><span>[Admin] Previous Authentik email</span><input type="email" name="previousEmail" required placeholder="previous@email.example" /></label>
+          <button class="button secondary" type="submit">Recover previous catalog</button>
           <output aria-live="polite"></output>
-          <p>This administrative action links the stable Authentik subject to an unclaimed previous catalog and safely merges a current catalog when there are no duplicate items or library-name conflicts.</p>
+          <p>Administrative tool: links Authentik subject to an unclaimed catalog and merges current items when no conflicts exist.</p>
         </form>
-      ) : <p class="account-note">Catalog recovery is restricted to Authentik/Seshat administrators.</p>}
+      )}
     </section>
   </section>
 
   <script>
-    const form = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
-    form?.addEventListener('submit', async (event) => {
-      event.preventDefault(); const button = form.querySelector<HTMLButtonElement>('button'); const output = form.querySelector<HTMLOutputElement>('output');
-      const previousEmail = String(new FormData(form).get('previousEmail') || ''); if (!button || !output) return;
+    // 1. Recover catalog form
+    const recoverForm = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
+    recoverForm?.addEventListener('submit', async (event) => {
+      event.preventDefault(); const button = recoverForm.querySelector<HTMLButtonElement>('button'); const output = recoverForm.querySelector<HTMLOutputElement>('output');
+      const previousEmail = String(new FormData(recoverForm).get('previousEmail') || ''); if (!button || !output) return;
       button.disabled = true; output.value = 'Checking previous catalog…';
       const response = await fetch('/api/account/recover', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ previousEmail }) });
       const result = await response.json().catch(() => ({}));
       if (response.ok) { output.value = 'Catalog recovered. Reloading…'; location.reload(); return; }
       const labels: Record<string,string> = { catalog_already_linked:'That catalog already belongs to another identity.', duplicate_items_require_review:'Both catalogs contain the same original file; review is required before merging.', library_names_require_review:'Both catalogs contain a library with the same name; rename one before merging.', previous_catalog_not_found:'No previous catalog was found for that email.', stable_identity_required:'Sign out and back in to refresh the stable Authentik identity.' };
       output.value = labels[result.error] || result.error || 'Recovery failed.'; button.disabled = false;
+    });
+
+    // 2. Associate secondary email form
+    const associateForm = document.querySelector<HTMLFormElement>('[data-associate-email]');
+    associateForm?.addEventListener('submit', async (event) => {
+      event.preventDefault(); const button = associateForm.querySelector<HTMLButtonElement>('button'); const output = associateForm.querySelector<HTMLOutputElement>('output');
+      const secondaryEmail = String(new FormData(associateForm).get('secondaryEmail') || ''); if (!button || !output) return;
+      button.disabled = true; output.value = 'Associating login email…';
+      const response = await fetch('/api/account/associate', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ secondaryEmail }) });
+      const result = await response.json().catch(() => ({}));
+      if (response.ok) { output.value = 'Email linked successfully. Reloading…'; location.reload(); return; }
+      const labels: Record<string,string> = { catalog_already_linked:'That catalog already belongs to another identity.', duplicate_items_require_review:'Both catalogs contain the same original file; review is required before merging.', library_names_require_review:'Both catalogs contain a library with the same name; rename one before merging.', stable_identity_required:'Sign out and back in to refresh login identity.' };
+      output.value = labels[result.error] || result.error || 'Link failed.'; button.disabled = false;
     });
   </script>
 </Shell>

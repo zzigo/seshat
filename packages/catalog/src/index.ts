@@ -1,6 +1,8 @@
 import { Pool, type PoolClient } from 'pg';
 
-export type EnrichmentStage = 'extract' | 'identify' | 'summarize' | 'relate';
+export * from './scholarly.js';
+
+export type EnrichmentStage = 'extract' | 'scholarly' | 'identify' | 'summarize' | 'relate';
 export type JobStatus = 'queued' | 'blocked' | 'running' | 'complete' | 'failed';
 
 export interface CatalogArtifact {
@@ -169,6 +171,9 @@ export interface CatalogBibliographyInput {
   url?: string;
   source: Record<string, unknown>;
   originalSha256: string;
+  createdAt?: string;
+  originalFilename?: string;
+  artifact?: Omit<CatalogArtifact, 'createdAt'>;
 }
 
 export interface CitationSearchResult {
@@ -239,9 +244,17 @@ export interface CatalogGraphEdgeInput {
   properties?: Record<string, unknown>;
 }
 
+export interface CatalogPaperRecord {
+  referenceId:string; ownerKey:string; documentId:string; fileHash:string; title:string; normalizedTitle:string;
+  extractedMetadata:Record<string,unknown>; extractedReferences:unknown[]; doi?:string; openAlexId?:string;
+  resolutionStatus:'resolved'|'ambiguous'|'unresolved'; resolutionMethod:string; resolutionConfidence:number;
+  candidates:unknown[]; openAlexWork?:Record<string,unknown>; expansion:Record<string,unknown>; provenance:Record<string,unknown>;
+  createdAt:string; updatedAt:string;
+}
+
 export function buildInitialJobs(_referenceId: string, id: () => string = () => crypto.randomUUID()): CatalogJob[] {
   const timestamp = new Date().toISOString();
-  return (['extract', 'identify', 'summarize', 'relate'] as const).map((stage, index) => ({
+  return (['extract', 'scholarly', 'identify', 'summarize', 'relate'] as const).map((stage, index) => ({
     id: id(),
     stage,
     status: index === 0 ? 'queued' : 'blocked',
@@ -280,6 +293,14 @@ const schema = `
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS publisher_place text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS url text;
   ALTER TABLE catalog_references ADD COLUMN IF NOT EXISTS word_count integer NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS catalog_keyword_styles (
+    owner_key text NOT NULL,
+    keyword text NOT NULL,
+    color text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,keyword)
+  );
 
   CREATE TABLE IF NOT EXISTS catalog_chunks (
     id text PRIMARY KEY,
@@ -324,7 +345,7 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS catalog_graph_nodes_label_idx ON catalog_graph_nodes(owner_key, lower(label));
   CREATE TABLE IF NOT EXISTS catalog_graph_edges (
-    edge_key text PRIMARY KEY,
+    edge_key text NOT NULL,
     owner_key text NOT NULL,
     evidence_reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
     from_key text NOT NULL,
@@ -334,10 +355,48 @@ const schema = `
     weight real NOT NULL DEFAULT 1,
     properties jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key, edge_key)
   );
+  DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='catalog_graph_edges_pkey' AND pg_get_constraintdef(oid) NOT LIKE '%owner_key%') THEN
+      ALTER TABLE catalog_graph_edges DROP CONSTRAINT catalog_graph_edges_pkey;
+      ALTER TABLE catalog_graph_edges ADD CONSTRAINT catalog_graph_edges_pkey PRIMARY KEY(owner_key,edge_key);
+    END IF;
+  END $$;
   CREATE INDEX IF NOT EXISTS catalog_graph_edges_owner_from_idx ON catalog_graph_edges(owner_key, from_key);
   CREATE INDEX IF NOT EXISTS catalog_graph_edges_owner_to_idx ON catalog_graph_edges(owner_key, to_key);
+
+  CREATE TABLE IF NOT EXISTS catalog_papers (
+    reference_id text PRIMARY KEY REFERENCES catalog_references(id) ON DELETE CASCADE,
+    owner_key text NOT NULL,
+    document_id text NOT NULL,
+    file_hash text NOT NULL,
+    normalized_title text NOT NULL DEFAULT '',
+    extracted_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    extracted_references jsonb NOT NULL DEFAULT '[]'::jsonb,
+    doi text,
+    openalex_id text,
+    resolution_status text NOT NULL DEFAULT 'unresolved' CHECK (resolution_status IN ('resolved','ambiguous','unresolved')),
+    resolution_method text NOT NULL DEFAULT 'none',
+    resolution_confidence real NOT NULL DEFAULT 0,
+    candidates jsonb NOT NULL DEFAULT '[]'::jsonb,
+    openalex_work jsonb,
+    expansion jsonb NOT NULL DEFAULT '{}'::jsonb,
+    provenance jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(owner_key,file_hash)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS catalog_papers_owner_openalex_idx ON catalog_papers(owner_key,openalex_id) WHERE openalex_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS catalog_papers_owner_status_idx ON catalog_papers(owner_key,resolution_status,updated_at DESC);
+  CREATE TABLE IF NOT EXISTS catalog_openalex_cache (
+    cache_key text PRIMARY KEY,
+    response jsonb NOT NULL,
+    retrieved_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS catalog_openalex_cache_expiry_idx ON catalog_openalex_cache(expires_at);
 
   CREATE TABLE IF NOT EXISTS catalog_artifacts (
     id text PRIMARY KEY,
@@ -356,7 +415,7 @@ const schema = `
   CREATE TABLE IF NOT EXISTS catalog_jobs (
     id text PRIMARY KEY,
     reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
-    stage text NOT NULL CHECK (stage IN ('extract', 'identify', 'summarize', 'relate')),
+    stage text NOT NULL CHECK (stage IN ('extract', 'scholarly', 'identify', 'summarize', 'relate')),
     status text NOT NULL CHECK (status IN ('queued', 'blocked', 'running', 'complete', 'failed')),
     attempts integer NOT NULL DEFAULT 0,
     error text,
@@ -366,6 +425,14 @@ const schema = `
     UNIQUE (reference_id, stage)
   );
   CREATE INDEX IF NOT EXISTS catalog_jobs_queue_idx ON catalog_jobs (status, created_at);
+  DO $schema_migration$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='catalog_jobs_stage_check' AND pg_get_constraintdef(oid) NOT LIKE '%scholarly%') THEN
+      ALTER TABLE catalog_jobs DROP CONSTRAINT catalog_jobs_stage_check;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='catalog_jobs_stage_check') THEN
+      ALTER TABLE catalog_jobs ADD CONSTRAINT catalog_jobs_stage_check CHECK (stage IN ('extract','scholarly','identify','summarize','relate'));
+    END IF;
+  END $schema_migration$;
 
   CREATE TABLE IF NOT EXISTS catalog_libraries (
     id text PRIMARY KEY,
@@ -383,6 +450,9 @@ const schema = `
   );
   ALTER TABLE catalog_libraries
     ADD COLUMN IF NOT EXISTS parent_id text REFERENCES catalog_libraries(id) ON DELETE CASCADE;
+  ALTER TABLE catalog_libraries DROP CONSTRAINT IF EXISTS catalog_libraries_owner_key_name_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS catalog_libraries_owner_parent_name_unique_idx
+    ON catalog_libraries (owner_key, COALESCE(parent_id, ''), name);
   CREATE TABLE IF NOT EXISTS catalog_library_shares (
     library_id text NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
     grantee_owner_key text NOT NULL,
@@ -421,6 +491,14 @@ const schema = `
     ON catalog_annotations (reference_id, owner_key, start_offset);
   ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS source_kind text NOT NULL DEFAULT 'markdown';
   ALTER TABLE catalog_annotations ADD COLUMN IF NOT EXISTS rects jsonb NOT NULL DEFAULT '[]'::jsonb;
+  CREATE TABLE IF NOT EXISTS catalog_reading_state (
+    owner_key text NOT NULL,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    location jsonb NOT NULL DEFAULT '{}'::jsonb,
+    preferences jsonb NOT NULL DEFAULT '{}'::jsonb,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,reference_id)
+  );
   CREATE TABLE IF NOT EXISTS catalog_identities (
     identity_key text PRIMARY KEY,
     owner_key text NOT NULL,
@@ -436,9 +514,15 @@ const schema = `
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references
     ON CONFLICT (id) DO NOTHING;
-  INSERT INTO catalog_library_items (library_id, reference_id)
-    SELECT 'inbox:' || owner_key, id FROM catalog_references
-    ON CONFLICT DO NOTHING;
+  DELETE FROM catalog_library_items inbox_item
+    USING catalog_references r
+    WHERE inbox_item.reference_id=r.id
+      AND inbox_item.library_id='inbox:' || r.owner_key
+      AND EXISTS (
+        SELECT 1 FROM catalog_library_items filed_item
+        WHERE filed_item.reference_id=r.id
+          AND filed_item.library_id<>inbox_item.library_id
+      );
 `;
 
 const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: CatalogJob[] = []): CatalogReference => ({
@@ -466,6 +550,8 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   libraryIds: row.library_ids ?? [],
   access: row.access === 'viewer' ? 'viewer' : 'owner',
 });
+
+const mapPaper=(row:any):CatalogPaperRecord => ({referenceId:row.reference_id,ownerKey:row.owner_key,documentId:row.document_id,fileHash:row.file_hash,title:row.title||'',normalizedTitle:row.normalized_title||'',extractedMetadata:row.extracted_metadata||{},extractedReferences:row.extracted_references||[],doi:row.doi||undefined,openAlexId:row.openalex_id||undefined,resolutionStatus:row.resolution_status||'unresolved',resolutionMethod:row.resolution_method||'none',resolutionConfidence:Number(row.resolution_confidence||0),candidates:row.candidates||[],openAlexWork:row.openalex_work||undefined,expansion:row.expansion||{},provenance:row.provenance||{},createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()});
 
 export class PostgresCatalog {
   readonly pool: Pool;
@@ -497,11 +583,13 @@ export class PostgresCatalog {
       await this.pool.query('UPDATE catalog_identities SET current_email=$2,updated_at=now() WHERE identity_key=$1', [input.identityKey, input.email]);
       return existing.rows[0].owner_key;
     }
+    const emailMatch = await this.pool.query('SELECT owner_key FROM catalog_identities WHERE lower(current_email)=lower($1) ORDER BY updated_at DESC LIMIT 1', [input.email]);
+    const ownerKey = emailMatch.rows[0]?.owner_key || input.proposedOwnerKey;
     const result = await this.pool.query(
       `INSERT INTO catalog_identities(identity_key,owner_key,provider,subject,current_email)
        VALUES($1,$2,$3,$4,$5) ON CONFLICT(identity_key) DO UPDATE SET current_email=excluded.current_email,updated_at=now()
        RETURNING owner_key`,
-      [input.identityKey, input.proposedOwnerKey, input.provider, input.subject, input.email],
+      [input.identityKey, ownerKey, input.provider, input.subject, input.email],
     );
     return result.rows[0].owner_key;
   }
@@ -908,7 +996,7 @@ export class PostgresCatalog {
           `INSERT INTO catalog_graph_edges
             (edge_key,owner_key,evidence_reference_id,from_key,relation,to_key,evidence_chunk_id,weight,properties)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
-           ON CONFLICT(edge_key) DO UPDATE SET weight=excluded.weight,properties=excluded.properties,updated_at=now()`,
+           ON CONFLICT(owner_key,edge_key) DO UPDATE SET weight=excluded.weight,properties=excluded.properties,updated_at=now()`,
           [edge.key, ownerKey, referenceId, edge.from, edge.relation, edge.to, edge.chunkId || null,
             edge.weight ?? 1, JSON.stringify(edge.properties || {})],
         );
@@ -919,6 +1007,26 @@ export class PostgresCatalog {
       throw error;
     } finally { client.release(); }
   }
+
+  async replaceGraphForReferencePipeline(ownerKey:string,referenceId:string,pipeline:string,nodes:CatalogGraphNodeInput[],edges:CatalogGraphEdgeInput[]):Promise<void> {
+    await this.ensureSchema(); const client=await this.pool.connect();
+    try { await client.query('BEGIN'); await client.query(`DELETE FROM catalog_graph_edges WHERE owner_key=$1 AND evidence_reference_id=$2 AND properties->'provenance'->>'pipeline'=$3`,[ownerKey,referenceId,pipeline]);
+      for(const node of nodes) await client.query(`INSERT INTO catalog_graph_nodes(owner_key,node_key,kind,label,properties) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(owner_key,node_key) DO UPDATE SET kind=excluded.kind,label=excluded.label,properties=catalog_graph_nodes.properties||excluded.properties,updated_at=now()`,[ownerKey,node.key,node.kind,node.label,JSON.stringify(node.properties||{})]);
+      for(const edge of edges) { const properties={...(edge.properties||{}),provenance:{...((edge.properties as any)?.provenance||{}),pipeline}}; await client.query(`INSERT INTO catalog_graph_edges(edge_key,owner_key,evidence_reference_id,from_key,relation,to_key,evidence_chunk_id,weight,properties) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT(owner_key,edge_key) DO UPDATE SET evidence_reference_id=excluded.evidence_reference_id,weight=excluded.weight,properties=excluded.properties,updated_at=now()`,[edge.key,ownerKey,referenceId,edge.from,edge.relation,edge.to,edge.chunkId||null,edge.weight??1,JSON.stringify(properties)]); }
+      await client.query(`DELETE FROM catalog_graph_nodes node WHERE node.owner_key=$1 AND node.properties->>'pipeline'=$2 AND NOT EXISTS (SELECT 1 FROM catalog_graph_edges edge WHERE edge.owner_key=node.owner_key AND (edge.from_key=node.node_key OR edge.to_key=node.node_key))`,[ownerKey,pipeline]);
+      await client.query('COMMIT');
+    } catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;} finally{client.release();}
+  }
+
+  async upsertPaperExtraction(ownerKey:string,referenceId:string,input:{fileHash:string;normalizedTitle:string;metadata:Record<string,unknown>;references:unknown[];doi?:string;provenance?:Record<string,unknown>}):Promise<CatalogPaperRecord> {
+    await this.ensureSchema(); const result=await this.pool.query(`INSERT INTO catalog_papers(reference_id,owner_key,document_id,file_hash,normalized_title,extracted_metadata,extracted_references,doi,provenance) SELECT id,owner_key,id,$3,$4,$5::jsonb,$6::jsonb,$7,$8::jsonb FROM catalog_references WHERE id=$2 AND owner_key=$1 ON CONFLICT(reference_id) DO UPDATE SET file_hash=excluded.file_hash,normalized_title=excluded.normalized_title,extracted_metadata=excluded.extracted_metadata,extracted_references=excluded.extracted_references,doi=COALESCE(excluded.doi,catalog_papers.doi),provenance=catalog_papers.provenance||excluded.provenance,updated_at=now() RETURNING *`,[ownerKey,referenceId,input.fileHash,input.normalizedTitle,JSON.stringify(input.metadata),JSON.stringify(input.references),input.doi||null,JSON.stringify(input.provenance||{})]); const row=result.rows[0]; if(!row)throw new Error('REFERENCE_NOT_FOUND'); const reference=await this.pool.query('SELECT title FROM catalog_references WHERE id=$1',[referenceId]);return mapPaper({...row,title:reference.rows[0]?.title||''});
+  }
+
+  async getPaper(ownerKey:string,referenceId:string):Promise<CatalogPaperRecord|null>{await this.ensureSchema();const result=await this.pool.query(`SELECT paper.*,reference.title FROM catalog_papers paper JOIN catalog_references reference ON reference.id=paper.reference_id WHERE paper.owner_key=$1 AND paper.reference_id=$2`,[ownerKey,referenceId]);return result.rows[0]?mapPaper(result.rows[0]):null;}
+  async listPapers(ownerKey:string):Promise<CatalogPaperRecord[]>{await this.ensureSchema();const result=await this.pool.query(`SELECT paper.*,reference.title FROM catalog_papers paper JOIN catalog_references reference ON reference.id=paper.reference_id WHERE paper.owner_key=$1 ORDER BY paper.updated_at DESC`,[ownerKey]);return result.rows.map(mapPaper);}
+  async savePaperResolution(ownerKey:string,referenceId:string,input:{status:'resolved'|'ambiguous'|'unresolved';method:string;confidence:number;candidates?:unknown[];work?:Record<string,unknown>;expansion?:Record<string,unknown>;provenance?:Record<string,unknown>;metadata?:{title?:string;contributors?:unknown[];issued?:Record<string,unknown>;doi?:string;abstract?:string;publisher?:string;url?:string}}):Promise<CatalogPaperRecord|null>{await this.ensureSchema();const client=await this.pool.connect();try{await client.query('BEGIN');const current=await client.query(`SELECT paper.*,reference.title,reference.source,reference.contributors,reference.issued,reference.identifiers,reference.abstract,reference.publisher,reference.url FROM catalog_papers paper JOIN catalog_references reference ON reference.id=paper.reference_id WHERE paper.owner_key=$1 AND paper.reference_id=$2 FOR UPDATE`,[ownerKey,referenceId]);if(!current.rows[0]){await client.query('ROLLBACK');return null;}const row=current.rows[0],manual=new Set<string>(row.source?.curation?.manualFields||[]),metadata=input.metadata||{};const identifiers={...(row.identifiers||{}),...(!manual.has('identifiers')&&metadata.doi?{doi:metadata.doi}:{})};await client.query(`UPDATE catalog_references SET title=$3,contributors=$4::jsonb,issued=$5::jsonb,identifiers=$6::jsonb,abstract=$7,publisher=$8,url=$9,source=source||$10::jsonb,updated_at=now() WHERE owner_key=$1 AND id=$2`,[ownerKey,referenceId,manual.has('title')?row.title:metadata.title||row.title,JSON.stringify(manual.has('contributors')?row.contributors:metadata.contributors||row.contributors),JSON.stringify(manual.has('issued')?row.issued:metadata.issued||row.issued),JSON.stringify(identifiers),manual.has('abstract')?row.abstract:metadata.abstract||row.abstract,manual.has('publisher')?row.publisher:metadata.publisher||row.publisher,manual.has('url')?row.url:metadata.url||row.url,JSON.stringify({scholarly:{resolutionStatus:input.status,method:input.method,confidence:input.confidence,updatedAt:new Date().toISOString()}})]);const saved=await client.query(`UPDATE catalog_papers SET doi=COALESCE($3,doi),openalex_id=$4,resolution_status=$5,resolution_method=$6,resolution_confidence=$7,candidates=$8::jsonb,openalex_work=$9::jsonb,expansion=expansion||$10::jsonb,provenance=provenance||$11::jsonb,updated_at=now() WHERE owner_key=$1 AND reference_id=$2 RETURNING *`,[ownerKey,referenceId,metadata.doi||null,(input.work as any)?.id||null,input.status,input.method,Math.max(0,Math.min(1,input.confidence)),JSON.stringify(input.candidates||[]),input.work?JSON.stringify(input.work):null,JSON.stringify(input.expansion||{}),JSON.stringify(input.provenance||{})]);await client.query('COMMIT');return mapPaper({...saved.rows[0],title:manual.has('title')?row.title:metadata.title||row.title});}catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}}
+  async getOpenAlexCache(key:string):Promise<unknown|null>{await this.ensureSchema();const result=await this.pool.query('SELECT response FROM catalog_openalex_cache WHERE cache_key=$1 AND expires_at>now()',[key]);return result.rows[0]?.response||null;}
+  async setOpenAlexCache(key:string,value:unknown,expiresAt:string):Promise<void>{await this.ensureSchema();await this.pool.query(`INSERT INTO catalog_openalex_cache(cache_key,response,expires_at) VALUES($1,$2::jsonb,$3::timestamptz) ON CONFLICT(cache_key) DO UPDATE SET response=excluded.response,retrieved_at=now(),expires_at=excluded.expires_at`,[key,JSON.stringify(value),expiresAt]);}
 
   async graphSearch(ownerKeys: string | string[], query: string, limit = 30): Promise<Array<{ chunkId: string; score: number }>> {
     await this.ensureSchema();
@@ -1043,7 +1151,16 @@ export class PostgresCatalog {
        )
        SELECT l.*,
          CASE WHEN l.owner_key=$1 OR l.parent_id IN (SELECT id FROM shared_libraries) THEN l.parent_id ELSE NULL END AS visible_parent_id,
-         count(li.reference_id)::int AS item_count,
+         CASE WHEN l.id='inbox:' || $1 THEN (
+           SELECT count(*)::int FROM catalog_references r
+           WHERE r.owner_key=$1 AND NOT EXISTS (
+             SELECT 1 FROM catalog_library_items filed_item
+             JOIN catalog_libraries filed_library ON filed_library.id=filed_item.library_id
+             WHERE filed_item.reference_id=r.id
+               AND filed_library.owner_key=$1
+               AND filed_library.id<>'inbox:' || $1
+           )
+         ) ELSE count(li.reference_id)::int END AS item_count,
          CASE WHEN l.owner_key=$1 THEN 'owner' ELSE 'viewer' END AS access,
          max(sl.shared_by_email) AS shared_by_email
        FROM catalog_libraries l LEFT JOIN catalog_library_items li ON li.library_id=l.id
@@ -1071,6 +1188,47 @@ export class PostgresCatalog {
     if (!row) throw new Error('PARENT_LIBRARY_NOT_FOUND');
     return { id: row.id, ownerKey: row.owner_key, name: row.name,
       parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString(), access: 'owner' };
+  }
+
+  async ensureLibraryPath(ownerKey: string, names: string[]): Promise<CatalogLibrary | null> {
+    await this.ensureSchema();
+    const path = names.map((name) => name.trim().replace(/\s+/g, ' ').slice(0, 160)).filter(Boolean);
+    if (!path.length) return null;
+    const client = await this.pool.connect();
+    let parentId: string | null = null;
+    let row: any;
+    try {
+      await client.query('BEGIN');
+      for (const name of path) {
+        let found = await client.query(
+          'SELECT * FROM catalog_libraries WHERE owner_key=$1 AND parent_id IS NOT DISTINCT FROM $2 AND lower(name)=lower($3) LIMIT 1',
+          [ownerKey, parentId, name],
+        );
+        if (!found.rows[0]) {
+          try {
+            found = await client.query(
+              'INSERT INTO catalog_libraries(id,owner_key,name,parent_id) VALUES($1,$2,$3,$4) RETURNING *',
+              [crypto.randomUUID(), ownerKey, name, parentId],
+            );
+          } catch (error: any) {
+            if (String(error?.code || '') !== '23505') throw error;
+            found = await client.query(
+              'SELECT * FROM catalog_libraries WHERE owner_key=$1 AND parent_id IS NOT DISTINCT FROM $2 AND lower(name)=lower($3) LIMIT 1',
+              [ownerKey, parentId, name],
+            );
+          }
+        }
+        row = found.rows[0];
+        if (!row) throw new Error('LIBRARY_PATH_CREATE_FAILED');
+        parentId = row.id;
+      }
+      await client.query('COMMIT');
+      return { id: row.id, ownerKey: row.owner_key, name: row.name, description: row.description ?? undefined,
+        parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString(), access: 'owner' };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
   }
 
   async updateLibrary(ownerKey: string, id: string, input: { name?: string; parentId?: string | null }): Promise<CatalogLibrary | null> {
@@ -1161,17 +1319,28 @@ export class PostgresCatalog {
   async addToLibrary(ownerKey: string, referenceId: string, libraryId?: string): Promise<void> {
     await this.ensureSchema();
     const target = libraryId || await this.ensureInbox(ownerKey);
-    await this.pool.query(
-      `INSERT INTO catalog_library_items (library_id, reference_id)
-       SELECT l.id, r.id FROM catalog_libraries l, catalog_references r
-       WHERE l.id=$1 AND l.owner_key=$2 AND r.id=$3 AND r.owner_key=$2 ON CONFLICT DO NOTHING`,
-      [target, ownerKey, referenceId],
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (!target.startsWith('inbox:')) {
+        await client.query('DELETE FROM catalog_library_items WHERE library_id=$1 AND reference_id=$2', [`inbox:${ownerKey}`, referenceId]);
+      }
+      await client.query(
+        `INSERT INTO catalog_library_items (library_id, reference_id)
+         SELECT l.id, r.id FROM catalog_libraries l, catalog_references r
+         WHERE l.id=$1 AND l.owner_key=$2 AND r.id=$3 AND r.owner_key=$2 ON CONFLICT DO NOTHING`,
+        [target, ownerKey, referenceId],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
   }
 
   async setReferenceLibraries(ownerKey: string, referenceId: string, libraryIds: string[]): Promise<string[]> {
     await this.ensureSchema();
-    const unique = [...new Set(libraryIds.filter(Boolean))];
+    const unique = [...new Set(libraryIds.filter((id) => Boolean(id) && !id.startsWith('inbox:')))];
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -1204,14 +1373,15 @@ export class PostgresCatalog {
       for (const entry of entries.slice(0, 5000)) {
         const result = await client.query(
           `INSERT INTO catalog_references
-             (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,publisher,publisher_place,url,source,original_sha256)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::text[],$10,$11,$12,$13,$14,$15::jsonb,$16)
-           ON CONFLICT (owner_key,original_sha256) DO UPDATE SET updated_at=now()
+             (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,publisher,publisher_place,url,source,original_sha256,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::text[],$10,$11,$12,$13,$14,$15::jsonb,$16,COALESCE($17::timestamptz,now()))
+           ON CONFLICT (owner_key,original_sha256) DO UPDATE
+             SET source=catalog_references.source || excluded.source, updated_at=now()
            RETURNING id`,
           [entry.id, ownerKey, entry.citeKey, entry.type, entry.title, JSON.stringify(entry.contributors),
             JSON.stringify(entry.issued ?? null), JSON.stringify(entry.identifiers), entry.tags ?? [],
             entry.abstract || null, entry.language || null, entry.publisher || null, entry.publisherPlace || null,
-            entry.url || null, JSON.stringify(entry.source), entry.originalSha256],
+            entry.url || null, JSON.stringify(entry.source), entry.originalSha256, entry.createdAt || null],
         );
         const referenceId = result.rows[0].id;
         importedIds.push(referenceId);
@@ -1219,6 +1389,31 @@ export class PostgresCatalog {
           'INSERT INTO catalog_library_items (library_id,reference_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
           [libraryId, referenceId],
         );
+        await client.query(
+          'DELETE FROM catalog_library_items WHERE library_id=$1 AND reference_id=$2',
+          [`inbox:${ownerKey}`, referenceId],
+        );
+        if (entry.artifact) {
+          const artifactResult = await client.query(
+            `INSERT INTO catalog_artifacts
+              (id,reference_id,kind,provider,object_key,bucket,mime_type,size_bytes,sha256,etag)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT(object_key) DO UPDATE SET object_key=excluded.object_key
+               WHERE catalog_artifacts.reference_id=excluded.reference_id
+             RETURNING reference_id`,
+            [entry.artifact.id, referenceId, entry.artifact.kind, entry.artifact.provider,
+              entry.artifact.objectKey, entry.artifact.bucket, entry.artifact.mimeType,
+              entry.artifact.sizeBytes, entry.artifact.sha256, entry.artifact.etag],
+          );
+          if (!artifactResult.rows[0]) throw new Error('WASABI_OBJECT_ALREADY_LINKED');
+          for (const job of buildInitialJobs(referenceId)) {
+            await client.query(
+              `INSERT INTO catalog_jobs(id,reference_id,stage,status,attempts,created_at,updated_at)
+               VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(reference_id,stage) DO NOTHING`,
+              [job.id, referenceId, job.stage, job.status, job.attempts, job.createdAt, job.updatedAt],
+            );
+          }
+        }
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -1256,6 +1451,36 @@ export class PostgresCatalog {
     return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }
 
+  async renameArtifact(ownerKey: string, referenceId: string, artifactId: string, objectKey: string, originalFilename: string, etag?: string): Promise<boolean> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE catalog_artifacts a
+         SET object_key=$4, etag=COALESCE($5,etag)
+         FROM catalog_references r
+         WHERE a.id=$3 AND a.reference_id=$2 AND r.id=a.reference_id AND r.owner_key=$1`,
+        [ownerKey, referenceId, artifactId, objectKey, etag || null],
+      );
+      if (result.rowCount !== 1) { await client.query('ROLLBACK'); return false; }
+      await client.query(
+        `UPDATE catalog_references SET
+           source=jsonb_set(
+             jsonb_set(source, '{originalFilename}', to_jsonb($3::text), true),
+             '{wasabiObjectKey}', to_jsonb($4::text), true
+           ), updated_at=now()
+         WHERE owner_key=$1 AND id=$2`,
+        [ownerKey, referenceId, originalFilename, objectKey],
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
+
   async cancelJobsForDeletion(ownerKey: string, id: string): Promise<boolean> {
     await this.ensureSchema();
     const result = await this.pool.query(
@@ -1278,10 +1503,21 @@ export class PostgresCatalog {
   async queueEnrichment(ownerKey: string, id: string, stage: EnrichmentStage): Promise<boolean> {
     await this.ensureSchema();
     const downstream: EnrichmentStage[] =
-      stage === 'extract' ? ['identify', 'summarize', 'relate']
+      stage === 'extract' ? ['scholarly', 'identify', 'summarize', 'relate']
+      : stage === 'scholarly' ? ['identify', 'summarize', 'relate']
       : stage === 'identify' ? ['summarize', 'relate']
       : stage === 'summarize' ? ['relate']
       : [];
+    // Older references may predate a stage (e.g. scholarly); create the
+    // missing job rows so re-queueing is never a silent no-op.
+    await this.pool.query(
+      `INSERT INTO catalog_jobs (id, reference_id, stage, status, attempts, payload, created_at, updated_at)
+       SELECT r.id || ':' || s.stage, r.id, s.stage, 'blocked', 0, '{}'::jsonb, now(), now()
+       FROM catalog_references r, unnest($3::text[]) AS s(stage)
+       WHERE r.owner_key=$1 AND r.id=$2
+       ON CONFLICT (reference_id, stage) DO NOTHING`,
+      [ownerKey, id, [stage, ...downstream]],
+    );
     const result = await this.pool.query(
       `UPDATE catalog_jobs j
        SET status = CASE

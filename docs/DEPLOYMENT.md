@@ -14,7 +14,7 @@ Seshat is deployed manually from the `main` branch. GitHub is the transfer point
 | Worker process | PM2 `seshat-worker` |
 | Reverse proxy | Caddy, `/etc/caddy/Caddyfile` |
 | Catalog | PostgreSQL 16 in the existing `authentik-postgresql` Docker container |
-| Documents | Cloudflare R2 |
+| Documents | Wasabi |
 | Extraction | Python virtual environment at `/opt/packages/seshat/.venv` |
 | Local inference | Ollama with `qwen3:1.7b` |
 
@@ -82,7 +82,7 @@ The current VPS has already been bootstrapped. Recreating it requires:
 3. `npm ci` and `npm run build`.
 4. A virtual environment plus `services/ingest/requirements.txt`.
 5. A Seshat PostgreSQL database and the schema from `packages/catalog/sql/001_initial.sql`.
-6. A private `.env` containing Authentik, PostgreSQL and R2 credentials.
+6. A private `.env` containing Authentik, PostgreSQL and Wasabi credentials.
 7. `ollama pull qwen3:1.7b`.
 8. PM2 startup from `ecosystem.config.cjs` and a saved process list.
 9. The Caddy site above and DNS for `seshat.zztt.org` pointing to the VPS.
@@ -112,7 +112,7 @@ Then test through the public UI:
 5. Edit metadata and confirm it persists after refresh.
 6. Delete a disposable reference and confirm it disappears without a confirmation dialog.
 
-The health endpoint proves only that the web process is serving requests. A real upload is the smallest current end-to-end check of PostgreSQL, R2 and the worker.
+The health endpoint proves only that the web process is serving requests. A real upload is the smallest current end-to-end check of PostgreSQL, Wasabi and the worker.
 
 ## Logs and diagnosis
 
@@ -131,7 +131,7 @@ df -h /
 du -sh /opt/packages/seshat /opt/packages/seshat/.venv /opt/packages/seshat/node_modules ~/.cache
 ```
 
-The Python environment and Docling model caches are expected to dominate local VPS disk use. Originals and durable derivatives belong in R2, not on the VPS.
+The Python environment and Docling model caches are expected to dominate local VPS disk use. Originals and durable derivatives belong in Wasabi, not on the VPS.
 
 ## Rollback
 
@@ -148,7 +148,7 @@ Rollback may not reverse schema or data changes. Before introducing migrations, 
 
 ## Backup and recovery gap
 
-Cloudflare R2 preserves document objects, but that is not a backup of PostgreSQL metadata. The host currently lacks `pg_dump` in its normal PATH, and no tested scheduled database backup was found. Establish and test a database dump from inside the PostgreSQL container, store it outside the VPS, and document restoration before catalog volume becomes critical.
+Wasabi preserves document objects, but that is not a backup of PostgreSQL metadata. The host currently lacks `pg_dump` in its normal PATH, and no tested scheduled database backup was found. Establish and test a database dump from inside the PostgreSQL container, store it outside the VPS, and document restoration before catalog volume becomes critical.
 
 ## Production snapshot
 

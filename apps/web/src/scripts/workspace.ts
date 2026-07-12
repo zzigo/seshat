@@ -1,21 +1,25 @@
 import Handsontable from 'handsontable';
+import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
 import { CONTRIBUTOR_ROLES, contributorSummary, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
-import { mountPdfViewer } from './pdf-viewer';
+import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
+import { mountEpubReader } from './epub-reader';
 import { referenceFileType } from '../lib/reference-file';
+import screenfull from 'screenfull';
+import ForceGraph from 'force-graph';
 
 registerAllModules();
 
 type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
-  isbn: string; language: string; tags: string; abstract: string; format: string; fileType: string; filename: string;
-  publisher: string; publisherPlace: string; url: string;
-  libraryIds: string[]; status: string; hasStructure: boolean; hasText: boolean; access: 'owner' | 'viewer';
+  isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
+  publisher: string; publisherPlace: string; url: string; dateAdded: string;
+  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
-type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[] };
+type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string> };
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
@@ -24,6 +28,26 @@ const STORAGE_KEY = 'seshat.workspace.layout.v1';
 const TREE_STATE_KEY = 'seshat.workspace.tree.v1';
 const readPayload = (): WorkspacePayload => JSON.parse(document.getElementById('seshat-workspace-data')?.textContent || '{"references":[],"libraries":[]}');
 const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+const isInboxLibraryId = (id: string) => id.startsWith('inbox:');
+const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'owner'
+  && !reference.libraryIds.some((id) => !isInboxLibraryId(id));
+const treeReferenceKind = (reference: ReferenceRow): 'pdf' | 'ebook' | 'text' | 'no-text' => {
+  if (reference.format === 'pdf') return 'pdf';
+  if (['epub', 'mobi', 'azw', 'azw3'].includes(reference.format)) return 'ebook';
+  if (reference.hasText || ['txt', 'md', 'rtf'].includes(reference.format)) return 'text';
+  return 'no-text';
+};
+const referenceState = (reference: any): string => {
+  const active = (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued');
+  const failed = (reference.jobs || []).find((job:any) => job.status === 'failed');
+  const hasOriginal = (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original');
+  const hasText = (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown');
+  if (active) return active.stage;
+  if (failed) return 'failed';
+  if (!hasOriginal) return 'missing file';
+  if (!hasText) return 'no extracted text';
+  return 'ready';
+};
 const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   id: reference.id,
   citeKey: reference.citeKey,
@@ -35,6 +59,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   isbn: (reference.identifiers?.isbn || []).join('; '),
   language: reference.language || '',
   tags: (reference.tags || []).join(', '),
+  keywords: Array.isArray(reference.source?.keywords) ? reference.source.keywords.map(String) : String(reference.source?.bibtex?.keywords || '').split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean),
   abstract: reference.abstract || '',
   publisher: reference.publisher || '',
   publisherPlace: reference.publisherPlace || '',
@@ -42,16 +67,20 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   format: referenceFileType(reference),
   fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
+  dateAdded: reference.createdAt || '',
   libraryIds: reference.libraryIds || [],
-  status: (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued')?.stage
-    || (reference.jobs || []).find((job:any) => job.status === 'failed')?.status || 'catalogued',
+  status: referenceState(reference),
+  hasOriginal: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original'),
   hasStructure: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'structure'),
   hasText: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown'),
+  needsOcr: referenceFileType(reference) === 'pdf' && (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original')
+    && (!(reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown') || Number(reference.wordCount || 0) < 20),
   access: reference.access || 'owner',
 });
 
 export function mountSeshatWorkspace(root: HTMLElement): void {
   const payload = readPayload();
+  payload.keywordStyles ||= {};
   const references = new Map(payload.references.map((reference) => [reference.id, reference]));
   const host = root.querySelector<HTMLElement>('[data-dockview-host]');
   const tree = root.querySelector<HTMLElement>('[data-library-tree]');
@@ -63,28 +92,59 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const consoleDrawer = root.querySelector<HTMLElement>('[data-console-drawer]');
   const consoleLog = root.querySelector<HTMLOListElement>('[data-console-log]');
   const consoleToggle = root.querySelector<HTMLButtonElement>('[data-console-toggle]');
+  const keywordFilter = root.querySelector<HTMLInputElement>('[data-keyword-filter]');
+  const keywordCloud = root.querySelector<HTMLElement>('[data-keyword-cloud]');
+  const keywordCount = root.querySelector<HTMLElement>('[data-keyword-count]');
+  const propertiesContent = root.querySelector<HTMLElement>('[data-properties-content]');
   if (!host || !tree || !search || !saveState || !consoleRoot || !consoleCurrent || !consoleCount || !consoleDrawer || !consoleLog || !consoleToggle) return;
 
   let api: DockviewApi;
   let catalogTable: Handsontable | null = null;
+  let catalogQuery = '';
+  let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
+  let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
   const documentDisposers = new WeakMap<HTMLElement, () => void>();
   const selectedReferences = new Set<string>();
+  let treeSelectionAnchor: string | null = null;
   const committed = new Map(payload.references.map((reference) => [reference.id, { ...reference }]));
   const saveTimers = new Map<string, number>();
   const activities: Activity[] = [];
   const bibliographyFiles = new Map<string, File[]>();
   const collapsedLibraries = new Set<string>(JSON.parse(window.localStorage.getItem(TREE_STATE_KEY) || '[]'));
+  let shortcutPrefix = ''; let shortcutPrefixTimer = 0;
+  let quickfinder: HTMLElement | null = null;
 
-  const filteredRows = () => payload.references.filter((reference) => !activeLibrary || reference.libraryIds.includes(activeLibrary));
-  const refreshTable = () => catalogTable?.loadData(filteredRows());
+  const filteredRows = () => payload.references.filter((reference) => (!activeLibrary
+    || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : reference.libraryIds.includes(activeLibrary)))
+    && (!activeKeyword || reference.keywords.includes(activeKeyword))
+    && (!catalogQuery || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status]
+      .some((value) => normalize(value).includes(normalize(catalogQuery)))));
+  const setOpenDragData = (transfer: DataTransfer | null, ids: string[]) => {
+    if (!transfer || !ids.length) return; transfer.effectAllowed='copyMove'; transfer.setData('application/x-seshat-open-references',JSON.stringify([...new Set(ids)])); transfer.setData('text/plain',ids[0]);
+  };
+  const refreshTable = () => {
+    const rows = filteredRows(); catalogTable?.loadData(rows);
+    if (catalogFilterStatus) catalogFilterStatus.textContent = `${rows.length} / ${payload.references.length}`;
+  };
 
   const setSaveState = (state: string, tone: 'ready' | 'saving' | 'error' = 'ready') => {
     saveState.textContent = state;
     saveState.dataset.tone = tone;
   };
+  const PROCESSING_DONE_STATES = new Set(['ready', 'failed', 'missing file', 'no extracted text']);
+  const processingReferences = new Set<string>();
+  const setProcessing = (referenceId: string, busy: boolean) => {
+    if (busy === processingReferences.has(referenceId)) return;
+    if (busy) processingReferences.add(referenceId); else processingReferences.delete(referenceId);
+    renderTree(search.value);
+    if (processingReferences.size > 0) setSaveState(`processing ${processingReferences.size} item${processingReferences.size === 1 ? '' : 's'}…`, 'saving');
+    else setSaveState('ready');
+  };
+  const isProcessingReference = (reference: ReferenceRow) => processingReferences.has(reference.id)
+    || Boolean((reference as any).status && !PROCESSING_DONE_STATES.has(String((reference as any).status)));
 
   const dialogShell = (title: string) => {
     const dialog = document.createElement('dialog'); dialog.className = 'seshat-dialog';
@@ -92,7 +152,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const heading = document.createElement('h2'); heading.textContent = title;
     const close = document.createElement('button'); close.type = 'button'; close.className = 'dialog-close'; close.textContent = '×'; close.setAttribute('aria-label', 'Close');
     close.addEventListener('click', () => dialog.close()); header.append(heading, close); dialog.appendChild(header);
-    dialog.addEventListener('close', () => dialog.remove()); root.appendChild(dialog); dialog.showModal();
+    dialog.addEventListener('close', () => dialog.remove());
+    const parentContainer = document.fullscreenElement || document.querySelector('.maximized-pod') || root;
+    parentContainer.appendChild(dialog);
+    dialog.showModal();
     return dialog;
   };
 
@@ -169,8 +232,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Save failed');
     committed.set(row.id, { ...row });
-    setSaveState('saved', 'ready');
-    window.setTimeout(() => setSaveState('ready'), 1500);
+    if (result.storageRename?.ok === false) {
+      setSaveState(result.storageRename.warning || 'saved; Wasabi filename unchanged', 'error');
+    } else {
+      setSaveState(result.storageRename?.to ? 'saved · Wasabi file renamed' : 'saved', 'ready');
+      window.setTimeout(() => setSaveState('ready'), 1500);
+    }
   };
 
   const scheduleSave = (row: ReferenceRow) => {
@@ -240,10 +307,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void replaceAssociatedFile(referenceId, file); });
     input.click();
   };
-  const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'summarize' | 'extract' | 'relate') => {
+  const runReferenceAction = async (ids: string[], action: 'reprocess-metadata' | 'scholarly' | 'summarize' | 'extract' | 'relate' | 'refresh-graph') => {
     let label = 'AI summary';
     let message = 'Preparing AI summary';
     if (action === 'reprocess-metadata') { label = 'metadata re-processing'; message = 'Identifying title, author, year and publisher'; }
+    else if (action === 'scholarly') { label = 'OpenAlex enrichment'; message = 'Resolving scholarly metadata and associations'; }
+    else if (action === 'refresh-graph') { label = 'graph refresh'; message = 'Reprocessing OpenAlex data and rebuilding the knowledge graph'; }
     else if (action === 'extract') { label = 'text extraction'; message = 'Extracting text and document structure'; }
     else if (action === 'relate') { label = 'entity relation extraction'; message = 'Extracting entity relations graph'; }
 
@@ -270,6 +339,40 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     selectedReferences.clear();
     renderTree(search.value);
   };
+  const searchForCandidate = async (referenceId: string) => {
+    const reference = references.get(referenceId); if (!reference) return;
+    const dialog = dialogShell(`Search candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
+    const body = document.createElement('div'); body.className = 'candidate-search';
+    const status = document.createElement('p'); status.textContent = 'Searching your Wasabi root…'; body.appendChild(status); dialog.appendChild(body);
+    setSaveState('searching Wasabi candidates…', 'saving');
+    try {
+      const response = await fetch(`/api/library/${referenceId}/candidates`, { cache:'no-store' }); const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Candidate search failed');
+      status.textContent = result.expected ? `Expected: ${result.expected} · ${result.scanned} objects inspected` : `${result.scanned} objects inspected`;
+      const list = document.createElement('div'); list.className = 'candidate-list'; body.appendChild(list);
+      if (!result.candidates?.length) { const empty = document.createElement('p'); empty.className = 'candidate-empty'; empty.textContent = 'No plausible PDF, EPUB, DOCX or TXT candidate was found.'; list.appendChild(empty); }
+      for (const candidate of result.candidates || []) {
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'candidate-option';
+        const score = document.createElement('i'); score.textContent = String(candidate.score);
+        const copy = document.createElement('span'); const name = document.createElement('strong'); name.textContent = candidate.filename;
+        const path = document.createElement('small'); path.textContent = `${candidate.path} · ${Math.max(1, Math.round(candidate.sizeBytes / 1024))} KB`; copy.append(name,path); row.append(score,copy);
+        row.addEventListener('click', async () => {
+          row.disabled = true; status.textContent = `Linking ${candidate.filename}…`;
+          const linked = await fetch(`/api/library/${referenceId}/candidates`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ key:candidate.key }) });
+          const linkedResult = await linked.json().catch(() => ({}));
+          if (!linked.ok) { row.disabled = false; status.textContent = linkedResult.error || 'Candidate could not be linked.'; return; }
+          const next = rowFromCatalogReference(linkedResult.reference); upsertRow(next); dialog.close();
+          updateActivity(`candidate-${referenceId}`, { state:'working', referenceId, message:`${candidate.filename} · linked; extracting text and structure` });
+          void followPipeline(referenceId, `candidate-${referenceId}`, candidate.filename);
+          setSaveState('candidate linked; extraction queued');
+        });
+        list.appendChild(row);
+      }
+      setSaveState(`${result.candidates?.length || 0} candidate${result.candidates?.length === 1 ? '' : 's'} found`);
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Candidate search failed'; setSaveState(status.textContent, 'error');
+    }
+  };
   const referenceMenuItems = (ids: string[]) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     return [
@@ -277,8 +380,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
+    { label: 'Search for candidate in Wasabi…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => searchForCandidate(editableIds[0]) },
     { label: `Extract text & structure${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'extract') },
     { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
+    { label: `Enrich papers with OpenAlex${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'scholarly') },
+    { label: `Refresh graph (OpenAlex)${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'refresh-graph') },
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
     { label: `Delete selected${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
@@ -353,9 +459,92 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
   };
 
+  let touchStartTimer: any = null;
+  let lastTouchTime = 0;
+  let touchCoords: { row: number; col: number } | null = null;
+  let isLongPressEditing = false;
+  let cleanupCatalogThemeListener: (() => void) | null = null;
+
   const mountCatalog = (element: HTMLElement) => {
     if (catalogTable || !element.isConnected) return;
+    if (cleanupCatalogThemeListener) cleanupCatalogThemeListener();
+
     element.classList.add('ht-theme-main');
+    const filterBar = document.createElement('div'); filterBar.className = 'catalog-filter-bar';
+    const filter = document.createElement('input'); filter.type = 'search'; filter.autocomplete = 'off'; filter.value = catalogQuery;
+    filter.placeholder = 'Live filter catalog…'; filter.setAttribute('aria-label', 'Live filter catalog');
+    catalogFilterStatus = document.createElement('span');
+    const tableHost = document.createElement('div'); tableHost.className = 'catalog-table-host';
+    filterBar.append(filter, catalogFilterStatus); element.append(filterBar, tableHost);
+    filter.addEventListener('input', () => { catalogQuery = filter.value; refreshTable(); });
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    element.classList.toggle('ht-theme-main-dark-mode', isDark);
+
+    const handleThemeChange = (e: any) => {
+      element.classList.toggle('ht-theme-main-dark-mode', e.detail.theme === 'dark');
+    };
+    window.addEventListener('seshat:theme-changed', handleThemeChange);
+
+    cleanupCatalogThemeListener = () => {
+      window.removeEventListener('seshat:theme-changed', handleThemeChange);
+      cleanupCatalogThemeListener = null;
+    };
+
+    // Touch event overrides for mobile/tablet behavior
+    element.addEventListener('touchstart', (e) => {
+      const cell = (e.target as HTMLElement).closest('td');
+      if (!cell || !catalogTable) return;
+      const coords = catalogTable.getCoords(cell as HTMLTableCellElement);
+      if (!coords || coords.row < 0) return;
+      touchCoords = { row: coords.row, col: coords.col };
+
+      if (touchStartTimer) clearTimeout(touchStartTimer);
+      touchStartTimer = setTimeout(() => {
+        if (touchCoords && catalogTable) {
+          isLongPressEditing = true;
+          catalogTable.selectCell(touchCoords.row, touchCoords.col);
+          const activeEditor = catalogTable.getActiveEditor();
+          if (activeEditor) {
+            activeEditor.beginEditing();
+          }
+          isLongPressEditing = false;
+        }
+      }, 2000);
+    }, { passive: true });
+
+    element.addEventListener('touchmove', () => {
+      if (touchStartTimer) {
+        clearTimeout(touchStartTimer);
+        touchStartTimer = null;
+      }
+      touchCoords = null;
+    }, { passive: true });
+
+    element.addEventListener('touchend', (e) => {
+      if (touchStartTimer) {
+        clearTimeout(touchStartTimer);
+        touchStartTimer = null;
+      }
+      const now = Date.now();
+      if (now - lastTouchTime < 300) {
+        const cell = (e.target as HTMLElement).closest('td');
+        if (cell && catalogTable) {
+          const coords = catalogTable.getCoords(cell as HTMLTableCellElement);
+          if (coords && coords.row >= 0) {
+            const physicalRow = catalogTable.toPhysicalRow(coords.row) ?? coords.row;
+            const row = catalogTable.getSourceDataAtRow(physicalRow) as ReferenceRow | undefined;
+            if (row) {
+              controller.openDocument(row.id);
+            }
+          }
+        }
+        lastTouchTime = 0;
+      } else {
+        lastTouchTime = now;
+      }
+      touchCoords = null;
+    }, { passive: true });
+
     element.addEventListener('contextmenu', (event) => {
       const ids = selectedIds();
       if (!ids.length) return;
@@ -378,7 +567,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const file = event.dataTransfer.files[0];
       if (row?.access === 'owner' && file) void replaceAssociatedFile(row.id, file);
     });
-    catalogTable = new Handsontable(element, {
+    const fileRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      const item = filteredRows()[row]; td.classList.toggle('file-needs-ocr', Boolean(item?.needsOcr));
+      td.title = item?.needsOcr ? 'PDF needs OCR or usable extracted text' : item?.hasOriginal ? 'Associated file available' : 'No associated file';
+    };
+    const stateRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      td.dataset.state = String(value || '').replaceAll(' ', '-');
+    };
+    catalogTable = new Handsontable(tableHost, {
       data: filteredRows(),
       columns: [
         { data: 'title', title: 'Title', width: 300 },
@@ -392,9 +590,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         { data: 'language', title: 'Lang', width: 70 },
         { data: 'tags', title: 'Tags', width: 190 },
         { data: 'citeKey', title: 'Citekey', width: 160 },
+        { data: 'dateAdded', title: 'Date Added', readOnly: true, width: 190 },
         { data: 'abstract', title: 'Abstract', width: 320 },
-        { data: 'fileType', title: 'File', readOnly: true, width: 72 },
-        { data: 'status', title: 'State', readOnly: true, width: 92 },
+        { data: 'fileType', title: 'File', readOnly: true, renderer: fileRenderer, width: 72 },
+        { data: 'status', title: 'State', readOnly: true, renderer: stateRenderer, width: 130 },
       ],
       rowHeaders: false,
       rowHeights: 28,
@@ -413,6 +612,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       fillHandle: true,
       contextMenu: false,
       outsideClickDeselects: false,
+      beforeBeginEditing: () => {
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        if (isTouchDevice && !isLongPressEditing) {
+          return false;
+        }
+      },
       cells: (row) => filteredRows()[row]?.access === 'viewer' ? { readOnly: true } : {},
       licenseKey: 'non-commercial-and-evaluation',
       afterChange: (changes, source) => {
@@ -424,6 +629,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           if (row?.id) touched.add(row.id);
         }
         touched.forEach((id) => { const row = references.get(id); if (row) scheduleSave(row); });
+      },
+      afterRenderer: (cell,visualRow) => {
+        const physical=catalogTable?.toPhysicalRow(visualRow) ?? visualRow; const row=catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined; cell.draggable=Boolean(row);
+        cell.ondragstart=(event) => { if (!row) { event.preventDefault(); return; } if (!selectedReferences.has(row.id)) { selectedReferences.clear(); selectedReferences.add(row.id); } setOpenDragData(event.dataTransfer,[...selectedReferences]); };
       },
       afterOnCellMouseDown: (event, coords) => {
         if (coords.row < 0) return;
@@ -446,9 +655,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const selected = catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined;
           if (selected?.id) selectedReferences.add(selected.id);
         }
+        const first = [...selectedReferences][0]; if (first) { activeReference = first; renderProperties(first); }
         renderTree(search.value); setSaveState(`${selectedReferences.size} selected`);
       },
     });
+    refreshTable();
   };
 
   const panel = (className: string): HTMLElement => {
@@ -457,13 +668,213 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     return element;
   };
 
-  const podToolbar = (reference: ReferenceRow): HTMLElement => {
+  const podToolbar = (reference: ReferenceRow, element: HTMLElement, panelId?: string): HTMLElement => {
     const toolbar = document.createElement('header');
     toolbar.className = 'pod-toolbar';
+
+    // Maximize button
+    const maxBtn = document.createElement('button');
+    maxBtn.type = 'button';
+    maxBtn.innerHTML = '⤢';
+    maxBtn.title = 'Maximize Panel';
+    maxBtn.style.marginRight = '8px';
+    maxBtn.style.padding = '0 6px';
+    maxBtn.style.fontSize = '17px';
+    maxBtn.style.cursor = 'pointer';
+    maxBtn.style.border = '0';
+    maxBtn.style.background = 'transparent';
+    maxBtn.style.color = 'var(--muted)';
+
+    maxBtn.addEventListener('click', () => {
+      const isMax = element.classList.toggle('maximized-pod');
+      if (!isMax) {
+        element.classList.remove('show-maximized-toolbar');
+      }
+      if (screenfull && screenfull.isEnabled) {
+        if (isMax) {
+          screenfull.request(element).catch((err) => console.warn('screenfull request failed', err));
+        } else if (screenfull.isFullscreen && screenfull.element === element) {
+          screenfull.exit();
+        }
+      }
+      if (isMax) {
+        maxBtn.innerHTML = '⤣';
+        maxBtn.title = 'Restore Panel Size';
+        maxBtn.style.color = 'var(--green)';
+      } else {
+        maxBtn.innerHTML = '⤢';
+        maxBtn.title = 'Maximize Panel';
+        maxBtn.style.color = 'var(--muted)';
+      }
+    });
+
+    if (screenfull && screenfull.isEnabled) {
+      screenfull.on('change', () => {
+        if (!screenfull.isFullscreen && element.classList.contains('maximized-pod')) {
+          element.classList.remove('maximized-pod');
+          element.classList.remove('show-maximized-toolbar');
+          maxBtn.innerHTML = '⤢';
+          maxBtn.title = 'Maximize Panel';
+          maxBtn.style.color = 'var(--muted)';
+        }
+      });
+    }
+
+    element.addEventListener('click', (e) => {
+      if (!element.classList.contains('maximized-pod')) return;
+      if ((e.target as HTMLElement).closest('.pod-toolbar')) return;
+
+      const rect = element.getBoundingClientRect();
+      const clickY = e.clientY - rect.top;
+      if (clickY < rect.height * 0.1) {
+        e.stopPropagation();
+        element.classList.toggle('show-maximized-toolbar');
+      }
+    });
+
+    toolbar.appendChild(maxBtn);
+
     const label = document.createElement('span');
     label.textContent = `${reference.fileType} · ${reference.filename}`;
     toolbar.appendChild(label);
-    const actions: Array<[string, string]> = [['text','Text'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate'],['agent','Agent']];
+
+    // Document controls (PDF/Text pagination and zoom)
+    const docControls = document.createElement('div');
+    docControls.className = 'doc-toolbar-controls';
+    docControls.style.display = 'flex';
+    docControls.style.alignItems = 'center';
+    docControls.style.gap = '5px';
+    docControls.style.marginRight = '8px';
+    docControls.style.marginLeft = 'auto'; // floats in middle between label and actions
+
+    // Invert Colors Button
+    const invertBtn = document.createElement('button');
+    invertBtn.type = 'button';
+    invertBtn.textContent = '◑';
+    invertBtn.title = 'Invert Document Colors';
+    let isInverted = false;
+    invertBtn.addEventListener('click', () => {
+      isInverted = !isInverted;
+      invertBtn.style.color = isInverted ? 'var(--green)' : '';
+      element.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert', { detail: { active: isInverted } }));
+    });
+    docControls.appendChild(invertBtn);
+
+    // 1:1 Zoom Button
+    const zoom11Btn = document.createElement('button');
+    zoom11Btn.type = 'button';
+    zoom11Btn.textContent = '1:1';
+    zoom11Btn.title = 'Reset Zoom';
+    zoom11Btn.addEventListener('click', () => {
+      element.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));
+    });
+    docControls.appendChild(zoom11Btn);
+
+    if (reference.format === 'pdf') {
+      // Pagination Group
+      const prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.textContent = '◀';
+      prevBtn.title = 'Previous Page';
+
+      const pageIndicator = document.createElement('span');
+      pageIndicator.textContent = '1 / —';
+      pageIndicator.style.fontSize = '9px';
+      pageIndicator.style.fontFamily = 'monospace';
+      pageIndicator.style.color = 'var(--muted)';
+      pageIndicator.style.padding = '0 4px';
+
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.textContent = '▶';
+      nextBtn.title = 'Next Page';
+
+      let currentPage = 1;
+      let totalPages = 1;
+
+      prevBtn.addEventListener('click', () => {
+        if (currentPage > 1) {
+          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage - 1 } }));
+        }
+      });
+
+      nextBtn.addEventListener('click', () => {
+        if (currentPage < totalPages) {
+          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage + 1 } }));
+        }
+      });
+
+      element.addEventListener('seshat:pdf-page-changed', (e: any) => {
+        currentPage = e.detail.page;
+        totalPages = e.detail.total || totalPages;
+        pageIndicator.textContent = `${currentPage} / ${totalPages}`;
+      });
+
+      // Double Page layout Toggle Button
+      const doubleBtn = document.createElement('button');
+      doubleBtn.type = 'button';
+      doubleBtn.textContent = 'Book';
+      doubleBtn.title = 'Toggle Double Page Facing View';
+      let isDouble = false;
+
+      // Mosaic layout Toggle Button
+      const mosaicBtn = document.createElement('button');
+      mosaicBtn.type = 'button';
+      mosaicBtn.textContent = 'Grid';
+      mosaicBtn.title = 'Toggle Mosaic Thumbnail Grid';
+      let isMosaic = false;
+
+      doubleBtn.addEventListener('click', () => {
+        isDouble = !isDouble;
+        doubleBtn.textContent = isDouble ? '1-Page' : 'Book';
+        doubleBtn.style.color = isDouble ? 'var(--green)' : '';
+        element.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double', { detail: { active: isDouble } }));
+        if (isDouble && isMosaic) {
+          isMosaic = false;
+          mosaicBtn.style.color = '';
+          element.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic', { detail: { active: false } }));
+        }
+      });
+
+      mosaicBtn.addEventListener('click', () => {
+        isMosaic = !isMosaic;
+        mosaicBtn.style.color = isMosaic ? 'var(--green)' : '';
+        element.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic', { detail: { active: isMosaic } }));
+        if (isMosaic && isDouble) {
+          isDouble = false;
+          doubleBtn.textContent = 'Book';
+          doubleBtn.style.color = '';
+          element.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double', { detail: { active: false } }));
+        }
+      });
+
+      element.addEventListener('seshat:pdf-request-mode',((event:CustomEvent<{mode?:string}>) => {
+        if (event.detail?.mode === 'grid') mosaicBtn.click();
+        if (event.detail?.mode === 'book') doubleBtn.click();
+      }) as EventListener);
+
+      docControls.append(prevBtn, pageIndicator, nextBtn, doubleBtn, mosaicBtn);
+    }
+
+    // Style buttons slightly
+    docControls.querySelectorAll('button').forEach((btn) => {
+      btn.style.height = '20px';
+      btn.style.fontSize = '9px';
+      btn.style.fontFamily = 'monospace';
+      btn.style.border = '1px solid var(--hairline)';
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--muted)';
+      btn.style.cursor = 'pointer';
+      btn.style.padding = '0 6px';
+      btn.style.display = 'inline-flex';
+      btn.style.alignItems = 'center';
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = 'var(--green)'; btn.style.color = 'var(--ink)'; });
+      btn.addEventListener('mouseleave', () => { btn.style.borderColor = 'var(--hairline)'; btn.style.color = 'var(--muted)'; });
+    });
+
+    toolbar.appendChild(docControls);
+
+    const actions: Array<[string, string]> = [['text','Text'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
     for (const [kind, title] of actions) {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = title;
@@ -474,49 +885,240 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const original = document.createElement('a');
     original.href = `/api/library/${reference.id}/original`; original.target = '_blank'; original.textContent = 'Original ↗';
     toolbar.appendChild(original);
+
+    // Close button for mobile portrait viewports
+    if (panelId && window.innerWidth < 500) {
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.innerHTML = '✕';
+      closeBtn.title = 'Close Panel';
+      closeBtn.style.marginLeft = 'auto';
+      closeBtn.style.padding = '0 10px';
+      closeBtn.style.cursor = 'pointer';
+      closeBtn.style.border = '0';
+      closeBtn.style.background = 'transparent';
+      closeBtn.style.color = 'var(--muted)';
+      closeBtn.style.fontSize = '14px';
+      closeBtn.addEventListener('click', () => {
+        element.classList.remove('maximized-pod');
+        api.getPanel(panelId)?.api.close();
+      });
+      toolbar.appendChild(closeBtn);
+    }
+
     return toolbar;
   };
 
-  const renderDocument = (element: HTMLElement, referenceId: string) => {
+  const renderDocument = (element: HTMLElement, referenceId: string, panelId?: string) => {
     documentDisposers.get(element)?.(); documentDisposers.delete(element);
     element.replaceChildren();
     const reference = references.get(referenceId);
     if (!reference) { element.textContent = 'Reference not found.'; return; }
     activeReference = referenceId;
-    element.appendChild(podToolbar(reference));
+    element.appendChild(podToolbar(reference, element, panelId));
     const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
     if (reference.format === 'pdf') {
       body.classList.add('pod-pdf-body'); const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
       void mountPdfViewer(body, reference.id, reference.title, setSaveState).then((dispose) => {
         if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
       }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'PDF viewer unavailable'; });
+    } else if (reference.format === 'epub') {
+      const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
+      void mountEpubReader(body, reference.id, reference.title, setSaveState).then((dispose) => {
+        if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
+      }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'EPUB viewer unavailable'; });
     } else void mountText(body, reference.id, 'markdown');
   };
 
-  const documentRenderer = (referenceId: string): IContentRenderer => {
+  const documentRenderer = (referenceId: string, panelId?: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { renderDocument(element, referenceId); }, dispose() { documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
+    return { element, init() { renderDocument(element, referenceId, panelId); }, dispose() { element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
   };
 
-  const previewRenderer = (): IContentRenderer => {
+  const previewRenderer = (panelId?: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
+    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId, panelId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
   };
 
   const mountText = async (element: HTMLElement, referenceId: string, kind: 'markdown' | 'structure') => {
     element.classList.add('pod-reading-surface');
     const response = await fetch(`/api/library/${referenceId}/artifact/${kind}`);
     if (!response.ok) { element.textContent = kind === 'structure' ? 'Structure is not available yet.' : 'Extracted text is not available yet.'; return; }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pod-reading-wrapper';
+    element.appendChild(wrapper);
+
     if (kind === 'structure') {
-      const data = await response.json();
-      const list = document.createElement('ol'); list.className = 'pod-outline';
-      for (const section of (data.sections || []).slice(0, 1000)) {
-        const item = document.createElement('li'); item.style.paddingLeft = `${Math.min(5, Math.max(0, Number(section.level) - 1)) * 18}px`; item.textContent = section.title; list.appendChild(item);
+      type StructureSection = { id: string; level?: number; title?: string; page?: number; kind?: string };
+      type StructureBlock = { id: string; kind?: string; label?: string; page?: number; sectionId?: string | null; text?: string };
+      const data = await response.json() as { sections?: StructureSection[]; blocks?: StructureBlock[] };
+      wrapper.classList.add('structure-outline');
+      const icons: Record<string, string> = {
+        section: '§', introduction: 'I', references: 'R', appendix: 'A', toc: '≡',
+        paragraph: '□', formula: '∑', picture: '▧', table: '▦', list: '⋮', caption: 'C', code: '<>', form: '✓',
+      };
+      const labels: Record<string, string> = {
+        paragraph: 'paragraph', formula: 'formula', picture: 'image', table: 'table', list: 'list', caption: 'caption', code: 'code', form: 'form',
+      };
+      const goToPage = (page: unknown) => {
+        const target = Number(page); if (!Number.isFinite(target) || target < 1) return;
+        controller.openDocument(referenceId); navigatePdfToPage(referenceId, target);
+      };
+      const legend = document.createElement('div'); legend.className = 'structure-legend';
+      for (const kind of ['paragraph', 'formula', 'picture', 'table']) {
+        const key = document.createElement('span'); key.innerHTML = `<i>${icons[kind]}</i>${labels[kind]}`; legend.appendChild(key);
       }
-      element.appendChild(list);
+      wrapper.appendChild(legend);
+      const blocksBySection = new Map<string, StructureBlock[]>();
+      for (const block of (data.blocks || []).slice(0, 4000)) {
+        const key = block.sectionId || '__root__'; const rows = blocksBySection.get(key) || []; rows.push(block); blocksBySection.set(key, rows);
+      }
+      const list = document.createElement('ol'); list.className = 'pod-outline';
+      const renderBlocks = (blocks: StructureBlock[]) => {
+        if (!blocks.length) return null;
+        const rail = document.createElement('div'); rail.className = 'structure-block-rail';
+        for (const block of blocks) {
+          const kind = block.kind || 'paragraph'; const marker = document.createElement('button'); marker.type = 'button';
+          marker.className = `structure-block structure-block-${kind}`; marker.textContent = icons[kind] || '□';
+          marker.title = `${labels[kind] || block.label || kind}${block.page ? ` · p. ${block.page}` : ''}${block.text ? ` · ${block.text.slice(0, 120)}` : ''}`;
+          marker.setAttribute('aria-label', marker.title); marker.disabled = !block.page; marker.addEventListener('click', () => goToPage(block.page)); rail.appendChild(marker);
+        }
+        return rail;
+      };
+      const rootBlocks = renderBlocks(blocksBySection.get('__root__') || []);
+      if (rootBlocks) { const root = document.createElement('li'); root.className = 'structure-root-blocks'; root.appendChild(rootBlocks); list.appendChild(root); }
+      for (const section of (data.sections || []).slice(0, 1000)) {
+        const item = document.createElement('li'); item.className = 'structure-section'; item.style.setProperty('--outline-level', String(Math.min(5, Math.max(0, Number(section.level || 1) - 1))));
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'structure-section-row'; row.disabled = !section.page; row.dataset.level = String(section.level || 1);
+        const semantic = section.kind || 'section'; const glyph = document.createElement('i'); glyph.className = `structure-kind structure-kind-${semantic}`; glyph.textContent = icons[semantic] || '§';
+        const copy = document.createElement('span'); copy.className = 'structure-section-copy';
+        const heading = document.createElement('span'); heading.className = 'structure-section-title'; heading.textContent = section.title || 'Untitled section'; copy.appendChild(heading);
+        const rail = renderBlocks(blocksBySection.get(section.id) || []); if (rail) copy.appendChild(rail);
+        const page = document.createElement('small'); page.textContent = section.page ? `p. ${section.page}` : `h${section.level || 1}`;
+        row.append(glyph, copy, page); row.addEventListener('click', () => goToPage(section.page)); item.appendChild(row); list.appendChild(item);
+      }
+      wrapper.appendChild(list);
     } else {
-      const pre = document.createElement('pre'); pre.textContent = await response.text(); element.appendChild(pre);
+      const pre = document.createElement('pre'); pre.textContent = await response.text(); wrapper.appendChild(pre);
     }
+
+    // Local pinch-to-zoom for text view (prevents viewport page zoom) with scroll centering
+    let textStartDist = 0;
+    let textZoom = 1.0;
+    let textZoomStart = 1.0;
+    let textTouchCenterX = 0;
+    let textTouchCenterY = 0;
+    let textContentX = 0;
+    let textContentY = 0;
+
+    element.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        textStartDist = Math.sqrt(dx * dx + dy * dy);
+        textZoomStart = textZoom;
+
+        const rect = element.getBoundingClientRect();
+        textTouchCenterX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        textTouchCenterY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+
+        textContentX = (element.scrollLeft + textTouchCenterX) / textZoom;
+        textContentY = (element.scrollTop + textTouchCenterY) / textZoom;
+      }
+    }, { passive: false });
+
+    element.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (textStartDist > 0) {
+          const factor = dist / textStartDist;
+          textZoom = Math.max(0.5, Math.min(3.0, textZoomStart * factor));
+          wrapper.style.zoom = String(textZoom);
+          if (!('zoom' in document.documentElement.style)) {
+            wrapper.style.transform = `scale(${textZoom})`;
+            wrapper.style.transformOrigin = 'top left';
+          }
+          element.scrollLeft = textContentX * textZoom - textTouchCenterX;
+          element.scrollTop = textContentY * textZoom - textTouchCenterY;
+        }
+      }
+    }, { passive: false });
+
+    element.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) {
+        textStartDist = 0;
+      }
+    }, { passive: true });
+
+    element.addEventListener('wheel', (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const rect = element.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const px = (element.scrollLeft + mouseX) / textZoom;
+        const py = (element.scrollTop + mouseY) / textZoom;
+
+        const delta = -e.deltaY * 0.01;
+        textZoom = Math.max(0.5, Math.min(3.0, textZoom + delta));
+        wrapper.style.zoom = String(textZoom);
+        if (!('zoom' in document.documentElement.style)) {
+          wrapper.style.transform = `scale(${textZoom})`;
+          wrapper.style.transformOrigin = 'top left';
+        }
+        element.scrollLeft = px * textZoom - mouseX;
+        element.scrollTop = py * textZoom - mouseY;
+      }
+    }, { passive: false });
+
+    const parent = element.parentElement || element;
+    parent.addEventListener('seshat:pdf-zoom-reset', () => {
+      textZoom = 1.0;
+      wrapper.style.zoom = '1.0';
+      wrapper.style.transform = '';
+      element.scrollTop = 0;
+      element.scrollLeft = 0;
+    });
+
+    parent.addEventListener('seshat:doc-toggle-invert', (e: any) => {
+      const active = e.detail.active;
+      element.classList.toggle('inverted-doc-parent', active);
+      wrapper.classList.toggle('inverted-doc', active);
+    });
+
+    // Margin invisible page turning areas (25% left/right edges) for text view
+    element.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('button, a, input, select')) return;
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim().length > 0) return;
+
+      const rect = element.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const ratio = clickX / rect.width;
+
+      if (ratio < 0.25) {
+        element.scrollBy({
+          top: -element.clientHeight * 0.85,
+          behavior: 'smooth'
+        });
+      } else if (ratio > 0.75) {
+        element.scrollBy({
+          top: element.clientHeight * 0.85,
+          behavior: 'smooth'
+        });
+      }
+    });
+
+    // Double tap/click to zoom reset for text view
+    element.addEventListener('dblclick', (e) => {
+      if ((e.target as HTMLElement).closest('button, a, input, select')) return;
+      parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));
+    });
   };
 
   const derivativeRenderer = (referenceId: string, kind: 'text' | 'structure'): IContentRenderer => {
@@ -524,7 +1126,26 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     return { element, init() { void mountText(element, referenceId, kind === 'text' ? 'markdown' : 'structure'); } };
   };
 
-  const toolRenderer = (kind: ToolKind, referenceId?: string): IContentRenderer => {
+  const addMobileCloseButton = (header: HTMLElement, panelId?: string) => {
+    if (!panelId) return;
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'pod-mobile-close-btn';
+    closeBtn.innerHTML = '✕';
+    closeBtn.style.border = '0';
+    closeBtn.style.background = 'transparent';
+    closeBtn.style.color = 'var(--muted)';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.padding = '4px 10px';
+    closeBtn.style.fontSize = '14px';
+    closeBtn.style.marginLeft = 'auto';
+    closeBtn.addEventListener('click', () => {
+      api.getPanel(panelId)?.api.close();
+    });
+    header.appendChild(closeBtn);
+  };
+
+  const toolRenderer = (kind: ToolKind, referenceId?: string, panelId?: string): IContentRenderer => {
     const element = panel('future-tool-pod');
     let disposeAnnotation: () => void = () => undefined; let disposed = false;
     return { element, init() {
@@ -537,6 +1158,58 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         return;
       }
       if (kind === 'graph') {
+        element.classList.remove('future-tool-pod'); element.classList.add('graph-tool-pod');
+        const header = document.createElement('header'); header.className = 'pod-heading graph-heading';
+        const title = document.createElement('div'); title.innerHTML = `<div class="eyebrow">${reference ? 'Document' : 'Global'} graph</div><h2>${reference?.title || 'All catalogued knowledge'}</h2>`;
+        const count = document.createElement('span'); count.textContent = 'Loading…'; header.append(title,count); addMobileCloseButton(header,panelId); element.appendChild(header);
+        const controls = document.createElement('div'); controls.className = 'graph-controls'; element.appendChild(controls);
+        const body = document.createElement('div'); body.className = 'graph-body';
+        const stage = document.createElement('div'); stage.className = 'force-graph-stage';
+        const inspector = document.createElement('aside'); inspector.className = 'graph-inspector'; inspector.innerHTML = '<div class="eyebrow">Selection</div><p>Select a paper or association to inspect its evidence.</p>';
+        body.append(stage,inspector); element.appendChild(body);
+        let graph: any = null; let resizeGraph: ResizeObserver | null = null; const collapsed = new Set<string>(); let focusId: string | null = null;
+        disposeAnnotation = () => { resizeGraph?.disconnect(); graph?._destructor?.(); graph = null; };
+        const url = referenceId ? `/api/knowledge-graph?paperId=${encodeURIComponent(referenceId)}` : '/api/knowledge-graph';
+        void fetch(url).then((response) => response.json()).then((data) => {
+          if (disposed) return;
+          const baseNodes = (data.nodes || []).map((node:any) => ({ ...node, classification:node.kind || 'automatic' }));
+          const baseLinks = (data.edges || []).map((edge:any,index:number) => ({ ...edge, id:edge.id || `auto-edge:${index}` }));
+          const allNodes = baseNodes; const allLinks = baseLinks;
+          const enabled: Record<string,boolean> = { paper:true,author:true,topic:true,venue:true,institution:true,collection:true };
+          const enabledEdges: Record<string,boolean> = { cites:true,'bibliographic-coupling':true,'co-citation':true,'shared-author':true,'shared-topic':true,'authored-by':true,'has-topic':true,'published-in':true,'affiliated-with':true,'belongs-to-collection':true };
+          let neighborDepth = 0; let folding = false; let minimumWeight = 0; let graphQuery = '';
+          const sourceId = (link:any) => String(typeof link.source === 'object' ? link.source.id : link.source); const targetId = (link:any) => String(typeof link.target === 'object' ? link.target.id : link.target);
+          const visibleData = () => {
+            let nodes = allNodes.filter((node:any) => (!(node.kind in enabled) || enabled[node.kind]) && (!graphQuery || normalize(node.label).includes(graphQuery))); const allowed = new Set(nodes.map((node:any) => String(node.id)));
+            let links = allLinks.filter((link:any) => (enabledEdges[String(link.relation || link.kind)] ?? true) && Number(link.weight || 0) >= minimumWeight && allowed.has(sourceId(link)) && allowed.has(targetId(link)) && !collapsed.has(sourceId(link)) && !collapsed.has(targetId(link)));
+            if (focusId && neighborDepth > 0) { const near = new Set([focusId]); for (let depth=0; depth<neighborDepth; depth += 1) { links.forEach((link:any) => { const source=sourceId(link),target=targetId(link); if (near.has(source)) near.add(target); if (near.has(target)) near.add(source); }); } nodes = nodes.filter((node:any) => near.has(String(node.id))); const ids = new Set(nodes.map((node:any) => String(node.id))); links = links.filter((link:any) => ids.has(sourceId(link)) && ids.has(targetId(link))); }
+            return { nodes,links };
+          };
+          const update = () => { const next = visibleData(); count.textContent = `${next.nodes.length} nodes · ${next.links.length} links`; graph.graphData(next); graph.d3ReheatSimulation(); };
+          const safe=(value:unknown)=>String(value??'').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]||character));
+          const slider = (label:string,min:number,max:number,value:number,step:number,onInput:(value:number)=>void) => { const wrap=document.createElement('label'); const text=document.createElement('span'); text.textContent=label; const input=document.createElement('input'); input.type='range'; input.min=String(min); input.max=String(max); input.step=String(step); input.value=String(value); const output=document.createElement('output'); output.textContent=String(value); input.addEventListener('input',() => { output.textContent=input.value; onInput(Number(input.value)); }); wrap.append(text,input,output); controls.appendChild(wrap); };
+          const toggle = (label:string,checked:boolean,onChange:(checked:boolean)=>void) => { const wrap=document.createElement('label'); wrap.className='graph-switch'; const input=document.createElement('input'); input.type='checkbox'; input.checked=checked; const text=document.createElement('span'); text.textContent=label; input.addEventListener('change',() => onChange(input.checked)); wrap.append(input,text); controls.appendChild(wrap); };
+          const button=(label:string,onClick:()=>void)=>{const control=document.createElement('button');control.type='button';control.textContent=label;control.addEventListener('click',onClick);controls.appendChild(control);return control;};
+          const searchInput=document.createElement('input'); searchInput.type='search'; searchInput.className='graph-search'; searchInput.placeholder='Find node…'; searchInput.addEventListener('input',()=>{graphQuery=normalize(searchInput.value);update();}); controls.appendChild(searchInput);
+          const renderPaper=async(node:any)=>{const id=String(node.properties?.referenceId||''); inspector.innerHTML=`<div class="eyebrow">${safe(node.kind)}</div><h3>${safe(node.label)}</h3><p>${safe(node.properties?.openAlexId||'Local paper')}</p>`; if(!id)return; const response=await fetch(`/api/papers/${encodeURIComponent(id)}`); const data=await response.json(); if(!response.ok){inspector.insertAdjacentHTML('beforeend',`<p class="graph-error">${safe(data.error||'Paper details unavailable.')}</p>`);return;} const paper=data.paper; const work=(paper.openAlexWork||{}) as any; const workTopics=(Array.isArray(work.topics)?work.topics:[]).slice(0,4).map((topic:any)=>String(topic?.name||'')).filter(Boolean); const workType=String(work.type||data.reference?.type||''); const workVenue=String(work.venue?.name||''); const workYear=work.publicationYear?String(work.publicationYear):''; inspector.insertAdjacentHTML('beforeend',`<dl><dt>Status</dt><dd>${safe(paper.resolutionStatus)}</dd><dt>Method</dt><dd>${safe(paper.resolutionMethod||'—')}</dd><dt>Confidence</dt><dd>${Math.round(Number(paper.resolutionConfidence||0)*100)}%</dd>${workType?`<dt>Type</dt><dd>${safe(workType)}</dd>`:''}${workTopics.length?`<dt>Topics</dt><dd>${workTopics.map((topic:string)=>safe(topic)).join(' · ')}</dd>`:''}${workVenue?`<dt>Venue</dt><dd>${safe(workVenue)}</dd>`:''}${workYear?`<dt>Year</dt><dd>${safe(workYear)}</dd>`:''}</dl>`); const actions=document.createElement('div');actions.className='graph-inspector-actions'; const enrich=document.createElement('button');enrich.textContent='Enrich with OpenAlex';enrich.onclick=async()=>{enrich.disabled=true;await fetch(`/api/papers/${encodeURIComponent(id)}/enrich`,{method:'POST'});enrich.textContent='Queued';}; const expand=document.createElement('button');expand.textContent='Expand citations';expand.onclick=async()=>{expand.disabled=true;const result=await fetch('/api/knowledge-graph/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paperId:id})});expand.textContent=result.ok?'Expanded':'Failed';}; actions.append(enrich,expand); inspector.appendChild(actions); if(paper.resolutionStatus==='ambiguous'){const candidates=document.createElement('div');candidates.className='graph-candidates';for(const candidate of paper.candidates||[]){const choose=document.createElement('button');const candidateTitle=document.createElement('strong');candidateTitle.textContent=candidate.work?.title||candidate.title||candidate.openAlexId;const candidateScore=document.createElement('small');candidateScore.textContent=`${Math.round(Number(candidate.score||candidate.confidence||0)*100)}% · confirm`;choose.append(candidateTitle,candidateScore);choose.onclick=async()=>{choose.disabled=true;const openAlexId=candidate.work?.id||candidate.openAlexId;const resolved=await fetch(`/api/papers/${encodeURIComponent(id)}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({openAlexId})});choose.textContent=resolved.ok?'Resolved':'Could not resolve';};candidates.appendChild(choose);}inspector.appendChild(candidates);}};
+          graph = new ForceGraph(stage).backgroundColor('rgba(0,0,0,0)').nodeId('id').nodeLabel((node:any) => `${node.label}\n${node.classification}`).nodeRelSize(5).linkColor(() => 'rgba(110,120,115,.34)').linkDirectionalArrowLength((link:any)=>String(link.relation||link.kind)==='cites'?3:0).linkDirectionalArrowRelPos(1).nodeCanvasObjectMode(() => 'after').nodeCanvasObject((node:any,ctx:CanvasRenderingContext2D,scale:number) => { const label=String(node.label || ''); ctx.font=`${Math.max(8,11/scale)}px ui-monospace`; ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#263129'; ctx.fillText(`${label} · ${node.classification}`,Number(node.x)+7,Number(node.y)+3); }).nodeAutoColorBy('kind').onNodeClick((node:any) => { focusId=String(node.id); if (folding) { if (collapsed.has(focusId)) collapsed.delete(focusId); else collapsed.add(focusId); } void renderPaper(node); update(); }).onLinkClick(async(link:any)=>{const edgeId=String(link.id||'');if(!edgeId)return;inspector.innerHTML='<p>Loading evidence…</p>';const response=await fetch(`/api/knowledge-graph/association?edgeId=${encodeURIComponent(edgeId)}`);const data=await response.json();if(!response.ok){inspector.innerHTML=`<p class="graph-error">${safe(data.error||'Evidence unavailable.')}</p>`;return;}const edge=data.association, evidence=edge.properties?.evidence||{}, provenance=edge.properties?.provenance||{};inspector.innerHTML=`<div class="eyebrow">Association evidence</div><h3>${safe(edge.sourceLabel)} → ${safe(edge.targetLabel)}</h3><dl><dt>Relation</dt><dd>${safe(edge.kind)}</dd><dt>Weight</dt><dd>${Number(edge.weight).toFixed(3)}</dd><dt>Method</dt><dd>${safe(evidence.method||'—')}</dd><dt>Count</dt><dd>${safe(evidence.count??'—')}</dd><dt>Source</dt><dd>${safe(provenance.source||'—')}</dd><dt>Generated</dt><dd>${safe(provenance.generatedAt||edge.createdAt||'—')}</dd></dl>${evidence.description?`<p>${safe(evidence.description)}</p>`:''}`;});
+          graph.graphData({nodes:allNodes,links:allLinks});
+          slider('Repulsion',30,900,220,10,(value) => { graph.d3Force('charge')?.strength(-value); graph.d3ReheatSimulation(); });
+          slider('Distance',20,240,75,5,(value) => { graph.d3Force('link')?.distance(value); graph.d3ReheatSimulation(); });
+          slider('Gravity',0,.5,.08,.01,(value) => { graph.d3Force('center')?.strength?.(value); graph.d3ReheatSimulation(); });
+          slider('Inertia',.1,.9,.4,.05,(value) => { graph.d3VelocityDecay(value); graph.d3ReheatSimulation(); });
+          slider('Neighbors',0,4,0,1,(value) => { neighborDepth=value; update(); });
+          slider('Min strength',0,1,0,.05,(value) => { minimumWeight=value; update(); });
+          toggle('Fold on click',false,(checked) => { folding=checked; });
+          ([['Papers','paper'],['Authors','author'],['Topics','topic'],['Venues','venue'],['Institutions','institution'],['Collections','collection']] as Array<[string,string]>).forEach(([label,key]) => toggle(label,true,(checked) => { enabled[key]=checked; update(); }));
+          ([['Citations','cites'],['Coupling','bibliographic-coupling'],['Co-citation','co-citation'],['Shared author','shared-author'],['Shared topic','shared-topic']] as Array<[string,string]>).forEach(([label,key]) => toggle(label,true,(checked) => { enabledEdges[key]=checked; update(); }));
+          button('Reset',()=>{focusId=null;collapsed.clear();searchInput.value='';graphQuery='';update();graph.zoomToFit(350,40);});
+          const importInput=document.createElement('input');importInput.type='file';importInput.accept='.pdf,application/pdf';importInput.hidden=true;importInput.onchange=()=>{const file=importInput.files?.[0];if(file)void ingestDocument(file);};controls.appendChild(importInput);button('Import PDF',()=>importInput.click());
+          resizeGraph = new ResizeObserver(([entry]) => graph.width(entry.contentRect.width).height(entry.contentRect.height)); resizeGraph.observe(stage); update();
+        }).catch((error) => { count.textContent='Graph unavailable'; stage.textContent=error instanceof Error ? error.message : 'Could not load graph.'; });
+        return;
+      }
+      if (false && kind === 'graph') {
         element.classList.remove('future-tool-pod');
         element.classList.add('graph-tool-pod');
         element.style.display = 'flex';
@@ -561,15 +1234,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         titleH2.style.margin = '4px 0 0';
         titleH2.style.fontSize = '15px';
         titleH2.style.fontFamily = 'Georgia, serif';
-        titleH2.textContent = reference ? reference.title : 'All catalogued knowledge';
+        titleH2.textContent = reference?.title || 'All catalogued knowledge';
         titleDiv.append(titleLabel, titleH2);
-        
+
         const countSpan = document.createElement('span');
         countSpan.style.fontSize = '11px';
         countSpan.style.color = 'var(--muted)';
         countSpan.textContent = 'Loading graph...';
-        
+
         header.append(titleDiv, countSpan);
+        addMobileCloseButton(header, panelId);
         element.appendChild(header);
 
         const container = document.createElement('div');
@@ -584,7 +1258,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const nodes = (data.nodes || []) as any[];
           const edges = (data.edges || []) as any[];
           countSpan.textContent = `${nodes.length} nodes · ${edges.length} edges`;
-          
+
           if (!nodes.length) {
             container.innerHTML = `<div class="graph-empty" style="padding:40px;text-align:center;color:var(--muted);font-family:monospace;font-size:12px;">No entities or relationships found.</div>`;
             return;
@@ -876,6 +1550,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         });
 
         header.append(titleDiv, select);
+        addMobileCloseButton(header, panelId);
         element.appendChild(header);
 
         const contentArea = document.createElement('div');
@@ -904,8 +1579,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           { id: 'overview', label: 'Overview & Zipf' },
           { id: 'vocabulary', label: 'Vocabulary & N-grams' },
           { id: 'concordance', label: 'KWIC Concordances' },
-          { id: 'entities', label: 'Entities & Metadata' },
-          { id: 'rhetorics', label: 'Rhetorics & Narratology' },
+          { id: 'entities', label: 'Entities & POS' },
+          { id: 'topics', label: 'Topic Modeling' },
+          { id: 'stylometry', label: 'Stylometry' },
+          { id: 'rhetorics', label: 'Rhetorics' },
+          { id: 'cartography', label: 'Corpus Map (UMAP)' },
           { id: 'drift', label: 'Thematic Drift' }
         ];
 
@@ -989,7 +1667,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             zipfSection.style.marginTop = '28px';
             zipfSection.innerHTML = `<h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 12px;">Zipf Lexical Distribution</h3>
               <p style="font-size:11px;color:var(--muted);margin:0 0 20px;line-height:1.4;">Zipf's Law models rank-frequency: <code>f(r) ∝ C / r<sup>α</sup></code>. Displays actual frequencies (green) against theoretical projection (dashed black) on a log-log scale.</p>`;
-            
+
             const zipfContainer = document.createElement('div');
             zipfContainer.style.height = '240px';
             zipfContainer.style.border = '1px solid var(--hairline)';
@@ -1146,10 +1824,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
               const query = queryInput.value.trim().toLowerCase();
               if (!query) return;
               resultsDiv.innerHTML = '<div style="font-family:monospace;font-size:11px;color:var(--muted);text-align:center;padding:30px;">Searching context...</div>';
-              
+
               const docId = select.value;
               const fetchUrl = docId ? `/api/library/analysis?id=${docId}&q=${query}` : `/api/library/analysis?q=${query}`;
-              
+
               void fetch(fetchUrl)
                 .then(r => r.json())
                 .then((kwicData: any) => {
@@ -1158,7 +1836,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
                     resultsDiv.innerHTML = '<div style="font-family:monospace;font-size:11px;color:var(--muted);text-align:center;padding:30px;">No concordances found for query.</div>';
                     return;
                   }
-                  
+
                   const table = document.createElement('table');
                   table.style.width = '100%';
                   table.style.fontSize = '11px';
@@ -1168,7 +1846,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
                   kwicData.matches.forEach((m: any) => {
                     const tr = document.createElement('tr');
                     tr.style.borderBottom = '1px solid var(--line)';
-                    
+
                     const leftTd = document.createElement('td');
                     leftTd.style.width = '45%';
                     leftTd.style.padding = '8px';
@@ -1210,25 +1888,90 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
           else if (activeTab === 'entities') {
             details.innerHTML = `
-              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Extracted Graph Entities</h3>
-              <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
-                <thead>
-                  <tr style="background:var(--chrome-deep);text-transform:uppercase;font-size:9px;color:var(--muted);">
-                    <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--hairline);">Entity Label</th>
-                    <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--hairline);">Type</th>
-                    <th style="padding:8px 12px;text-align:right;border-bottom:1px solid var(--hairline);">Degree / Count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${analysisData.entities.length > 0 ? analysisData.entities.map((e: any) => `
-                    <tr>
-                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);font-weight:bold;">${e.label}</td>
-                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);color:var(--green);">${e.kind}</td>
-                      <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${e.count}</td>
-                    </tr>
-                  `).join('') : '<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--muted);">No graph entities extracted yet. Run the relate stage.</td></tr>'}
-                </tbody>
-              </table>
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Entities & POS tagging</h3>
+              <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:24px;margin-bottom:24px;">
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">Graph NER Entities</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <thead>
+                      <tr style="background:var(--chrome-deep);text-transform:uppercase;font-size:9px;color:var(--muted);">
+                        <th style="padding:6px 12px;text-align:left;">Label</th>
+                        <th style="padding:6px 12px;text-align:left;">Kind</th>
+                        <th style="padding:6px 12px;text-align:right;">Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${analysisData.entities.length > 0 ? analysisData.entities.slice(0, 10).map((e: any) => `
+                        <tr>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);font-weight:bold;">${e.label}</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);color:var(--green);">${e.kind}</td>
+                          <td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${e.count}</td>
+                        </tr>
+                      `).join('') : '<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--muted);">No graph entities extracted yet. Run the relate stage.</td></tr>'}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <h4 style="font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--green);border-bottom:1px solid var(--hairline);padding-bottom:6px;margin:0 0 10px;">POS Distribution</h4>
+                  <table class="structure-list" style="width:100%;font-size:11px;font-family:monospace;border:1px solid var(--hairline);">
+                    <tbody>
+                      <tr><td style="padding:6px 12px;border-bottom:1px solid var(--line);">Nouns</td><td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${analysisData.pos.nouns} matches</td></tr>
+                      <tr><td style="padding:6px 12px;border-bottom:1px solid var(--line);">Verbs</td><td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${analysisData.pos.verbs} matches</td></tr>
+                      <tr><td style="padding:6px 12px;border-bottom:1px solid var(--line);">Adjectives</td><td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${analysisData.pos.adjectives} matches</td></tr>
+                      <tr><td style="padding:6px 12px;border-bottom:1px solid var(--line);">Adverbs</td><td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${analysisData.pos.adverbs} matches</td></tr>
+                      <tr><td style="padding:6px 12px;border-bottom:1px solid var(--line);">Prepositions</td><td style="padding:6px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted);">${analysisData.pos.prepositions} matches</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            `;
+          }
+
+          else if (activeTab === 'topics') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Thematic Topic Modeling (LDA)</h3>
+              <p style="font-size:11px;color:var(--muted);margin:0 0 20px;">Probabilistic clustering of terms based on Dirichlet Allocation representing key conceptual dimensions.</p>
+              <div style="display:flex;flex-direction:column;gap:16px;">
+                ${analysisData.topics.map((t: any) => `
+                  <div>
+                    <div style="display:flex;justify-content:space-between;font-family:monospace;font-size:11px;margin-bottom:6px;">
+                      <span style="font-weight:bold;">${t.name}</span>
+                      <span style="color:var(--green);">${t.weight}% weight</span>
+                    </div>
+                    <div style="height:6px;background:var(--chrome-deep);border:1px solid var(--hairline);position:relative;border-radius:3px;overflow:hidden;">
+                      <div style="width:${t.weight}%;height:100%;background:var(--green);transition:width 0.4s ease;"></div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }
+
+          else if (activeTab === 'stylometry') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Stylometric Profile</h3>
+              <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:20px;">
+                <div style="border:1px solid var(--hairline);padding:16px;background:var(--chrome-deep);">
+                  <div style="font-family:monospace;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Vocabulary Richness Density</div>
+                  <div style="font-family:Georgia,serif;font-size:24px;">${analysisData.stylometry.vocabularyDensity}%</div>
+                  <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-top:6px;">(Unique Types / Total Tokens)</div>
+                </div>
+                <div style="border:1px solid var(--hairline);padding:16px;background:var(--chrome-deep);">
+                  <div style="font-family:monospace;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Average Sentence Length</div>
+                  <div style="font-family:Georgia,serif;font-size:24px;">${analysisData.stylometry.avgSentenceLength} words</div>
+                  <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-top:6px;">(Total Tokens / Sentence count)</div>
+                </div>
+                <div style="border:1px solid var(--hairline);padding:16px;background:var(--chrome-deep);">
+                  <div style="font-family:monospace;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Sentence Count</div>
+                  <div style="font-family:Georgia,serif;font-size:24px;">${analysisData.stylometry.sentenceCount}</div>
+                  <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-top:6px;">(Total punctuation-terminated segments)</div>
+                </div>
+                <div style="border:1px solid var(--hairline);padding:16px;background:var(--chrome-deep);">
+                  <div style="font-family:monospace;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;">Flesch Reading Ease</div>
+                  <div style="font-family:Georgia,serif;font-size:24px;">${analysisData.stylometry.readability} / 100</div>
+                  <div style="font-family:monospace;font-size:9px;color:var(--muted);margin-top:6px;">(Standard syntactic readability rating)</div>
+                </div>
+              </div>
             `;
           }
 
@@ -1266,6 +2009,60 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             `;
           }
 
+          else if (activeTab === 'cartography') {
+            details.innerHTML = `
+              <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 12px;">Corpus Cartography (2D UMAP Map)</h3>
+              <p style="font-size:11px;color:var(--muted);margin:0 0 16px;line-height:1.4;">2D projection of references based on semantic embedding similarity. Click on a point to open that document directly.</p>
+              <div id="umap-container" style="border:1px solid var(--hairline);background:var(--chrome-deep);height:320px;position:relative;"></div>
+            `;
+
+            const umapContainer = details.querySelector('#umap-container') as HTMLDivElement;
+            const svgWidth = 600;
+            const svgHeight = 300;
+            const svgU = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svgU.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+            svgU.style.width = '100%';
+            svgU.style.height = '100%';
+
+            analysisData.cartography.forEach((pt: any) => {
+              const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+              circle.setAttribute('cx', String(pt.x));
+              circle.setAttribute('cy', String(pt.y));
+              circle.setAttribute('r', '6');
+              circle.setAttribute('fill', pt.cluster === 1 ? 'var(--green)' : pt.cluster === 2 ? '#3b7a80' : '#8b3628');
+              circle.setAttribute('style', 'cursor:pointer; transition: r 0.2s;');
+
+              const titleText = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+              titleText.textContent = `[${pt.citeKey}] ${pt.title}`;
+              circle.appendChild(titleText);
+
+              circle.addEventListener('mouseover', () => {
+                circle.setAttribute('r', '10');
+              });
+              circle.addEventListener('mouseout', () => {
+                circle.setAttribute('r', '6');
+              });
+              circle.addEventListener('click', () => {
+                controller.openDocument(pt.id);
+              });
+
+              svgU.appendChild(circle);
+
+              if (Math.random() > 0.6) {
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', String(pt.x + 8));
+                text.setAttribute('y', String(pt.y + 4));
+                text.setAttribute('font-family', 'monospace');
+                text.setAttribute('font-size', '8px');
+                text.setAttribute('fill', 'var(--muted)');
+                text.textContent = pt.citeKey || '';
+                svgU.appendChild(text);
+              }
+            });
+
+            umapContainer.appendChild(svgU);
+          }
+
           else if (activeTab === 'drift') {
             details.innerHTML = `
               <h3 style="font-family:Georgia,serif;font-weight:normal;margin:0 0 16px;">Thematic Cartography</h3>
@@ -1292,6 +2089,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             `;
           }
         }
+        return;
       }
       if (kind === 'search') {
         element.classList.remove('future-tool-pod');
@@ -1313,6 +2111,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         titleH2.style.fontFamily = 'Georgia, serif';
         titleH2.textContent = 'Hybrid Corpus Search';
         header.appendChild(titleH2);
+        addMobileCloseButton(header, panelId);
 
         const searchForm = document.createElement('form');
         searchForm.style.display = 'flex';
@@ -1437,7 +2236,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
               h3.style.margin = '4px 0 0';
               h3.style.fontSize = '15px';
               h3.style.fontFamily = 'Georgia, serif';
-              
+
               const titleLink = document.createElement('a');
               titleLink.href = '#';
               titleLink.textContent = first.title;
@@ -1513,53 +2312,122 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         });
         return;
       }
-      const glyph = kind === 'analysis' ? '⌁' : kind === 'annotation' ? '✎' : '✣';
-      const heading = document.createElement('div'); heading.className = 'future-tool-glyph'; heading.textContent = glyph; element.appendChild(heading);
-      const title = document.createElement('h2'); title.textContent = kind === 'agent' ? 'Agent workspace' : `${kind[0].toUpperCase()}${kind.slice(1)} workspace`; element.appendChild(title);
+      element.classList.remove('future-tool-pod');
+      element.classList.add('future-tool-pod-active');
+      element.style.display = 'flex';
+      element.style.flexDirection = 'column';
+      element.style.height = '100%';
+      element.style.background = 'var(--paper)';
+
+      const header = document.createElement('header');
+      header.className = 'pod-heading';
+      header.style.padding = '12px 16px';
+      header.style.borderBottom = '1px solid var(--line)';
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.alignItems = 'center';
+
+      const titleH2 = document.createElement('h2');
+      titleH2.style.margin = '0';
+      titleH2.style.fontSize = '15px';
+      titleH2.style.fontFamily = 'Georgia, serif';
+      titleH2.textContent = kind === 'agent' ? 'Agent Workspace' : 'Annotation Workspace';
+      header.appendChild(titleH2);
+      addMobileCloseButton(header, panelId);
+      element.appendChild(header);
+
+      const content = document.createElement('div');
+      content.style.flex = '1';
+      content.style.padding = '24px';
+      content.style.display = 'flex';
+      content.style.flexDirection = 'column';
+      content.style.alignItems = 'center';
+      content.style.justifyContent = 'center';
+      content.style.textAlign = 'center';
+
+      const glyph = kind === 'annotation' ? '✎' : '✣';
+      const headingGlyph = document.createElement('div'); headingGlyph.className = 'future-tool-glyph'; headingGlyph.textContent = glyph; content.appendChild(headingGlyph);
       const copy = document.createElement('p'); copy.textContent = reference
         ? `Context attached to “${reference.title}”. This pod slot is ready for its own lifecycle and persistence.`
-        : 'Open a document first to attach evidence and provenance to this pod.'; element.appendChild(copy);
+        : 'Open a document first to attach evidence and provenance to this pod.'; content.appendChild(copy);
+      element.appendChild(content);
     }, dispose() { disposed = true; disposeAnnotation(); } };
   };
 
-  const bibliographyRenderer = (batchId: string): IContentRenderer => {
+  const bibliographyRenderer = (batchId: string, panelId?: string): IContentRenderer => {
     const element = panel('bibliography-pod');
     return { element, init() {
       const data = JSON.parse(window.sessionStorage.getItem(`seshat.bibliography.${batchId}`) || '{"entries":[],"errors":[]}');
       const header = document.createElement('header'); header.className = 'bibliography-pod-head';
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.alignItems = 'center';
       const title = document.createElement('h2'); title.textContent = `${data.entries.length} parsed references`;
       const health = document.createElement('span'); health.textContent = data.errors.length ? `${data.errors.length} issues` : 'syntax healthy';
-      header.append(title, health); element.appendChild(header);
+      header.append(title, health);
+      addMobileCloseButton(header, panelId);
+      element.appendChild(header);
       const controls = document.createElement('div'); controls.className = 'bibliography-import-controls';
-      const target = document.createElement('select'); target.setAttribute('aria-label', 'Import destination');
-      const fresh = document.createElement('option'); fresh.value = ''; fresh.textContent = 'New library (default)'; target.appendChild(fresh);
-      payload.libraries.forEach((library) => { const option = document.createElement('option'); option.value = library.id; option.textContent = library.name; target.appendChild(option); });
       const name = document.createElement('input'); name.type = 'text'; name.placeholder = 'New library name';
       name.value = (bibliographyFiles.get(batchId)?.[0]?.name || 'Bibliography').replace(/\.bib$/i, '');
-      const importButton = document.createElement('button'); importButton.type = 'button'; importButton.textContent = 'Import references';
-      target.addEventListener('change', () => { name.hidden = Boolean(target.value); });
+      name.title = 'Fallback folder for records without a compatible file path';
+      const importButton = document.createElement('button'); importButton.type = 'button'; importButton.textContent = 'Create tree and import';
+      importButton.disabled = Number(data.storage?.unavailable || 0) > 0;
       importButton.addEventListener('click', async () => {
         const files = bibliographyFiles.get(batchId) || [];
         if (!files.length) { setSaveState('Bibliography files are no longer available; drop them again.', 'error'); return; }
         importButton.disabled = true; importButton.textContent = 'Importing…';
+        setSaveState('creating tree & linking files…', 'saving');
         const form = new FormData(); files.forEach((file) => form.append('files', file, file.name));
-        if (target.value) form.set('libraryId', target.value);
-        else { form.set('libraryName', name.value); if (activeLibrary) form.set('parentId', activeLibrary); }
+        form.set('libraryName', name.value || 'BibTeX import');
         try {
           const response = await fetch('/api/bibliography/import', { method: 'POST', body: form });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || 'Bibliography import failed.');
-          if (result.library && !payload.libraries.some((library) => library.id === result.library.id)) payload.libraries.push(result.library);
+          (result.libraries || []).forEach((library: LibraryNode) => {
+            const current = payload.libraries.find((item) => item.id === library.id);
+            if (current) Object.assign(current, library); else payload.libraries.push(library);
+          });
           (result.references || []).forEach((reference: any) => upsertRow(rowFromCatalogReference(reference)));
           bibliographyFiles.delete(batchId);
-          health.textContent = `${result.imported} imported · ${result.errors?.length || 0} issues`;
+          health.textContent = `${result.imported} imported · ${result.linked || 0} Wasabi files linked · ${result.missing?.length || 0} missing`;
           importButton.textContent = 'Imported'; setSaveState('bibliography imported'); renderTree(search.value);
         } catch (error) {
           importButton.disabled = false; importButton.textContent = 'Import references';
           setSaveState(error instanceof Error ? error.message : 'Bibliography import failed', 'error');
         }
       });
-      controls.append(target, name, importButton); element.appendChild(controls);
+      const storage = document.createElement('span'); storage.className = 'bibliography-storage-health';
+      storage.textContent = `${data.storage?.linked || 0} linked · ${data.storage?.missing || 0} missing · ${data.storage?.withoutAttachment || 0} without file`;
+      if (data.storage?.unavailable) storage.textContent += ' · Wasabi unavailable';
+      controls.append(name, importButton, storage); element.appendChild(controls);
+      const preview = document.createElement('div'); preview.className = 'bibliography-tree-preview';
+      const treeRoot: any = { children: new Map<string, any>(), files: [] };
+      for (const entry of data.entries) {
+        if (!entry.attachment) continue;
+        let cursor = treeRoot;
+        for (const segment of entry.attachment.directories || []) {
+          if (!cursor.children.has(segment)) cursor.children.set(segment, { children: new Map<string, any>(), files: [] });
+          cursor = cursor.children.get(segment);
+        }
+        cursor.files.push({ name: entry.attachment.filename, status: entry.attachment.status });
+      }
+      const appendTree = (node: any, container: HTMLElement) => {
+        for (const [folderName, child] of [...node.children.entries()].sort(([left]: any, [right]: any) => left.localeCompare(right))) {
+          const branch = document.createElement('details'); branch.open = true;
+          const label = document.createElement('summary'); label.textContent = `${folderName}/`; branch.appendChild(label);
+          const nested = document.createElement('div'); nested.className = 'bibliography-tree-children'; appendTree(child, nested); branch.appendChild(nested); container.appendChild(branch);
+        }
+        for (const file of node.files) {
+          const row = document.createElement('div'); row.className = 'bibliography-tree-file';
+          const label = document.createElement('span'); label.textContent = file.name;
+          const status = document.createElement('small'); status.textContent = file.status; status.dataset.status = file.status;
+          row.append(label, status); container.appendChild(row);
+        }
+      };
+      appendTree(treeRoot, preview);
+      if (!preview.childElementCount) preview.textContent = 'No attachment paths found; references will use the fallback folder.';
+      element.appendChild(preview);
       const list = document.createElement('div'); list.className = 'bibliography-pod-list';
       for (const entry of data.entries) {
         const row = document.createElement('article');
@@ -1583,21 +2451,30 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (name === 'catalog') {
         const element = panel('catalog-pod');
         return { element, init() { window.requestAnimationFrame(() => mountCatalog(element)); }, dispose() {
+          cleanupCatalogThemeListener?.();
           catalogTable?.destroy();
           catalogTable = null;
         } };
       }
-      if (name === 'document-preview') return previewRenderer();
-      if (name.startsWith('document:')) return documentRenderer(name.slice('document:'.length));
+      if (name === 'document-preview') return previewRenderer(options.id);
+      if (name.startsWith('document:')) return documentRenderer(name.slice('document:'.length), options.id);
       if (name.startsWith('text:')) return derivativeRenderer(name.slice('text:'.length), 'text');
       if (name.startsWith('structure:')) return derivativeRenderer(name.slice('structure:'.length), 'structure');
       if (name.startsWith('tool:')) {
         const [, kind, referenceId] = name.split(':');
-        return toolRenderer(kind as ToolKind, referenceId || undefined);
+        return toolRenderer(kind as ToolKind, referenceId || undefined, options.id);
       }
-      if (name.startsWith('bibliography:')) return bibliographyRenderer(name.slice('bibliography:'.length));
-      return toolRenderer('analysis');
+      if (name.startsWith('bibliography:')) return bibliographyRenderer(name.slice('bibliography:'.length), options.id);
+      return toolRenderer('analysis', undefined, options.id);
     },
+  });
+  const openDragIds = (event:DragEvent):string[] => { try { const value=JSON.parse(event.dataTransfer?.getData('application/x-seshat-open-references') || '[]'); return Array.isArray(value) ? value.filter((id) => typeof id === 'string' && references.has(id)) : []; } catch { return []; } };
+  api.onUnhandledDragOverEvent((event) => { if (event.nativeEvent.dataTransfer?.types.includes('application/x-seshat-open-references')) event.accept(); });
+  api.onDidDrop((event) => {
+    const ids=openDragIds(event.nativeEvent); if (!ids.length) return; event.nativeEvent.preventDefault();
+    const direction=({top:'above',bottom:'below',left:'left',right:'right',center:'within'} as const)[event.position]; let referencePanel=event.panel || event.group?.activePanel || api.activePanel;
+    ids.forEach((id,index) => { const reference=references.get(id); if (!reference) return; const panel=api.addPanel({ id:`document-drop-${id}-${Date.now()}-${index}`,component:`document:${id}`,title:reference.title,position:referencePanel ? {referencePanel,direction:index === 0 ? direction : 'within'} : undefined }); referencePanel=panel; });
+    activeReference=ids[0]; renderProperties(activeReference); setSaveState(`${ids.length} item${ids.length === 1 ? '' : 's'} opened in pods`);
   });
 
   const addPanel = (id: string, component: string, title: string, direction: 'right' | 'below' | 'within' = 'right') => {
@@ -1607,10 +2484,41 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     api.addPanel({ id, component, title, position: referencePanel ? { referencePanel, direction } : undefined });
   };
 
+  function renderProperties(referenceId: string | null) {
+    if (!propertiesContent) return;
+    const row = referenceId ? references.get(referenceId) : undefined; propertiesContent.replaceChildren();
+    if (!row) { const empty = document.createElement('p'); empty.className = 'property-empty'; empty.textContent = 'Select an item to inspect its full record.'; propertiesContent.appendChild(empty); return; }
+    const form = document.createElement('form'); form.className = 'property-form';
+    const field = (labelText: string, key: keyof Pick<ReferenceRow,'title'|'citeKey'|'type'|'year'|'language'|'publisher'|'publisherPlace'|'url'>) => {
+      const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = labelText;
+      const input = document.createElement('input'); input.value = String(row[key] || ''); input.disabled = row.access === 'viewer';
+      input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (Number(input.value) || input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
+      label.append(caption,input); form.appendChild(label);
+    };
+    field('Title','title'); field('Cite key','citeKey'); field('Type','type'); field('Year','year'); field('Language','language'); field('Publisher','publisher'); field('Place','publisherPlace'); field('URL','url');
+    const section = (title: string, addTitle: string, onAdd: () => void) => {
+      const block = document.createElement('section'); block.className = 'property-section'; const header = document.createElement('header'); const label = document.createElement('span'); label.textContent = title;
+      const add = document.createElement('button'); add.type = 'button'; add.textContent = '+'; add.title = addTitle; add.disabled = row.access === 'viewer'; add.addEventListener('click',onAdd); header.append(label,add); block.appendChild(header); form.appendChild(block); return block;
+    };
+    const people = section('Contributors','Add or edit contributors',() => openContributorEditor(row));
+    row.contributors.forEach((person) => { const item = document.createElement('button'); item.type = 'button'; item.className = 'property-person'; item.disabled = row.access === 'viewer'; item.textContent = `${person.role || 'author'} · ${person.family || person.literal || ''}${person.given ? `, ${person.given}` : ''}`; item.addEventListener('click',() => openContributorEditor(row)); people.appendChild(item); });
+    const isbns = section('ISBN','Add ISBN',async () => { const value = await requestText('Add ISBN','ISBN'); if (!value) return; row.isbn = [...new Set([...row.isbn.split(/[;,]+/).map((item) => item.trim()).filter(Boolean),value])].join('; '); renderProperties(row.id); scheduleSave(row); });
+    row.isbn.split(/[;,]+/).map((item) => item.trim()).filter(Boolean).forEach((isbn) => { const token = document.createElement('div'); token.className = 'property-token'; token.textContent = isbn; isbns.appendChild(token); });
+    const keywords = section('Keywords','Keywords are managed in the cloud at left',() => undefined);
+    keywords.querySelector('button')?.remove(); row.keywords.forEach((keyword) => { const token = document.createElement('div'); token.className = 'property-token'; const color = payload.keywordStyles[keyword]; if (color) token.style.boxShadow = `inset 3px 0 ${color}`; token.textContent = keyword; keywords.appendChild(token); });
+    propertiesContent.appendChild(form);
+  }
+
   const controller = {
     openCatalog() { addPanel('catalog', 'catalog', 'Catalog', 'within'); },
     openDocument(referenceId: string, split = false) {
-      activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return;
+      if (window.innerWidth < 500) {
+        const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');
+        if (root && !root.classList.contains('collapsed-sidebar')) {
+          window.dispatchEvent(new CustomEvent('seshat:set-sidebar', { detail: { collapsed: true } }));
+        }
+      }
+      activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return; renderProperties(referenceId); root.classList.add('properties-open');
       if (split) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
       const existing = api.getPanel('document-preview');
       if (existing) { previewRender?.(referenceId); existing.api.setTitle(ref.title); existing.api.setActive(); }
@@ -1634,7 +2542,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if (timer) window.clearTimeout(timer);
     saveTimers.delete(referenceId);
     const activityId = `delete-${referenceId}`;
-    updateActivity(activityId, { state: 'working', message: `${reference.title} · deleting catalog entry and R2 files` });
+    updateActivity(activityId, { state: 'working', message: `${reference.title} · deleting catalog entry and Wasabi files` });
     setSaveState('deleting…', 'saving');
     try {
       const response = await fetch(`/api/library/${referenceId}`, { method: 'DELETE' });
@@ -1649,7 +2557,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (activeReference === referenceId) activeReference = null;
       refreshTable();
       renderTree(search?.value || '');
-      updateActivity(activityId, { state: 'complete', message: `${reference.title} · deleted from catalog and R2` });
+      updateActivity(activityId, { state: 'complete', message: `${reference.title} · deleted from catalog and Wasabi` });
       setSaveState('deleted');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Delete failed';
@@ -1671,11 +2579,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let contextMenu: HTMLElement | null = null;
   const closeContextMenu = () => { contextMenu?.remove(); contextMenu = null; };
-  const openContextMenu = (event: MouseEvent, items: Array<{ label: string; danger?: boolean; disabled?: boolean; action: () => void | Promise<void> }>) => {
+  const openContextMenu = (event: MouseEvent, items: Array<{ label: string; danger?: boolean; disabled?: boolean; swatch?: string; action: () => void | Promise<void> }>) => {
     event.preventDefault(); event.stopPropagation(); closeContextMenu();
     const menu = document.createElement('div'); menu.className = 'seshat-context-menu'; menu.setAttribute('role', 'menu');
     items.forEach((item) => {
-      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem'); button.textContent = item.label;
+      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem');
+      if (item.swatch) { const swatch = document.createElement('i'); swatch.className = 'context-swatch'; swatch.style.background = item.swatch; button.appendChild(swatch); }
+      button.append(item.label);
       button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
       button.addEventListener('click', () => { closeContextMenu(); void item.action(); }); menu.appendChild(button);
     });
@@ -1688,13 +2598,55 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeContextMenu(); });
   window.addEventListener('blur', closeContextMenu);
 
+  const keywordPalette = ['#e85d75','#e8953d','#d5b93f','#61a45f','#39a6a3','#578bd8','#8b70d6','#c45aa7'];
+  const patchKeyword = async (action: 'color' | 'rename' | 'delete', keyword: string, value?: string) => {
+    const response = await fetch('/api/library/keywords', { method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify({ action, keyword, value, color:value }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Keyword update failed');
+    if (action === 'color' && value) payload.keywordStyles[keyword] = value;
+    if (action === 'rename' && value) {
+      payload.references.forEach((reference) => { reference.keywords = [...new Set(reference.keywords.map((item) => item === keyword ? value : item))]; });
+      if (payload.keywordStyles[keyword]) payload.keywordStyles[value] = payload.keywordStyles[keyword];
+      delete payload.keywordStyles[keyword]; if (activeKeyword === keyword) activeKeyword = value;
+    }
+    if (action === 'delete') {
+      payload.references.forEach((reference) => { reference.keywords = reference.keywords.filter((item) => item !== keyword); });
+      delete payload.keywordStyles[keyword]; if (activeKeyword === keyword) activeKeyword = null;
+    }
+    refreshTable(); renderTree(search.value); renderKeywordCloud();
+  };
+  const keywordMenuItems = (keyword: string) => [
+    { label:'Rename keyword…', action:async () => { const next = await requestText('Rename keyword','Keyword',keyword); if (next && next !== keyword) { try { await patchKeyword('rename',keyword,next); setSaveState('keyword renamed'); } catch (error) { setSaveState(error instanceof Error ? error.message : 'Keyword update failed','error'); } } } },
+    ...keywordPalette.map((color, index) => ({ label:`Assign color ${index + 1}`, swatch:color, action:async () => { try { await patchKeyword('color',keyword,color); setSaveState('keyword color saved'); } catch (error) { setSaveState(error instanceof Error ? error.message : 'Keyword update failed','error'); } } })),
+    { label:'Delete keyword', danger:true, action:async () => { if (!window.confirm(`Delete “${keyword}” from every item?`)) return; try { await patchKeyword('delete',keyword); setSaveState('keyword deleted'); } catch (error) { setSaveState(error instanceof Error ? error.message : 'Keyword update failed','error'); } } },
+  ];
+  function renderKeywordCloud() {
+    if (!keywordCloud) return;
+    const query = normalize(keywordFilter?.value || ''); const counts = new Map<string,number>();
+    payload.references.forEach((reference) => reference.keywords.forEach((keyword) => counts.set(keyword,(counts.get(keyword) || 0) + 1)));
+    keywordCount && (keywordCount.textContent = String(counts.size)); keywordCloud.replaceChildren();
+    [...counts].filter(([keyword]) => !query || normalize(keyword).includes(query)).sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0])).forEach(([keyword,count]) => {
+      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'keyword-chip'; chip.classList.toggle('active',activeKeyword === keyword); chip.title = `${count} item${count === 1 ? '' : 's'} · right-click to edit`;
+      const color = payload.keywordStyles[keyword]; if (color) { const dot = document.createElement('i'); dot.className = 'keyword-dot'; dot.style.setProperty('--keyword-color',color); chip.appendChild(dot); }
+      const label = document.createElement('span'); label.textContent = keyword; const total = document.createElement('small'); total.textContent = String(count); chip.append(label,total);
+      chip.addEventListener('click',() => { activeKeyword = activeKeyword === keyword ? null : keyword; refreshTable(); renderTree(search?.value || ''); renderKeywordCloud(); });
+      chip.addEventListener('contextmenu',(event) => openContextMenu(event,keywordMenuItems(keyword)));
+      keywordCloud.appendChild(chip);
+    });
+  }
+
   const renderTree = (query = '') => {
     tree.replaceChildren();
-    const makeButton = (label: string, count: number, libraryId: string | null) => {
+    const makeButton = (label: string, directCount: number, libraryId: string | null, recursiveCount = directCount, hideEmptyDirect = false) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'tree-node';
       button.classList.toggle('active', activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
-      const text = document.createElement('span'); text.textContent = label; const badge = document.createElement('b'); badge.textContent = String(count);
-      button.append(text, badge); button.addEventListener('click', () => { activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
+      const text = document.createElement('span'); text.textContent = label;
+      const counts = document.createElement('span'); counts.className = 'tree-counts';
+      if (!(hideEmptyDirect && directCount === 0)) {
+        const direct = document.createElement('b'); direct.className = 'tree-count-direct'; direct.textContent = String(directCount); direct.title = 'Items directly in this collection'; counts.appendChild(direct);
+      }
+      const recursive = document.createElement('b'); recursive.className = 'tree-count-recursive'; recursive.textContent = String(recursiveCount); recursive.title = 'Items in this collection and all nested folders'; counts.appendChild(recursive);
+      button.append(text, counts); button.addEventListener('click', () => { activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
       return button;
     };
     const matched = payload.references.filter((reference) => !query || [reference.title, reference.contributorsDisplay, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
@@ -1854,6 +2806,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       };
       render();
     };
+    const scanLibraryFolder = async (library: LibraryNode) => {
+      const dialog=dialogShell(`Scan folder · ${library.name}`); dialog.classList.add('folder-scan-dialog'); const body=document.createElement('div'); body.className='folder-scan';
+      const status=document.createElement('p'); status.textContent='Scanning the associated Wasabi folder…'; body.appendChild(status); dialog.appendChild(body); setSaveState('scanning Wasabi folder…','saving');
+      try {
+        const response=await fetch(`/api/libraries/${library.id}/scan`,{cache:'no-store'}); const result=await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Folder scan failed');
+        status.textContent=`${result.candidates.length} unfiled object${result.candidates.length === 1 ? '' : 's'} · ${result.inspected} inspected`;
+        const prefix=document.createElement('code'); prefix.textContent=result.prefix; body.appendChild(prefix);
+        const list=document.createElement('div'); list.className='folder-scan-list'; (result.candidates || []).slice(0,200).forEach((candidate:any) => { const row=document.createElement('div'); const name=document.createElement('span'); name.textContent=candidate.filename; const size=document.createElement('small'); size.textContent=`${Math.max(1,Math.round(candidate.sizeBytes/1024))} KB`; row.append(name,size); list.appendChild(row); }); body.appendChild(list);
+        const footer=document.createElement('footer'); const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel'; cancel.addEventListener('click',() => dialog.close()); const importButton=document.createElement('button'); importButton.type='button'; importButton.className='primary'; importButton.textContent=`Import ${Math.min(200,result.candidates.length)}`; importButton.disabled=!result.candidates.length;
+        importButton.addEventListener('click',async () => { importButton.disabled=true; importButton.textContent='Importing…'; setSaveState('importing Wasabi folder…','saving'); const importedResponse=await fetch(`/api/libraries/${library.id}/scan`,{method:'POST'}); const importedResult=await importedResponse.json().catch(() => ({})); if (!importedResponse.ok) { importButton.disabled=false; importButton.textContent='Try again'; status.textContent=importedResult.error || 'Folder import failed'; setSaveState(status.textContent,'error'); return; } (importedResult.imported || []).forEach((value:any) => { const row=rowFromCatalogReference(value); upsertRow(row); updateActivity(`folder-scan-${row.id}`,{state:'working',referenceId:row.id,message:`${row.filename} · linked from Wasabi; extracting`}); void followPipeline(row.id,`folder-scan-${row.id}`,row.filename); }); dialog.close(); setSaveState(`${importedResult.imported?.length || 0} Wasabi item${importedResult.imported?.length === 1 ? '' : 's'} imported`); });
+        footer.append(cancel,importButton); body.appendChild(footer); setSaveState(`${result.candidates.length} unfiled Wasabi item${result.candidates.length === 1 ? '' : 's'} found`);
+      } catch (error) { status.textContent=error instanceof Error ? error.message : 'Folder scan failed'; setSaveState(status.textContent,'error'); }
+    };
     const deleteLibrary = async (library: LibraryNode) => {
       const kind = library.parentId ? 'folder' : 'library';
       if (!await confirmAction(`Delete ${kind}`, `Delete “${library.name}” and its subfolders? References will remain in the catalog.`, `Delete ${kind}`)) return;
@@ -1876,7 +2842,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     const exportLibrary = (library: LibraryNode) => {
       const branch = libraryBranchIds(library.id);
-      const rows = payload.references.filter((reference) => reference.libraryIds.some((id) => branch.has(id)));
+      const rows = isInboxLibraryId(library.id)
+        ? payload.references.filter(isUnfiledReference)
+        : payload.references.filter((reference) => reference.libraryIds.some((id) => branch.has(id)));
       if (!rows.length) { setSaveState('library has no references to export', 'error'); return; }
       const blob = new Blob([toBetterBibtex(rows)], { type: 'application/x-bibtex;charset=utf-8' });
       const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
@@ -1887,7 +2855,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const appendLibrary = (library: LibraryNode, container: HTMLElement) => {
       const details = document.createElement('details'); details.open = Boolean(query) || !collapsedLibraries.has(library.id); details.className = 'tree-branch';
       const summary = document.createElement('summary'); summary.draggable = !library.id.startsWith('inbox:');
-      const own = matched.filter((reference) => reference.libraryIds.includes(library.id));
+      const own = isInboxLibraryId(library.id)
+        ? matched.filter(isUnfiledReference)
+        : matched.filter((reference) => reference.libraryIds.includes(library.id));
       const libraryRow = document.createElement('div'); libraryRow.className = 'tree-library-row';
       const fold = document.createElement('button'); fold.type = 'button'; fold.className = 'tree-fold';
       fold.textContent = details.open ? '▾' : '▸'; fold.title = details.open ? 'Collapse' : 'Expand'; fold.setAttribute('aria-label', fold.title);
@@ -1898,11 +2868,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         fold.textContent = details.open ? '▾' : '▸'; fold.title = details.open ? 'Collapse' : 'Expand'; fold.setAttribute('aria-label', fold.title);
       });
       libraryRow.appendChild(fold);
-      libraryRow.appendChild(makeButton(library.name, own.length, library.id));
+      const recursiveIds = libraryBranchIds(library.id);
+      const recursiveCount = isInboxLibraryId(library.id)
+        ? own.length
+        : matched.filter((reference) => reference.libraryIds.some((id) => recursiveIds.has(id))).length;
+      libraryRow.appendChild(makeButton(library.name, own.length, library.id, recursiveCount, !library.parentId));
       const menuItems = () => {
         const items: Array<{ label: string; danger?: boolean; action: () => void | Promise<void> }> = [
           { label: 'Export as Better BibTeX (.bib)', action: () => exportLibrary(library) },
         ];
+        if (library.access !== 'viewer' && !isInboxLibraryId(library.id)) items.unshift({ label: 'Scan folder for unfiled items', action: () => scanLibraryFolder(library) });
         if (library.access !== 'viewer') items.unshift({ label: 'New folder inside', action: () => createFolder(library) });
         if (library.access !== 'viewer' && !library.id.startsWith('inbox:')) items.push(
           { label: `Rename ${library.parentId ? 'folder' : 'library'}…`, action: () => renameLibrary(library) },
@@ -1966,24 +2941,60 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       });
       const nested = document.createElement('div'); nested.className = 'tree-children';
       children(library.id).forEach((child) => appendLibrary(child, nested));
-      own.slice(0, 100).forEach((reference) => {
+      const visibleReferences = own.slice(0, 100);
+      visibleReferences.forEach((reference) => {
         const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title;
         item.classList.toggle('selected', selectedReferences.has(reference.id));
         item.draggable = reference.access !== 'viewer';
-        const glyph = document.createElement('span'); glyph.textContent = reference.format === 'pdf' ? '▧' : '≡';
-        const title = document.createElement('span'); title.textContent = reference.title; item.append(glyph, title);
+        const kind = treeReferenceKind(reference);
+        const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
+        glyph.classList.toggle('needs-ocr', reference.needsOcr);
+        glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
+        glyph.setAttribute('aria-label', glyph.title);
+        const title = document.createElement('span'); title.textContent = reference.title; item.appendChild(glyph);
+        const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
+        if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
+        if (isProcessingReference(reference)) {
+          const spinner = document.createElement('i'); spinner.className = 'tree-spinner'; spinner.title = 'Processing…';
+          item.classList.add('is-processing'); item.appendChild(spinner);
+        }
+        item.appendChild(title);
         item.addEventListener('click', (event) => {
           if (event.detail > 1) return;
-          if (event.metaKey || event.ctrlKey) {
+          if (event.shiftKey && treeSelectionAnchor) {
+            const anchorIndex = visibleReferences.findIndex((item) => item.id === treeSelectionAnchor);
+            const referenceIndex = visibleReferences.findIndex((item) => item.id === reference.id);
+            if (anchorIndex >= 0 && referenceIndex >= 0) {
+              if (!event.metaKey && !event.ctrlKey) selectedReferences.clear();
+              const start = Math.min(anchorIndex, referenceIndex);
+              const end = Math.max(anchorIndex, referenceIndex);
+              visibleReferences.slice(start, end + 1).forEach((item) => selectedReferences.add(item.id));
+            } else {
+              selectedReferences.clear(); selectedReferences.add(reference.id);
+              treeSelectionAnchor = reference.id;
+            }
+          } else if (event.metaKey || event.ctrlKey) {
             if (selectedReferences.has(reference.id)) selectedReferences.delete(reference.id);
             else selectedReferences.add(reference.id);
+            treeSelectionAnchor = reference.id;
           } else {
             selectedReferences.clear(); selectedReferences.add(reference.id);
+            treeSelectionAnchor = reference.id;
           }
+          activeReference = reference.id; renderProperties(reference.id);
           renderTree(search.value);
           setSaveState(`${selectedReferences.size} selected`);
         });
         item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
+        let lastTreeTouchTime = 0;
+        item.addEventListener('touchstart', (event) => {
+          const now = Date.now();
+          if (now - lastTreeTouchTime < 300) {
+            event.preventDefault();
+            controller.openDocument(reference.id, event.altKey);
+          }
+          lastTreeTouchTime = now;
+        }, { passive: false });
         item.addEventListener('contextmenu', (event) => {
           if (!selectedReferences.has(reference.id)) {
             selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
@@ -2018,11 +3029,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         item.addEventListener('pointercancel', clearReferenceLongPress);
         item.addEventListener('dragstart', (event) => {
           if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value); }
-          const ids = [...selectedReferences].filter((id) => references.get(id)?.access !== 'viewer');
-          if (!ids.length) { event.preventDefault(); return; }
-          event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(ids));
-          event.dataTransfer?.setData('application/x-seshat-reference', ids[0]);
-          setSaveState(`${ids.length} selected`);
+          const openIds=[...selectedReferences]; setOpenDragData(event.dataTransfer,openIds);
+          const moveIds = openIds.filter((id) => references.get(id)?.access !== 'viewer');
+          if (moveIds.length) { event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(moveIds)); event.dataTransfer?.setData('application/x-seshat-reference', moveIds[0]); }
+          setSaveState(`${openIds.length} selected`);
         });
         nested.appendChild(item);
       });
@@ -2049,6 +3059,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   };
 
   const followPipeline = async (referenceId: string, activityId: string, filename: string) => {
+    setProcessing(referenceId, true);
+    try {
     for (let attempt = 0; attempt < 180; attempt += 1) {
       const response = await fetch(`/api/library/${referenceId}/status`, { cache: 'no-store' });
       if (!response.ok) throw new Error('Could not read processing state.');
@@ -2067,7 +3079,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       await wait(4000);
     }
     updateActivity(activityId, { state: 'error', message: `${filename} · processing timed out` });
+    } finally {
+      setProcessing(referenceId, false);
+    }
   };
+
+  // Resume subtle status feedback for items still processing at page load.
+  payload.references
+    .filter((reference) => isProcessingReference(reference) && !processingReferences.has(reference.id))
+    .slice(0, 20)
+    .forEach((reference) => {
+      const activityId = `resume-${reference.id}`;
+      updateActivity(activityId, { state: 'working', referenceId: reference.id, message: `${reference.title} · checking processing status` });
+      void followPipeline(reference.id, activityId, reference.filename || reference.title).catch(() => {});
+    });
 
   const replaceAssociatedFile = async (referenceId: string, file: File) => {
     const reference = references.get(referenceId);
@@ -2115,6 +3140,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const inspectBibliography = async (files: File[]) => {
     const activityId = `bibliography-${crypto.randomUUID()}`;
     updateActivity(activityId, { state: 'working', message: `${files.length} bibliography file${files.length === 1 ? '' : 's'} · parsing` });
+    setSaveState('processing BibTeX…', 'saving');
     const form = new FormData(); files.forEach((file) => form.append('files', file, file.name));
     try {
       const response = await fetch('/api/bibliography/parse', { method: 'POST', body: form });
@@ -2124,8 +3150,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       window.sessionStorage.setItem(`seshat.bibliography.${activityId}`, JSON.stringify(result));
       controller.openBibliography(activityId, files.length === 1 ? files[0].name : 'Bibliography import');
       updateActivity(activityId, { state: 'complete', message: `${result.entries.length} references parsed · opened as pod` });
+      setSaveState(`${result.entries.length} references ready`);
+      window.setTimeout(() => setSaveState('ready'), 1800);
     } catch (error) {
       updateActivity(activityId, { state: 'error', message: error instanceof Error ? error.message : 'Bibliography parse failed' });
+      setSaveState(error instanceof Error ? error.message : 'Bibliography parse failed', 'error');
     }
   };
 
@@ -2140,15 +3169,78 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     })();
   });
 
+  const openQuickfinder = () => {
+    quickfinder?.remove();
+    const overlay=document.createElement('div'); overlay.className='quickfinder-overlay'; quickfinder=overlay;
+    const box=document.createElement('section'); box.className='quickfinder'; box.setAttribute('role','dialog'); box.setAttribute('aria-label','Quick finder');
+    const prompt=document.createElement('div'); prompt.className='quickfinder-prompt'; const marker=document.createElement('b'); marker.textContent='›'; const input=document.createElement('input'); input.type='search'; input.autocomplete='off'; input.spellcheck=false; input.placeholder='Search items · prefix . for hybrid corpus search'; prompt.append(marker,input);
+    const mode=document.createElement('div'); mode.className='quickfinder-mode'; const modeName=document.createElement('strong'); const modeHint=document.createElement('span'); mode.append(modeName,modeHint);
+    const results=document.createElement('div'); results.className='quickfinder-results'; box.append(prompt,mode,results); overlay.appendChild(box); root.appendChild(overlay);
+    type FinderResult={title:string;meta:string;snippet?:string;action:()=>void}; let found:FinderResult[]=[]; let selected=0; let timer=0; let request:AbortController|null=null;
+    const close=() => { request?.abort(); window.clearTimeout(timer); overlay.remove(); if (quickfinder === overlay) quickfinder=null; };
+    const draw=() => { results.replaceChildren(); if (!found.length) { const empty=document.createElement('p'); empty.className='quickfinder-empty'; empty.textContent=input.value.startsWith('.') ? 'No indexed evidence found.' : 'No matching items.'; results.appendChild(empty); return; } selected=Math.max(0,Math.min(selected,found.length-1)); found.forEach((item,index) => { const button=document.createElement('button'); button.type='button'; button.className='quickfinder-result'; button.classList.toggle('active',index === selected); const copy=document.createElement('span'); const title=document.createElement('strong'); title.textContent=item.title; const meta=document.createElement('small'); meta.textContent=item.meta; copy.append(title,meta); if (item.snippet) { const snippet=document.createElement('p'); snippet.textContent=item.snippet; copy.appendChild(snippet); } const indexLabel=document.createElement('i'); indexLabel.textContent=String(index+1).padStart(2,'0'); button.append(indexLabel,copy); button.addEventListener('mouseenter',() => { if (selected === index) return; selected=index; results.querySelectorAll('.quickfinder-result').forEach((row,rowIndex) => row.classList.toggle('active',rowIndex === selected)); }); button.addEventListener('click',() => {close();item.action();}); results.appendChild(button); }); results.querySelector('.active')?.scrollIntoView({block:'nearest'}); };
+    const itemSearch=(query:string) => { modeName.textContent='ITEMS'; modeHint.textContent='Enter open · . corpus'; const needle=normalize(query); found=payload.references.map((reference) => { const haystack=normalize([reference.title,reference.contributorsDisplay,reference.citeKey,reference.tags,...reference.keywords].join(' ')); const index=needle ? haystack.indexOf(needle) : 0; let cursor=0; let gaps=0; if (needle && index < 0) { for (const character of needle) { const next=haystack.indexOf(character,cursor); if (next < 0) return null; gaps+=next-cursor; cursor=next+1; } } return { reference,score:index >= 0 ? index : 1000+gaps }; }).filter((value):value is {reference:ReferenceRow;score:number} => Boolean(value)).sort((left,right) => left.score-right.score || left.reference.title.localeCompare(right.reference.title)).slice(0,18).map(({reference}) => ({ title:reference.title,meta:`@${reference.citeKey} · ${reference.contributorsDisplay || reference.fileType}`,action:() => controller.openDocument(reference.id) })); selected=0;draw(); };
+    const corpusSearch=async (query:string) => { modeName.textContent='CORPUS · HYBRID'; modeHint.textContent='lexical + semantic + graph'; if (query.length < 2) { found=[];draw();return; } request?.abort(); request=new AbortController(); modeHint.textContent='searching lexical + semantic + graph…'; try { const response=await fetch(`/api/search/corpus?${new URLSearchParams({q:query,mode:'hybrid'})}`,{signal:request.signal}); const data=await response.json(); if (!response.ok) throw new Error(data.error || 'Search failed'); found=(data.items || []).slice(0,24).map((item:any) => ({ title:item.title,meta:[item.locator || item.section || `@${item.citeKey}`,...(item.channels || [])].filter(Boolean).join(' · '),snippet:String(item.snippet || '').replaceAll('‹','').replaceAll('›',''),action:() => { controller.openDocument(item.referenceId); if (item.page) navigatePdfToPage(item.referenceId,item.page); } })); selected=0; modeHint.textContent=`${found.length} fragments · lexical + semantic + graph`;draw(); } catch (error) { if ((error as Error).name === 'AbortError') return; found=[];modeHint.textContent=error instanceof Error ? error.message : 'Search failed';draw(); } };
+    const update=() => { const value=input.value; window.clearTimeout(timer); if (value.startsWith('.')) timer=window.setTimeout(() => void corpusSearch(value.slice(1).trim()),180); else {request?.abort();itemSearch(value);} };
+    input.addEventListener('input',update); input.addEventListener('keydown',(event) => { event.stopPropagation(); if (event.key === 'Escape') {event.preventDefault();close();return;} if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {event.preventDefault();selected=(selected+(event.key === 'ArrowDown' ? 1 : -1)+Math.max(1,found.length))%Math.max(1,found.length);draw();return;} if (event.key === 'Enter' && found[selected]) {event.preventDefault();const action=found[selected].action;close();action();} });
+    overlay.addEventListener('pointerdown',(event) => {if (event.target === overlay) close();}); itemSearch(''); window.requestAnimationFrame(() => input.focus());
+  };
+
+  const openHelp = () => {
+    const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
+    const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
+    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; double-click it to read.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
+    addSection('Shortcuts',['⌘ Backspace — delete selected items','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
+    const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
+    const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];
+    rows.forEach(([name,state,title]) => { const row = document.createElement('div'); row.className = 'technology-row'; const led = document.createElement('i'); led.dataset.state = state; led.title = title; const label = document.createElement('span'); label.textContent = name; const status = document.createElement('small'); status.textContent = state; row.append(led,label,status); technology.appendChild(row); }); body.appendChild(technology); dialog.appendChild(body);
+  };
+
   document.addEventListener('keydown', (event) => {
-    if (!event.altKey || !event.shiftKey || event.metaKey || event.ctrlKey) return;
-    const key = event.key.toLowerCase();
-    if (key !== 'a' && key !== 'b') return;
     const target = event.target as HTMLElement | null;
-    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-    event.preventDefault();
-    const ids = selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : [];
-    copyReferences(ids, key === 'a' ? 'apa' : 'bibtex');
+    const editing = target?.matches('input, textarea, select, [contenteditable="true"]')
+      || Boolean(target?.closest('.handsontableInputHolder, .htEditor, [role="dialog"]'));
+    if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === '?') { event.preventDefault(); openQuickfinder(); return; }
+    if (!editing && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (shortcutPrefix) {
+        const chord=`${shortcutPrefix}${event.key}`; shortcutPrefix=''; window.clearTimeout(shortcutPrefixTimer);
+        if (chord === 'gc') { const id=[...selectedReferences][0] || activeReference; if (id) { event.preventDefault(); void searchForCandidate(id); } return; }
+        if (chord === 'zc' || chord === 'zo' || chord === 'zM' || chord === 'zR') {
+          event.preventDefault(); const collapse=chord === 'zc' || chord === 'zM'; const all=chord === 'zM' || chord === 'zR';
+          if (all) { collapsedLibraries.clear(); if (collapse) payload.libraries.forEach((library) => collapsedLibraries.add(library.id)); }
+          else if (activeLibrary) { if (collapse) collapsedLibraries.add(activeLibrary); else collapsedLibraries.delete(activeLibrary); }
+          window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries])); renderTree(search.value); setSaveState(collapse ? 'collections folded' : 'collections unfolded'); return;
+        }
+        if (chord === 'ya' || chord === 'yb') { event.preventDefault(); const ids=selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : []; copyReferences(ids,chord === 'ya' ? 'apa' : 'bibtex'); return; }
+      }
+      if (event.key === 'g' || event.key === 'z' || event.key === 'y') {
+        event.preventDefault(); shortcutPrefix=event.key; window.clearTimeout(shortcutPrefixTimer); setSaveState(`${event.key} …`);
+        shortcutPrefixTimer=window.setTimeout(() => { shortcutPrefix=''; setSaveState('ready'); },1000); return;
+      }
+    }
+    if (event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey && (event.code === 'Backslash' || event.key === '\\' || event.key === '|')) {
+      if (editing) return;
+      event.preventDefault();
+      if (api.hasMaximizedGroup()) { api.exitMaximizedGroup(); if (activeReference) root.classList.add('properties-open'); }
+      else {
+        root.classList.remove('properties-open');
+        const documentPanel = api.getPanel('document-preview');
+        const panel = documentPanel || api.activePanel;
+        if (documentPanel) documentPanel.api.setActive();
+        if (panel) api.maximizeGroup(panel);
+      }
+      window.dispatchEvent(new Event('resize'));
+      return;
+    }
+    if (event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey && event.key === 'Backspace') {
+      if (editing) return;
+      const ids = (selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : [])
+        .filter((id) => references.get(id)?.access !== 'viewer');
+      if (!ids.length) return;
+      event.preventDefault();
+      void deleteReferences(ids);
+      return;
+    }
   });
 
   consoleToggle.addEventListener('click', () => {
@@ -2158,6 +3250,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   });
 
   search.addEventListener('input', () => renderTree(search.value));
+  keywordFilter?.addEventListener('input', renderKeywordCloud);
+  root.querySelector<HTMLButtonElement>('[data-workspace-help]')?.addEventListener('click',openHelp);
+  root.querySelector<HTMLButtonElement>('[data-close-properties]')?.addEventListener('click',() => root.classList.remove('properties-open'));
+  window.addEventListener('seshat:toggle-properties',((event: CustomEvent<{referenceId?:string}>) => { const id = event.detail?.referenceId || activeReference; const willOpen = !root.classList.contains('properties-open'); root.classList.toggle('properties-open',willOpen); if (willOpen && id) { activeReference = id; renderProperties(id); } window.dispatchEvent(new Event('resize')); }) as EventListener);
   root.querySelector<HTMLButtonElement>('[data-new-library]')?.addEventListener('click', async () => {
     const name = await requestText(activeLibrary ? 'Create folder' : 'Create library', 'Name', '', 'Create');
     if (!name) return;
@@ -2167,5 +3263,5 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     payload.libraries.push(result.library); renderTree(search.value); setSaveState('library created');
   });
   root.querySelectorAll<HTMLButtonElement>('[data-open-tool]').forEach((button) => button.addEventListener('click', () => controller.openTool(button.dataset.openTool as ToolKind)));
-  renderTree();
+  renderTree(); renderKeywordCloud(); renderProperties(activeReference);
 }

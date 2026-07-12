@@ -17,7 +17,7 @@ The browser normally calls these routes. They are not currently versioned as a p
 
 ### `GET /api/health.json`
 
-Returns the application name, status, version and capability labels. This route does not test PostgreSQL, R2, Docling or Ollama connectivity.
+Returns the application name, status, version and capability labels. This route does not test PostgreSQL, Wasabi, Docling or Ollama connectivity.
 
 ```json
 {
@@ -50,7 +50,7 @@ Resolves up to 100 exact citekeys supplied as repeated `key` parameters or a com
 
 ### `POST /api/intake/documents`
 
-Accepts one document, stores the original in R2, inserts the catalog record and queues processing.
+Accepts one document, stores the original in Wasabi, inserts the catalog record and queues processing.
 
 Request: `multipart/form-data`
 
@@ -75,22 +75,23 @@ A duplicate returns HTTP `200` with `duplicate: true`. Relevant errors are `400`
 
 ### `POST /api/bibliography/parse`
 
-Parses one or more BibTeX files without persisting them.
+Parses one or more BibTeX files without persisting them. Every compatible `file` field is normalized relative to its `libros/` segment, mapped to the authenticated user's invisible Wasabi root, and checked with `HeadObject`.
 
 Request: `multipart/form-data`; repeat the `files` field for each `.bib` file. Each file must be at most 10 MiB.
 
 ```json
 {
   "entries": [],
-  "errors": []
+  "errors": [],
+  "storage": { "linked": 0, "missing": 0, "withoutAttachment": 0, "unavailable": 0 }
 }
 ```
 
-Each returned entry or parse error includes its `sourceFile`.
+Each returned entry or parse error includes its `sourceFile`. Entries with an attachment also include the preview directories, relative path, Wasabi object key and one of `linked`, `missing`, or `storage-unavailable`.
 
 ### `POST /api/bibliography/import`
 
-Persists one `.bib` file as metadata-only catalog references. Send `file` plus either an existing `libraryId`, or omit it to create a new top-level library named from `libraryName` or the filename. An optional `parentId` nests that new library. The response includes the destination library and imported references.
+Re-parses one or more `.bib` files, creates their folder paths idempotently, imports each record into its leaf folder and links any verified Wasabi object as the original artifact. Send repeated `files`; `libraryName` is only the fallback folder for records without a compatible attachment path. Linked pre-existing objects are non-destructive: deleting a Seshat reference does not delete them.
 
 ## Libraries
 
@@ -136,6 +137,8 @@ Owners can list recipients, share with a normalized Musiki-user email, or revoke
 ### `POST /api/library/:id/metadata`
 
 Updates curated metadata. Request format is `multipart/form-data`.
+
+When title, issued year, or contributors change, Seshat renames the original Wasabi object in its existing folder using `firstCreator*year*title` (title truncated to 100 characters), matching the configured Zotero-style suffix template. The response includes `storageRename`; metadata remains saved with the prior object link if a safe copy/verify/relink/delete move cannot complete.
 
 | Field | Validation |
 |---|---|
@@ -194,7 +197,7 @@ Deletes only an annotation owned by the authenticated user. Reference ownership 
 
 ### `GET /api/library/:id/original`
 
-Streams the original R2 object inline with its original Unicode filename and private/no-store caching headers.
+Streams the original Wasabi object inline with its original Unicode filename and private/no-store caching headers.
 
 ### `GET /api/library/:id/artifact/:kind`
 
@@ -214,9 +217,8 @@ Other values return HTTP `404`.
 Deletes without a confirmation round-trip, by product design. The handler:
 
 1. marks queued/running jobs for cancellation;
-2. removes catalogued R2 artifact keys;
-3. removes any remaining objects below the reference prefix;
-4. deletes the PostgreSQL reference and dependent records.
+2. removes catalogued Seshat-managed Wasabi artifact keys, while preserving `wasabi-linked` originals;
+3. deletes the PostgreSQL reference and dependent records.
 
 ```json
 {
@@ -226,4 +228,14 @@ Deletes without a confirmation round-trip, by product design. The handler:
 }
 ```
 
-If R2 deletion fails, database deletion is not performed and HTTP `502` is returned. The table must optimistically remove rows only while still restoring them if this request fails.
+If Wasabi deletion fails, database deletion is not performed and HTTP `502` is returned. The table must optimistically remove rows only while still restoring them if this request fails.
+# Scholarly graph API
+
+- `GET /api/papers/:id` returns extracted paper state, candidates, provenance, and the catalog record.
+- `POST /api/papers/:id/enrich` queues deterministic OpenAlex resolution.
+- `POST /api/papers/:id/resolve` confirms an ambiguous candidate with `{ "openAlexId": "W…" }`.
+- `GET /api/knowledge-graph` returns ForceGraph-compatible nodes and edges. Query parameters: `paperId`, `collectionId`, `nodeKinds`, `edgeKinds`, `minimumWeight`, and `maximumNodes`.
+- `POST /api/knowledge-graph/expand` performs bounded citation expansion for one resolved paper.
+- `GET /api/knowledge-graph/association?edgeId=…` returns association evidence and provenance.
+
+All routes require an authenticated Seshat session and are scoped to the current owner.

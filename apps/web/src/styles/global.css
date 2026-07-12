@@ -3,9 +3,13 @@
   --ink: #17231d;
   --paper: #f1efe6;
   --paper-deep: #e6e2d3;
+  --chrome: #e9e6dc;
+  --chrome-alpha: rgba(233, 230, 220, 0.82);
+  --chrome-deep: #dedacd;
   --green: #244f3a;
   --green-bright: #3d7a58;
   --gold: #a77f36;
+  --ocr-alert: #a7543a;
   --line: rgba(23, 35, 29, 0.18);
   --muted: #68726a;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -13,9 +17,27 @@
   color: var(--ink);
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: oklch(0.985 0 0);
+  --paper: oklch(0.145 0 0);
+  --paper-deep: oklch(0.205 0 0);
+  --chrome: oklch(0.18 0 0);
+  --chrome-alpha: oklch(0.18 0 0 / 86%);
+  --chrome-deep: oklch(0.235 0 0);
+  --hairline: oklch(1 0 0 / 10%);
+  --line: oklch(1 0 0 / 10%);
+  --muted: oklch(0.708 0 0);
+  --green: oklch(0.696 0.12 162.48);
+  --green-bright: oklch(0.78 0.11 162.48);
+  --gold: oklch(0.69 0.12 303.9);
+  --ocr-alert: oklch(0.704 0.15 35);
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; min-height: 100vh; background: var(--paper); }
+:root[data-theme="dark"] body { background: var(--paper); }
 body::before {
   content: "";
   position: fixed;
@@ -101,7 +123,7 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .library-empty span { color: var(--gold); font-size: 34px; }
 
 .drop-hint { position: fixed; right: 22px; bottom: 20px; z-index: 2; padding: 9px 12px; border: 1px solid var(--line); color: var(--muted); background: rgba(241,239,230,.88); backdrop-filter: blur(8px); font: 9px monospace; letter-spacing: .08em; text-transform: uppercase; }
-.drop-layer { position: fixed; z-index: 100; inset: 12px; display: grid; place-content: center; gap: 13px; border: 1px solid rgba(241,239,230,.55); color: var(--paper); background: rgba(23,35,29,.94); text-align: center; opacity: 0; visibility: hidden; transform: scale(.992); transition: opacity .16s ease, transform .16s ease, visibility .16s; pointer-events: none; }
+.drop-layer { position: fixed; z-index: 100; inset: 12px; display: grid; place-content: center; gap: 13px; border: 1px solid rgba(241,239,230,.68); color: var(--paper); background: rgba(41,111,70,.94); text-align: center; opacity: 0; visibility: hidden; transform: scale(.992); transition: opacity .16s ease, transform .16s ease, visibility .16s; pointer-events: none; }
 .drop-layer.visible { opacity: 1; visibility: visible; transform: scale(1); }
 .drop-layer strong { font: 400 clamp(40px, 7vw, 86px)/1 Georgia, serif; letter-spacing: -.04em; }
 .drop-layer span { color: rgba(241,239,230,.65); font: 11px monospace; letter-spacing: .17em; }
@@ -271,4 +293,30 @@ button.job-card:hover {
   .corpus-search-form > button { min-height: 48px; border-top: 1px solid var(--ink); border-left: 0; }
   .corpus-result-group > header { align-items: start; flex-direction: column; }
   .corpus-result-group li a { grid-template-columns: 1fr; gap: 8px; }
+}
+
+/* Virtual Fullscreen fallback styling specifically optimized for mobile Safari & iOS iPad landscape */
+html.virtual-fullscreen, html.virtual-fullscreen body {
+  overflow: hidden !important;
+  position: fixed !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  top: 0 !important;
+  left: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 999999 !important;
+  touch-action: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+html.virtual-fullscreen .workspace-app {
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 999999 !important;
 }

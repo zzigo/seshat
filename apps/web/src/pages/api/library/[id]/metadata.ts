@@ -1,8 +1,12 @@
 import { isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
+import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
+import { zoteroStyleAttachmentName } from '../../../../lib/attachment-filename';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
+import { getWasabiClient } from '../../../../lib/wasabi';
 
 const text = (value: FormDataEntryValue | null): string => String(value || '').trim();
+const copySegment = (value: string): string => encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 
 export const POST: APIRoute = async ({ request, locals, params }) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
@@ -97,5 +101,43 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     url,
     manualFields: [...manualFields],
   });
-  return Response.json({ ok: true, reference });
+  let storageRename: { ok: boolean; from?: string; to?: string; warning?: string } = { ok: true };
+  const original = reference?.artifacts.find((artifact) => artifact.kind === 'original' && artifact.bucket && artifact.objectKey);
+  if (reference && original && ['wasabi', 'wasabi-linked'].includes(original.provider)) {
+    const currentFilename = String((reference.source as any).originalFilename || original.objectKey.split('/').at(-1) || 'document');
+    const filename = zoteroStyleAttachmentName({ contributors: reference.contributors, issued: reference.issued, title: reference.title, currentFilename });
+    const directory = original.objectKey.includes('/') ? original.objectKey.slice(0, original.objectKey.lastIndexOf('/') + 1) : '';
+    const nextKey = `${directory}${filename}`;
+    if (nextKey !== original.objectKey) {
+      const storage = getWasabiClient();
+      const copySource = `${copySegment(original.bucket!)}/${original.objectKey.split('/').map(copySegment).join('/')}`;
+      let copied = false;
+      let catalogLinked = false;
+      try {
+        try {
+          await storage.send(new HeadObjectCommand({ Bucket: original.bucket, Key: nextKey }));
+          throw new Error('TARGET_ALREADY_EXISTS');
+        } catch (error: any) {
+          if (String(error?.message || '') === 'TARGET_ALREADY_EXISTS') throw error;
+          if (Number(error?.$metadata?.httpStatusCode) !== 404 && !['NotFound', 'NoSuchKey'].includes(String(error?.name || ''))) throw error;
+        }
+        const moved = await storage.send(new CopyObjectCommand({ Bucket: original.bucket, Key: nextKey, CopySource: copySource, MetadataDirective: 'COPY' }));
+        copied = true;
+        const verified = await storage.send(new HeadObjectCommand({ Bucket: original.bucket, Key: nextKey }));
+        if (Number(verified.ContentLength || 0) !== Number(original.sizeBytes)) throw new Error('COPIED_SIZE_MISMATCH');
+        const renamed = await catalog.renameArtifact(ownerKey, reference.id, original.id, nextKey, filename, moved.CopyObjectResult?.ETag?.replaceAll('"', ''));
+        if (!renamed) throw new Error('ARTIFACT_LINK_UPDATE_FAILED');
+        catalogLinked = true;
+        await storage.send(new DeleteObjectCommand({ Bucket: original.bucket, Key: original.objectKey }))
+          .catch((error) => console.error('[seshat:metadata:wasabi-old-object-cleanup]', error));
+        storageRename = { ok: true, from: original.objectKey, to: nextKey };
+      } catch (error) {
+        if (copied && !catalogLinked) await storage.send(new DeleteObjectCommand({ Bucket: original.bucket, Key: nextKey })).catch(() => undefined);
+        console.error('[seshat:metadata:wasabi-rename]', error);
+        storageRename = { ok: false, warning: 'Metadata was saved, but the Wasabi file kept its previous name.' };
+      }
+    }
+  }
+  const hydrated = reference ? await catalog.get(ownerKey, reference.id) : reference;
+  return Response.json({ ok: true, reference: hydrated, storageRename });
 };

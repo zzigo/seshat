@@ -47,7 +47,7 @@ control remain authoritative in PostgreSQL.
 
 ## Existing documents
 
-The backfill reuses the `chunks.jsonl` artifacts already stored in R2; it does not send PDF or
+The backfill reuses the `chunks.jsonl` artifacts already stored in Wasabi; it does not send PDF or
 EPUB files through Docling again. Inspect first, then apply:
 
 ```sh

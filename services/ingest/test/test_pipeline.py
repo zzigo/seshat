@@ -13,7 +13,20 @@ class FakeDocument:
         return "# A cultivated text\n\nEvidence survives structure.\n"
 
     def export_to_dict(self) -> dict:
-        return {"name": "A cultivated text", "pages": [{"number": 1}]}
+        return {
+            "name": "A cultivated text",
+            "body": {"children": [
+                {"$ref": "#/texts/0"}, {"$ref": "#/texts/1"},
+                {"$ref": "#/pictures/0"}, {"$ref": "#/texts/2"},
+            ]},
+            "texts": [
+                {"label": "section_header", "level": 1, "text": "Introduction", "prov": [{"page_no": 1}]},
+                {"label": "text", "text": "Evidence survives structure.", "prov": [{"page_no": 1}]},
+                {"label": "section_header", "level": 2, "text": "References", "prov": [{"page_no": 3}]},
+            ],
+            "pictures": [{"label": "picture", "prov": [{"page_no": 2}]}],
+            "pages": {"1": {"page_no": 1}},
+        }
 
 
 class FakeResult:
@@ -51,6 +64,7 @@ class IngestPipelineTest(unittest.TestCase):
             )
 
             self.assertEqual(manifest.reference_id, "ref:1")
+            self.assertFalse(manifest.ocr)
             self.assertEqual([item.kind for item in manifest.artifacts], [
                 "docling-json", "markdown", "chunks", "structure",
             ])
@@ -59,8 +73,14 @@ class IngestPipelineTest(unittest.TestCase):
             chunk = json.loads((output / "chunks.jsonl").read_text())
             self.assertEqual(chunk["metadata"]["page"], 1)
             structure = json.loads((output / "structure.json").read_text())
-            self.assertEqual(structure["sections"][0]["title"], "A cultivated text")
+            self.assertEqual(structure["schemaVersion"], 2)
+            self.assertEqual(structure["sections"][0]["title"], "Introduction")
             self.assertEqual(structure["sections"][0]["level"], 1)
+            self.assertEqual(structure["sections"][0]["kind"], "introduction")
+            self.assertEqual(structure["sections"][1]["kind"], "references")
+            self.assertEqual(structure["sections"][1]["parentId"], structure["sections"][0]["id"])
+            self.assertEqual([block["kind"] for block in structure["blocks"]], ["paragraph", "picture"])
+            self.assertEqual(structure["blocks"][1]["page"], 2)
             persisted = json.loads((output / "manifest.json").read_text())
             self.assertEqual(persisted["source_sha256"], manifest.source_sha256)
 

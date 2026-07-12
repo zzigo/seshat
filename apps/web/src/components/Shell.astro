@@ -21,7 +21,20 @@ const session = Astro.locals.session as any;
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content={description} />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Seshat" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>{title}</title>
+    <script is:inline>
+      const theme = localStorage.getItem('seshat-theme') || 'light';
+      if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        document.documentElement.classList.add('dark-theme');
+      }
+    </script>
   </head>
   <body>
     <header class="masthead">
@@ -30,6 +43,7 @@ const session = Astro.locals.session as any;
         <span>Seshat</span>
       </a>
       <div class="identity">
+        <button type="button" class="identity-action" data-toggle-theme style="border:0; background:transparent; font-size:14px; padding:0 8px; cursor:pointer;" title="Toggle dark/light theme">☼</button>
         {session?.user?.email ? (
           <>
             <a href="/search" class="identity-action">search</a>
@@ -47,5 +61,19 @@ const session = Astro.locals.session as any;
       <span>writing / memory / measurement</span>
     </footer>
     <DropLayer authenticated={Boolean(session?.user?.email)} />
+    <script>
+      const themeBtn = document.querySelector('[data-toggle-theme]');
+      themeBtn?.addEventListener('click', () => {
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', nextTheme);
+        if (nextTheme === 'dark') {
+          document.documentElement.classList.add('dark-theme');
+        } else {
+          document.documentElement.classList.remove('dark-theme');
+        }
+        localStorage.setItem('seshat-theme', nextTheme);
+      });
+    </script>
   </body>
 </html>

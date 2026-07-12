@@ -23,5 +23,21 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return context.redirect(`/login?redirect=${encodeURIComponent(redirect)}`);
   }
 
-  return next();
+  const response = await next();
+  if (context.url.pathname === '/workspace') {
+    response.headers.set('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data: blob:",
+      "connect-src 'self'",
+      "frame-src 'self' blob:",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; '));
+  }
+  return response;
 });

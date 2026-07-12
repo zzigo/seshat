@@ -1,20 +1,13 @@
-import { createHash, randomUUID } from 'node:crypto';
 import { parse } from '@retorquere/bibtex-parser';
 import type { APIRoute } from 'astro';
-import type { CatalogBibliographyInput } from '@seshat/catalog';
-import type { Contributor } from '@seshat/core';
+import { catalogInputForBibEntry, inspectBibEntries } from '../../../lib/bibliography-import';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
 
 const MAX_BIB_BYTES = 10 * 1024 * 1024;
-const bibType = (value: string): string => ({
-  article: 'article-journal', book: 'book', inbook: 'chapter', incollection: 'chapter',
-  inproceedings: 'paper-conference', conference: 'paper-conference', proceedings: 'book',
-  phdthesis: 'thesis', mastersthesis: 'thesis', techreport: 'report',
-}[value.toLowerCase()] || 'document');
-const literal = (value: unknown): string => Array.isArray(value) ? value.map(String).join('; ') : String(value || '').trim();
 
 export const POST: APIRoute = async ({ request, locals }) => {
-  const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
+  const user = (locals.session as any)?.user;
+  const email = String(user?.email || '').trim().toLowerCase();
   if (!email) return Response.json({ error: 'authentication_required' }, { status: 401 });
   const form = await request.formData().catch(() => null);
   const files = form?.getAll('files').filter((value): value is File => value instanceof File) || [];
@@ -23,53 +16,41 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return Response.json({ error: 'Bibliographies must be .bib files smaller than 10 MB.' }, { status: 413 });
   }
 
-  const ownerKey = ownerKeyFor(email);
-  const catalog = getCatalog();
-  let libraryId = String(form?.get('libraryId') || '').trim();
-  let library = libraryId ? (await catalog.listLibraries(ownerKey)).find((item) => item.id === libraryId) : undefined;
-  if (!library) {
-    const fallback = files.length === 1 ? files[0].name.replace(/\.bib$/i, '') : `BibTeX import ${new Date().toISOString().slice(0, 10)}`;
-    const requested = String(form?.get('libraryName') || '').trim().replace(/\s+/g, ' ') || fallback;
-    const parentId = String(form?.get('parentId') || '').trim() || undefined;
-    let name = requested.slice(0, 160);
-    try { library = await catalog.createLibrary(ownerKey, name, parentId); }
-    catch (error: any) {
-      if (String(error?.code || '') !== '23505') throw error;
-      name = `${name.slice(0, 140)} · ${new Date().toLocaleString('sv').replace(/[: ]/g, '-')}`;
-      library = await catalog.createLibrary(ownerKey, name, parentId);
-    }
-    libraryId = library.id;
-  }
-
-  const entries: CatalogBibliographyInput[] = [];
+  const parsed: Array<{ entry: any; sourceFile: string }> = [];
   const errors: unknown[] = [];
   for (const file of files) {
     const result = parse(await file.text());
+    parsed.push(...result.entries.map((entry) => ({ entry, sourceFile: file.name })));
     errors.push(...result.errors.map((error) => ({ ...error, sourceFile: file.name })));
-    for (const entry of result.entries) {
-      const fields = (entry.fields || {}) as Record<string, any>;
-      const people = (field: string, role: Contributor['role']): Contributor[] => (Array.isArray(fields[field]) ? fields[field] : []).map((person: any) => ({
-        family: String(person.lastName || '').trim(), given: String(person.firstName || '').trim(), role,
-      })).filter((person: Contributor) => person.family || person.given);
-      const contributors = [...people('author', 'author'), ...people('editor', 'editor'), ...people('translator', 'translator')];
-      const year = Number(String(fields.year || '').match(/\d{4}/)?.[0]) || undefined;
-      const isbn = literal(fields.isbn).split(/[;,\s]+/).filter(Boolean);
-      const doi = literal(fields.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
-      const input = String((entry as any).input || JSON.stringify(entry));
-      entries.push({
-        id: randomUUID(), citeKey: String(entry.key || `import-${randomUUID().slice(0, 8)}`).slice(0, 160),
-        type: bibType(String(entry.type || 'document')), title: literal(fields.title) || 'Untitled reference',
-        contributors, issued: year ? { year } : undefined,
-        identifiers: { ...(isbn.length ? { isbn } : {}), ...(doi ? { doi } : {}) },
-        tags: [], abstract: literal(fields.abstract) || undefined, language: literal(fields.language) || undefined,
-        publisher: literal(fields.publisher || fields.institution || fields.school) || undefined,
-        publisherPlace: literal(fields.address || fields.location) || undefined,
-        url: literal(fields.url) || undefined,
-        source: { provider: 'bibtex', sourceFile: file.name, importedAt: new Date().toISOString(), bibtex: fields, raw: input },
-        originalSha256: createHash('sha256').update(`bibtex\0${input}`).digest('hex'),
-      });
-    }
   }
-  const references = await catalog.importBibliography(ownerKey, libraryId, entries);
-  return Response.json({ ok: true, library, imported: references.length, references, errors }, { status: 201 });
+  const inspected = await inspectBibEntries(parsed.map((item) => item.entry), { email, name: String(user?.name || '') });
+  const ownerKey = ownerKeyFor(email);
+  const catalog = getCatalog();
+  const fallbackName = String(form?.get('libraryName') || '').trim().replace(/\s+/g, ' ')
+    || (files.length === 1 ? files[0].name.replace(/\.bib$/i, '') : `BibTeX import ${new Date().toISOString().slice(0, 10)}`);
+  const groups = new Map<string, { directories: string[]; entries: Array<{ inspected: typeof inspected[number]; sourceFile: string }> }>();
+  inspected.forEach((item, index) => {
+    const directories = item.attachment?.directories.length ? item.attachment.directories : [fallbackName];
+    const key = JSON.stringify(directories);
+    const group = groups.get(key) || { directories, entries: [] };
+    group.entries.push({ inspected: item, sourceFile: parsed[index].sourceFile });
+    groups.set(key, group);
+  });
+
+  const references = [];
+  const libraries = [];
+  for (const group of groups.values()) {
+    const library = await catalog.ensureLibraryPath(ownerKey, group.directories);
+    if (!library) throw new Error('LIBRARY_PATH_CREATE_FAILED');
+    libraries.push(library);
+    const imported = await catalog.importBibliography(ownerKey, library.id,
+      group.entries.map(({ inspected: item, sourceFile }) => catalogInputForBibEntry(item, sourceFile)));
+    references.push(...imported);
+  }
+  return Response.json({
+    ok: true, imported: references.length, references, libraries, errors,
+    linked: inspected.filter((item) => item.attachment?.status === 'linked').length,
+    missing: inspected.filter((item) => item.attachment?.status === 'missing').map((item) => item.attachment?.relativePath),
+    unavailable: inspected.filter((item) => item.attachment?.status === 'storage-unavailable').length,
+  }, { status: 201 });
 };

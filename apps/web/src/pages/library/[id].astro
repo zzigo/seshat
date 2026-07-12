@@ -2,7 +2,7 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import Shell from '../../components/Shell.astro';
 import { getCatalog, ownerKeyFor } from '../../lib/catalog';
-import { getR2Client } from '../../lib/r2';
+import { getWasabiClient } from '../../lib/wasabi';
 
 const email = String((Astro.locals.session as any)?.user?.email || '');
 const reference = await getCatalog().get(ownerKeyFor(email), Astro.params.id || '');
@@ -13,7 +13,7 @@ type Section = { id: string; level: number; title: string; parentId?: string | n
 let sections: Section[] = [];
 if (structureArtifact?.bucket) {
   try {
-    const object = await getR2Client().send(new GetObjectCommand({
+    const object = await getWasabiClient().send(new GetObjectCommand({
       Bucket: structureArtifact.bucket,
       Key: structureArtifact.objectKey,
     }));
@@ -98,7 +98,7 @@ const graphEdges = edgesResult.rows;
       <dl class="catalog-facts compact-facts">
         <div><dt>Citekey</dt><dd>@{reference.citeKey}</dd></div>
         <div><dt>SHA-256</dt><dd>{reference.originalSha256}</dd></div>
-        <div><dt>Original</dt><dd>{original ? `${Math.round(original.sizeBytes / 1024)} KB · R2` : 'missing'}</dd></div>
+        <div><dt>Original</dt><dd>{original ? `${Math.round(original.sizeBytes / 1024)} KB · Wasabi` : 'missing'}</dd></div>
       </dl>
     </div>
     <div>
@@ -396,7 +396,11 @@ const graphEdges = edgesResult.rows;
         const title = form.elements.namedItem('title') as HTMLInputElement;
         const heading = document.querySelector<HTMLElement>('[data-record-title]');
         if (heading) heading.textContent = title.value;
-        status.value = 'Saved · protected from automatic overwrite';
+        status.value = result.storageRename?.ok === false
+          ? result.storageRename.warning
+          : result.storageRename?.to
+            ? 'Saved · Wasabi file renamed'
+            : 'Saved · protected from automatic overwrite';
       } catch (error) {
         status.value = error instanceof Error ? error.message : 'The record could not be saved.';
       } finally {

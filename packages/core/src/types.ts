@@ -45,7 +45,7 @@ export interface SourceIdentity {
   rawType?: string;
 }
 
-export type StorageProvider = 'r2' | 's3' | 'zotero' | 'filesystem' | 'external';
+export type StorageProvider = 'wasabi' | 'wasabi-linked' | 's3' | 'zotero' | 'filesystem' | 'external';
 
 export interface StoredObject {
   provider: StorageProvider;
@@ -123,4 +123,3 @@ export interface HealthReport {
   issues: HealthIssue[];
   evaluatedAt: string;
 }
-

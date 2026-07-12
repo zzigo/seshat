@@ -3,9 +3,9 @@
 
 ## System overview
 
-Seshat is a modular monolith. A server-rendered Astro application accepts authenticated documents and bibliographies; PostgreSQL stores bibliographic records, libraries and enrichment jobs; Cloudflare R2 stores originals and generated artifacts; a single Node worker downloads an original into an ephemeral directory, calls the Python/Docling ingestion package, uploads derivatives, and performs evidence-constrained metadata identification with local Ollama plus public bibliography providers.
+Seshat is a modular monolith. A server-rendered Astro application accepts authenticated documents and bibliographies; PostgreSQL stores bibliographic records, libraries and enrichment jobs; Wasabi stores originals and generated artifacts; a single Node worker downloads an original into an ephemeral directory, calls the Python/Docling ingestion package, uploads derivatives, and performs evidence-constrained metadata identification with local Ollama plus public bibliography providers.
 
-The reusable `@seshat/*` packages are framework-neutral. Musiki AR, Musiki CH and SO PhD can consume the same packages while keeping independent databases, R2 credentials, identity clients and languages.
+The reusable `@seshat/*` packages are framework-neutral. Musiki AR, Musiki CH and SO PhD can consume the same packages while keeping independent databases, Wasabi credentials, identity clients and languages.
 
 ## Component diagram
 
@@ -13,11 +13,11 @@ The reusable `@seshat/*` packages are framework-neutral. Musiki AR, Musiki CH an
 graph TD
   Browser[Authenticated browser] --> Web[Astro web application]
   Web --> Catalog[PostgresCatalog]
-  Web --> R2[Cloudflare R2]
+  Web --> Wasabi[Wasabi]
   Web --> Auth[Authentik / optional Google OAuth]
   Catalog --> PG[(PostgreSQL)]
   Worker[Node enrichment worker] --> Catalog
-  Worker --> R2
+  Worker --> Wasabi
   Worker --> Ingest[Python seshat-ingest]
   Ingest --> Docling[Docling]
   Worker --> Ollama[Local Ollama]
@@ -37,7 +37,7 @@ graph TD
 | Catalog UI | Handsontable 17 | Dense editable table, filters, sorting, copy/paste and autosave |
 | Spatial UI | `dockview-core` 5 | Tabs, splits, panel persistence and document/tool pods |
 | Database | PostgreSQL via `pg` | Catalog, library hierarchy, memberships and enrichment queue |
-| Object storage | Cloudflare R2 via AWS SDK v3 S3 client | Originals and all generated derivatives |
+| Object storage | Wasabi via AWS SDK v3 S3 client | Originals and all generated derivatives |
 | Parsing | Python 3.11+, Docling 2.x | PDF/EPUB/DOCX structure and text extraction |
 | Local AI | Ollama with structured JSON output; production model `qwen3:1.7b` | Candidate title, authors and year |
 | Bibliographic providers | Google Books API and Open Library | ISBN/title/author validation and enrichment |
@@ -50,7 +50,7 @@ graph TD
 ```text
 apps/
   web/                 Astro pages, APIs, authentication and workspace UI
-  worker/              PostgreSQL job consumer, R2 transport and metadata identification
+  worker/              PostgreSQL job consumer, Wasabi transport and metadata identification
 packages/
   core/                Canonical bibliography types, identifiers, citekeys and health
   catalog/             PostgreSQL schema and catalog operations
@@ -88,7 +88,7 @@ Canonical records scoped by `owner_key`. Important fields include citekey, type,
 
 ### `catalog_artifacts`
 
-Links a reference to an R2 object. Every artifact retains kind, provider, object key, bucket, MIME type, size, SHA-256 and optional ETag.
+Links a reference to an Wasabi object. Every artifact retains kind, provider, object key, bucket, MIME type, size, SHA-256 and optional ETag.
 
 Artifact kinds currently stored by the production pipeline:
 
@@ -123,18 +123,18 @@ PDF annotation is part of the document visualizer: PDF.js renders canvas and sel
 
 ### `catalog_identities`
 
-Authentik email is mutable and is not a durable ownership identifier. Middleware binds the OIDC provider plus stable `sub` claim to the existing opaque `owner_key`, updates current email as profile metadata, and caches the alias for legacy routes. The account dashboard can recover a previous email-derived catalog only for configured Authentik/Seshat administrators and only when the target catalog is not linked to another identity. A non-empty current catalog is merged transactionally after checking duplicate originals and conflicting library names; R2 objects remain in place because artifact rows retain exact keys.
+Authentik email is mutable and is not a durable ownership identifier. Middleware binds the OIDC provider plus stable `sub` claim to the existing opaque `owner_key`, updates current email as profile metadata, and caches the alias for legacy routes. The account dashboard can recover a previous email-derived catalog only for configured Authentik/Seshat administrators and only when the target catalog is not linked to another identity. A non-empty current catalog is merged transactionally after checking duplicate originals and conflicting library names; Wasabi objects remain in place because artifact rows retain exact keys.
 
-The username opens `/dashboard`, which aggregates items, exact extracted word counts, annotations, libraries, publication years, structured authors and tags. Word counts are recorded by the Docling worker from generated Markdown; `npm run backfill:words -- --apply` fills existing zero-count records from private R2 derivatives.
+The username opens `/dashboard`, which aggregates items, exact extracted word counts, annotations, libraries, publication years, structured authors and tags. Word counts are recorded by the Docling worker from generated Markdown; `npm run backfill:words -- --apply` fills existing zero-count records from private Wasabi derivatives.
 
 ## Upload and ingestion data flow
 
 1. The authenticated user drops PDF, EPUB, DOCX, TXT or BibTeX on `/workspace`.
 2. Document files are uploaded directly to `POST /api/intake/documents`; the browser stays in the workspace and reports progress in the bottom HUD.
-3. The API validates type/size, computes SHA-256, deduplicates per owner and writes the original to R2 under `seshat/{ownerKey}/{referenceId}/original/...`.
+3. The API validates type/size, computes SHA-256, deduplicates per owner and writes the original below the user's virtual Wasabi root. Configured library-root identities map to `zzttuntref/libros/`; ordinary users map to `zzttuntref/lseshat/{user}/`. These physical prefixes are not rendered in the sidebar.
 4. One reference, one original artifact, library membership and four gated job rows are committed in PostgreSQL.
 5. The worker claims one queued `extract`/`identify` job using `FOR UPDATE SKIP LOCKED` and processes jobs serially.
-6. For extraction, the worker downloads the original to a temporary directory, invokes `python -m seshat_ingest.cli`, uploads derivatives under `seshat/{ownerKey}/{referenceId}/derived/docling/`, records them, and removes the temporary directory in `finally`.
+6. For extraction, the worker downloads the original to a temporary directory, invokes `python -m seshat_ingest.cli`, uploads derivatives under `{virtualRoot}/.seshat/{referenceId}/derived/docling/`, records them, and removes the temporary directory in `finally`.
 7. The browser polls the authenticated status endpoint and updates the same Handsontable row; it never navigates to a separate extraction screen.
 8. Once structure exists, the HUD and document toolbar can open it as a Dockview pod.
 
@@ -182,7 +182,7 @@ PDFs use the authenticated original stream in an iframe. EPUB/DOCX/TXT use the D
 The leading `×` in Handsontable deletes without confirmation, by explicit product decision. The server:
 
 1. marks jobs failed to cancel queued/running work;
-2. deletes every cataloged artifact and every object under the reference R2 prefix;
+2. deletes every Seshat-managed cataloged artifact while preserving manually uploaded `wasabi-linked` originals;
 3. deletes the reference, cascading artifacts, jobs and memberships in PostgreSQL;
 4. the browser closes associated pods and removes the row only after the API succeeds.
 
@@ -191,10 +191,21 @@ The worker checks that an extraction job is still `running` before each derivati
 ## Security and ownership
 
 - Every protected route derives an opaque `ownerKey` by hashing the authenticated email.
-- Catalog writes include `owner_key`; catalog and R2 reads additionally honor explicit library shares. Shared records are read-only.
+- Catalog writes include `owner_key`; catalog and Wasabi reads additionally honor explicit library shares. Shared records are read-only.
 - Session and CSRF cookies are HTTP-only, SameSite Lax and secure in production.
 - Uploads are limited to 256 MiB per document; BibTeX files are limited to 10 MiB.
 - Original and derivative responses use `private, no-store`.
 - Literal credentials must never enter the repository or documentation.
 
 Known security follow-up: Astro currently has `security.checkOrigin: false`; review whether it can be re-enabled behind Caddy without breaking Auth.js callbacks.
+# Scholarly paper association pipeline
+
+PDF papers follow a deterministic pipeline alongside the general document pipeline:
+
+1. The worker hashes the original and extracts embedded metadata, first-page heuristics, DOI candidates, abstract, and parsed references locally with PDF.js and the existing Docling output.
+2. `OpenAlexClient` resolves DOI first, then OpenAlex ID, then conservative title/year/author candidates. Close matches remain `ambiguous` until a user confirms one.
+3. Enrichment is cached in PostgreSQL and merged without replacing fields listed in `source.curation.manualFields`.
+4. `catalog_papers` stores extraction, resolution, OpenAlex payload, expansion bounds, and provenance. The existing `catalog_graph_nodes` and `catalog_graph_edges` tables store the heterogeneous graph; no graph database is required.
+5. `scholarly-v1` builds stable paper, author, topic, venue, institution, and collection nodes. It records directed citations and deterministic bibliographic-coupling, co-citation, shared-author, shared-topic, and collection associations with inspectable evidence.
+
+Expansion is deliberately one citation hop and capped at 100 references and 50 citing works per paper. Re-running the pipeline is idempotent because nodes and edges use stable IDs and pipeline-scoped replacement.

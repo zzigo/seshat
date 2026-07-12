@@ -1,7 +1,7 @@
 <!-- generated-by: gsd-doc-writer -->
 # Seshat documentation
 
-Seshat is a modular, source-aware bibliography system for collecting references, preserving their documents in Cloudflare R2, extracting structure with Docling, and preparing the corpus for human and local-agent curation.
+Seshat is a modular, source-aware bibliography system for collecting references, preserving their documents in Wasabi, extracting structure with Docling, and preparing the corpus for human and local-agent curation.
 
 This directory is the operational source of truth for developers and agents. Start with the architecture and handoff documents, then follow the task-specific guide.
 
@@ -25,17 +25,17 @@ This directory is the operational source of truth for developers and agents. Sta
 - Authenticated Astro workspace with hierarchical libraries and a dense Handsontable catalog.
 - Dockview pods for PDF, extracted text, document structure and future analysis/annotation/agent tools.
 - Inline drag-and-drop for PDF, EPUB, DOCX, TXT and BibTeX without leaving the workspace.
-- Cloudflare R2 originals and derivatives; the VPS uses temporary files only during extraction.
+- Wasabi originals and derivatives; the VPS uses temporary files only during extraction.
 - Docling derivatives: structured JSON, Markdown, hierarchical chunks and a compact document map.
 - Local Ollama inference for title, author and year, with Google Books and Open Library validation/fallback.
 - Manual metadata protected from later automatic overwrite.
-- Immediate deletion of a reference, its PostgreSQL rows and all known R2 objects.
+- Immediate deletion of a reference, its PostgreSQL rows and all known Wasabi objects.
 - Trusted, owner-scoped citation search for editors such as Musiki.
 
 ## Important boundaries
 
 - Each consuming application or deployment owns separate data and credentials. Packages are shared; catalogs are not.
-- PostgreSQL is the catalog and queue authority. R2 is the binary/document authority.
+- PostgreSQL is the catalog and queue authority. Wasabi is the binary/document authority.
 - Zotero is an adapter, not the canonical schema.
 - Dockview is the spatial runtime, not the domain model.
 - `summarize` and `relate` are represented in the queue but are not yet executed by the worker.

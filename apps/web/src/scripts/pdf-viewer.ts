@@ -4,6 +4,13 @@ import { annotationColors, mountAnnotationWorkspace, type Annotation } from './a
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 const SIDEBAR_WIDTH_KEY = 'seshat.pdf.annotation-sidebar-width';
+const pendingPdfPages = new Map<string, number>();
+
+export const navigatePdfToPage = (referenceId: string, page: number): void => {
+  const target = Math.max(1, Math.floor(page));
+  pendingPdfPages.set(referenceId, target);
+  window.dispatchEvent(new CustomEvent('seshat:pdf-goto-reference-page', { detail: { referenceId, page: target } }));
+};
 
 type PdfAnchor = {
   quote: string; prefix: string; suffix: string; startOffset: number; endOffset: number;
@@ -19,6 +26,7 @@ export async function mountPdfViewer(
 ): Promise<() => void> {
   const shell = document.createElement('div'); shell.className = 'seshat-pdf-shell';
   const viewer = document.createElement('div'); viewer.className = 'seshat-pdf-viewer';
+  viewer.tabIndex = 0;
   const pages = document.createElement('div'); pages.className = 'seshat-pdf-pages'; viewer.appendChild(pages);
   const sidebar = document.createElement('aside'); sidebar.className = 'seshat-pdf-annotations';
   const savedSidebarWidth = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
@@ -30,6 +38,8 @@ export async function mountPdfViewer(
   toggle.addEventListener('click', () => {
     const open = !shell.classList.contains('annotations-open'); shell.classList.toggle('annotations-open', open); toggle.setAttribute('aria-expanded', String(open));
   });
+  const propertiesToggle = document.createElement('button'); propertiesToggle.type = 'button'; propertiesToggle.className = 'pdf-properties-toggle'; propertiesToggle.textContent = 'ⓘ'; propertiesToggle.title = 'Item properties'; propertiesToggle.setAttribute('aria-label','Toggle item properties');
+  propertiesToggle.addEventListener('click',() => window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId } })));
   const setSidebarWidth = (width: number) => {
     const maximum = Math.max(280, Math.min(620, shell.getBoundingClientRect().width * .68));
     const next = Math.round(Math.max(240, Math.min(maximum, width)));
@@ -47,7 +57,7 @@ export async function mountPdfViewer(
     const current = sidebar.getBoundingClientRect().width || 340; setSidebarWidth(current + (event.key === 'ArrowLeft' ? 20 : -20));
   });
   const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = 'Loading PDF…';
-  pages.appendChild(progress); shell.append(viewer, sidebar, toggle); element.replaceChildren(shell);
+  pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle); element.replaceChildren(shell);
 
   let annotations: Annotation[] = [];
   let pending: PdfAnchor | null = null;
@@ -162,7 +172,9 @@ export async function mountPdfViewer(
     const noteLabel = document.createElement('label'); noteLabel.textContent = 'Comment'; const note = document.createElement('textarea'); note.rows = 5; noteLabel.appendChild(note);
     const targetLabel = document.createElement('label'); targetLabel.textContent = 'Targets (comma separated)'; const targets = document.createElement('input'); targetLabel.appendChild(targets);
     const footer = document.createElement('footer'); const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'primary'; submit.textContent = 'Save'; footer.appendChild(submit);
-    form.append(head, quote, colors, typeLabel, targetLabel, noteLabel, footer); dialog.appendChild(form); document.body.appendChild(dialog);
+    form.append(head, quote, colors, typeLabel, targetLabel, noteLabel, footer); dialog.appendChild(form);
+    const parentContainer = document.fullscreenElement || document.querySelector('.maximized-pod') || document.body;
+    parentContainer.appendChild(dialog);
     dialog.addEventListener('close', () => { dialogs.delete(dialog); dialog.remove(); }); form.addEventListener('submit', (event) => { event.preventDefault(); void save(anchor, selected, { noteType: type.value || undefined, note: note.value, targets: targets.value.split(',').map((item) => item.trim()).filter(Boolean) }); dialog.close(); });
     dialog.showModal(); note.focus();
   }
@@ -176,10 +188,227 @@ export async function mountPdfViewer(
     if (pending && index >= 0 && index < annotationColors.length) { event.preventDefault(); void save(pending, annotationColors[index]); }
     else if (pending && event.key.toLowerCase() === 'm') { event.preventDefault(); openComposer(pending); }
   };
-  viewer.addEventListener('mouseup', () => window.setTimeout(showPalette)); document.addEventListener('keydown', keyboard); window.addEventListener('seshat:annotations-changed', changed);
+  viewer.addEventListener('mouseup', () => window.setTimeout(showPalette));
+  viewer.addEventListener('touchend', () => window.setTimeout(showPalette));
+  document.addEventListener('keydown', keyboard); window.addEventListener('seshat:annotations-changed', changed);
+
+  // Local pinch-to-zoom for PDF pages with midpoint scroll-centering
+  let touchStartDist = 0;
+  let currentZoom = 1.0;
+  let zoomStart = 1.0;
+  let touchCenterX = 0;
+  let touchCenterY = 0;
+  let contentX = 0;
+  let contentY = 0;
+
+  viewer.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDist = Math.sqrt(dx * dx + dy * dy);
+      zoomStart = currentZoom;
+
+      const rect = viewer.getBoundingClientRect();
+      touchCenterX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      touchCenterY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+
+      contentX = (viewer.scrollLeft + touchCenterX) / currentZoom;
+      contentY = (viewer.scrollTop + touchCenterY) / currentZoom;
+    }
+  }, { passive: false });
+
+  viewer.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (touchStartDist > 0) {
+        const factor = dist / touchStartDist;
+        currentZoom = Math.max(0.5, Math.min(3.0, zoomStart * factor));
+        pages.style.zoom = String(currentZoom);
+        if (!('zoom' in document.documentElement.style)) {
+          pages.style.transform = `scale(${currentZoom})`;
+          pages.style.transformOrigin = 'top left';
+        }
+        viewer.scrollLeft = contentX * currentZoom - touchCenterX;
+        viewer.scrollTop = contentY * currentZoom - touchCenterY;
+      }
+    }
+  }, { passive: false });
+
+  viewer.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) {
+      touchStartDist = 0;
+    }
+  }, { passive: true });
+
+  viewer.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const rect = viewer.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const px = (viewer.scrollLeft + mouseX) / currentZoom;
+      const py = (viewer.scrollTop + mouseY) / currentZoom;
+
+      const delta = -e.deltaY * 0.01;
+      currentZoom = Math.max(0.5, Math.min(3.0, currentZoom + delta));
+      pages.style.zoom = String(currentZoom);
+      if (!('zoom' in document.documentElement.style)) {
+        pages.style.transform = `scale(${currentZoom})`;
+        pages.style.transformOrigin = 'top left';
+      }
+      viewer.scrollLeft = px * currentZoom - mouseX;
+      viewer.scrollTop = py * currentZoom - mouseY;
+    }
+  }, { passive: false });
+
+  const parent = element.parentElement || element;
+
+  const handleZoomReset = () => {
+    currentZoom = 1.0;
+    pages.style.zoom = '1.0';
+    pages.style.transform = '';
+    viewer.scrollTop = 0;
+    viewer.scrollLeft = (viewer.scrollWidth - viewer.clientWidth) / 2;
+  };
+
+  const handleGotoPage = (e: any) => {
+    const pageNum = e.detail.page;
+    const pageEl = pages.querySelector<HTMLElement>(`[data-page="${pageNum}"]`);
+    if (pageEl) {
+      const containerRect = viewer.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+      const relativeTop = pageRect.top - containerRect.top + viewer.scrollTop;
+      viewer.scrollTo({
+        top: relativeTop,
+        behavior: 'smooth'
+      });
+    }
+  };
+  const handleReferencePage = (event: Event) => {
+    const detail = (event as CustomEvent<{ referenceId?: string; page?: number }>).detail;
+    if (detail?.referenceId !== referenceId || !detail.page) return;
+    pendingPdfPages.delete(referenceId);
+    handleGotoPage({ detail });
+  };
+
+  const handleToggleDouble = (e: any) => {
+    const active = e.detail.active;
+    pages.classList.toggle('double-page-view', active);
+    viewer.dispatchEvent(new Event('scroll'));
+  };
+
+  const handleToggleMosaic = (e: any) => {
+    const active = e.detail.active;
+    pages.classList.toggle('mosaic-page-view', active);
+    viewer.dispatchEvent(new Event('scroll'));
+  };
+
+  const handleToggleInvert = (e: any) => {
+    const active = e.detail.active;
+    viewer.classList.toggle('inverted-doc-parent', active);
+    pages.classList.toggle('inverted-doc', active);
+  };
+
+  parent.addEventListener('seshat:pdf-zoom-reset', handleZoomReset);
+  parent.addEventListener('seshat:pdf-goto-page', handleGotoPage);
+  parent.addEventListener('seshat:pdf-toggle-double', handleToggleDouble);
+  parent.addEventListener('seshat:pdf-toggle-mosaic', handleToggleMosaic);
+  parent.addEventListener('seshat:doc-toggle-invert', handleToggleInvert);
+  window.addEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
+  const pendingPage = pendingPdfPages.get(referenceId);
+  if (pendingPage) handleReferencePage(new CustomEvent('pending', { detail: { referenceId, page: pendingPage } }));
+
+  // Active page change observer
+  let currentPage = 1;
+  const total = pdf.numPages;
+  const readerKeyboard = (event: KeyboardEvent) => {
+    if ((event.target as HTMLElement)?.matches('input,textarea,select,[contenteditable="true"]')) return;
+    let page: number | null = null;
+    if (event.key === 'ArrowLeft') page = currentPage - 1;
+    else if (event.key === 'ArrowRight') page = currentPage + 1;
+    else if (event.key === '0') page = 1;
+    else if (event.key === 'G') page = total;
+    else if (event.key === 'g') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'grid' } })); return; }
+    else if (event.key === 'b') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'book' } })); return; }
+    if (page === null) return;
+    event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: Math.max(1, Math.min(total, page)) } }));
+  };
+  viewer.addEventListener('keydown', readerKeyboard);
+  viewer.addEventListener('pointerdown', () => viewer.focus({ preventScroll: true }));
+  const pageChangeObserver = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting);
+    if (visible.length > 0) {
+      visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+      const pageNum = Number((visible[0].target as HTMLElement).dataset.page);
+      currentPage = pageNum;
+      parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed', {
+        detail: { page: pageNum, total }
+      }));
+    }
+  }, { root: viewer, threshold: 0.15 });
+
+  pages.querySelectorAll<HTMLElement>('.seshat-pdf-page').forEach((pageEl) => {
+    pageChangeObserver.observe(pageEl);
+  });
+
+  // Margin invisible page turning areas (25% left/right edges)
+  const handleMarginClicks = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a, input, select, .annotation-surface, .annotation-comment-form')) return;
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) return;
+
+    const rect = viewer.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = clickX / rect.width;
+
+    if (ratio < 0.25) {
+      if (currentPage > 1) {
+        parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage - 1 } }));
+      }
+    } else if (ratio > 0.75) {
+      if (currentPage < total) {
+        parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage + 1 } }));
+      }
+    }
+  };
+
+  // Double tap/click to reset zoom to 1:1
+  const handleDoubleClicks = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a, input, select')) return;
+    parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));
+  };
+
+  viewer.addEventListener('click', handleMarginClicks);
+  viewer.addEventListener('dblclick', handleDoubleClicks);
+
+  // Initial dispatch
+  parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed', {
+    detail: { page: 1, total }
+  }));
 
   return () => {
-    disposed = true; observer.disconnect(); renderTasks.forEach((task) => task.cancel()); disposeIndex(); palette.remove(); dialogs.forEach((dialog) => dialog.remove());
-    document.removeEventListener('keydown', keyboard); window.removeEventListener('seshat:annotations-changed', changed); void pdf.destroy();
+    disposed = true;
+    observer.disconnect();
+    pageChangeObserver.disconnect();
+    renderTasks.forEach((task) => task.cancel());
+    disposeIndex();
+    palette.remove();
+    dialogs.forEach((dialog) => dialog.remove());
+    document.removeEventListener('keydown', keyboard);
+    window.removeEventListener('seshat:annotations-changed', changed);
+    parent.removeEventListener('seshat:pdf-zoom-reset', handleZoomReset);
+    parent.removeEventListener('seshat:pdf-goto-page', handleGotoPage);
+    parent.removeEventListener('seshat:pdf-toggle-double', handleToggleDouble);
+    parent.removeEventListener('seshat:pdf-toggle-mosaic', handleToggleMosaic);
+    parent.removeEventListener('seshat:doc-toggle-invert', handleToggleInvert);
+    window.removeEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
+    viewer.removeEventListener('click', handleMarginClicks);
+    viewer.removeEventListener('dblclick', handleDoubleClicks);
+    viewer.removeEventListener('keydown', readerKeyboard);
+    void pdf.destroy();
   };
 }

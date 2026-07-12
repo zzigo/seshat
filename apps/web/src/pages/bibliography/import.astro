@@ -12,6 +12,20 @@ const batch = Astro.url.searchParams.get('batch') || '';
   </section>
   <section class="bib-board" data-bib-board data-batch={batch}>
     <div class="intake-summary"><span data-summary>Opening bibliography…</span><span data-errors></span></div>
+    <div class="bib-import-layout">
+      <aside class="bib-tree-preview">
+        <div class="eyebrow">Tree preview</div>
+        <div data-tree-preview><p>Reading attachment paths…</p></div>
+      </aside>
+      <div class="bib-import-main">
+        <div class="bib-storage-summary" data-storage-summary></div>
+        <div class="bib-import-actions">
+          <label><span>Fallback folder for records without a file</span><input data-library-name maxlength="160" value="BibTeX import" /></label>
+          <button class="button primary" type="button" data-import disabled>Create tree and import</button>
+          <output data-import-status aria-live="polite"></output>
+        </div>
+      </div>
+    </div>
     <div class="bib-list" data-bib-list></div>
   </section>
   <script is:inline set:html={`${stagedFilesScript}
@@ -20,9 +34,46 @@ const batch = Astro.url.searchParams.get('batch') || '';
       const list = board.querySelector('[data-bib-list]');
       const summary = board.querySelector('[data-summary]');
       const errors = board.querySelector('[data-errors]');
+      const treePreview = board.querySelector('[data-tree-preview]');
+      const storageSummary = board.querySelector('[data-storage-summary]');
+      const importButton = board.querySelector('[data-import]');
+      const importStatus = board.querySelector('[data-import-status]');
+      const libraryName = board.querySelector('[data-library-name]');
+      let sourceRows = [];
       const authorText = (fields) => (fields.author || []).map((person) => [person.lastName, person.firstName].filter(Boolean).join(', ')).join(' · ');
+      const renderTree = (entries) => {
+        const root = { children: new Map(), files: [] };
+        entries.forEach((entry) => {
+          const attachment = entry.attachment;
+          if (!attachment) return;
+          let cursor = root;
+          attachment.directories.forEach((segment) => {
+            if (!cursor.children.has(segment)) cursor.children.set(segment, { children: new Map(), files: [] });
+            cursor = cursor.children.get(segment);
+          });
+          cursor.files.push({ name: attachment.filename, status: attachment.status });
+        });
+        const branch = (node) => {
+          const list = document.createElement('ul');
+          [...node.children.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([name, child]) => {
+            const item = document.createElement('li'); const label = document.createElement('strong'); label.textContent = name + '/';
+            item.append(label, branch(child)); list.appendChild(item);
+          });
+          node.files.forEach((file) => {
+            const item = document.createElement('li'); item.className = 'bib-tree-file';
+            const name = document.createElement('span'); name.textContent = file.name;
+            const mark = document.createElement('small'); mark.dataset.status = file.status;
+            mark.textContent = file.status === 'linked' ? 'linked' : file.status;
+            item.append(name, mark); list.appendChild(item);
+          });
+          return list;
+        };
+        treePreview.replaceChildren();
+        if (!root.children.size && !root.files.length) { treePreview.textContent = 'No compatible file paths were found; records will use the fallback folder.'; return; }
+        treePreview.appendChild(branch(root));
+      };
       const run = async () => {
-        const rows = (await readSeshatBatch(board.dataset.batch || '')).filter((row) => row.extension === 'bib');
+        const rows = (await readSeshatBatch(board.dataset.batch || '')).filter((row) => row.extension === 'bib'); sourceRows = rows;
         const form = new FormData();
         rows.forEach((row) => form.append('files', row.file, row.name));
         if (!rows.length) throw new Error('No .bib file found in this batch.');
@@ -31,6 +82,12 @@ const batch = Astro.url.searchParams.get('batch') || '';
         if (!response.ok) throw new Error(result.error || 'Could not parse bibliography.');
         summary.textContent = result.entries.length + (result.entries.length === 1 ? ' reference' : ' references') + ' · ' + rows.length + (rows.length === 1 ? ' source' : ' sources');
         errors.textContent = result.errors.length ? result.errors.length + ' issues need attention' : 'syntax healthy';
+        const unavailable = Number(result.storage.unavailable || 0);
+        storageSummary.textContent = result.storage.linked + ' existing files linked · ' + result.storage.missing + ' missing · ' + result.storage.withoutAttachment + ' records without file';
+        storageSummary.dataset.tone = unavailable ? 'error' : (result.storage.missing ? 'warning' : 'ready');
+        if (unavailable) storageSummary.textContent += ' · Wasabi unavailable';
+        renderTree(result.entries);
+        importButton.disabled = Boolean(unavailable);
         const seen = new Set();
         result.entries.forEach((entry) => {
           const duplicate = seen.has(entry.key); seen.add(entry.key);
@@ -40,12 +97,42 @@ const batch = Astro.url.searchParams.get('batch') || '';
           row.innerHTML = '<span class="file-kind">' + entry.type + '</span><div class="bib-copy"><strong></strong><p></p><small></small></div><code></code><span class="health-mark">' + (duplicate ? 'duplicate key' : 'ready') + '</span>';
           row.querySelector('strong').textContent = title;
           row.querySelector('p').textContent = authorText(entry.fields) || 'Author missing';
-          row.querySelector('small').textContent = entry.fields.year || 'Year missing';
+          row.querySelector('small').textContent = entry.fields.year || entry.fields.date || 'Year missing';
           row.querySelector('code').textContent = '@' + entry.key;
+          if (entry.attachment) row.querySelector('.health-mark').textContent = entry.attachment.status;
           list.appendChild(row);
         });
       };
+      importButton.addEventListener('click', async () => {
+        importButton.disabled = true; importStatus.textContent = 'Creating folders, importing records and linking Wasabi objects…';
+        try {
+          const form = new FormData(); sourceRows.forEach((row) => form.append('files', row.file, row.name));
+          form.set('libraryName', libraryName.value || 'BibTeX import');
+          const response = await fetch('/api/bibliography/import', { method: 'POST', body: form });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Import failed.');
+          importStatus.textContent = result.imported + ' references imported · ' + result.linked + ' files linked' + (result.missing.length ? ' · ' + result.missing.length + ' missing' : '');
+          window.setTimeout(() => { window.location.href = '/workspace'; }, 900);
+        } catch (error) { importStatus.textContent = error.message || 'Import failed.'; importButton.disabled = false; }
+      });
       run().catch((error) => { summary.textContent = error.message; errors.textContent = 'import stopped'; });
     })();
   `} />
 </Shell>
+
+<style>
+  .bib-import-layout { display:grid; grid-template-columns:minmax(16rem, .8fr) minmax(22rem, 1.2fr); gap:1rem; padding:1rem 0; }
+  .bib-tree-preview, .bib-import-main { border:1px solid var(--c-border, #d9d4ca); border-radius:.7rem; padding:1rem; background:var(--c-panel, #fff); }
+  .bib-tree-preview ul { list-style:none; margin:.35rem 0 .35rem .7rem; padding-left:.65rem; border-left:1px solid var(--c-border, #d9d4ca); }
+  .bib-tree-preview > div > ul { margin-left:0; padding-left:0; border-left:0; }
+  .bib-tree-preview li { margin:.3rem 0; font-size:.86rem; }
+  .bib-tree-file { display:flex; justify-content:space-between; gap:.75rem; color:var(--c-muted, #706b62); }
+  .bib-tree-file small[data-status="linked"] { color:#32734b; }
+  .bib-tree-file small[data-status="missing"], .bib-storage-summary[data-tone="warning"] { color:#9a641f; }
+  .bib-storage-summary[data-tone="error"] { color:#a33; }
+  .bib-import-actions { display:grid; gap:.75rem; margin-top:1rem; }
+  .bib-import-actions label { display:grid; gap:.35rem; font-size:.78rem; }
+  .bib-import-actions input { width:100%; padding:.65rem; }
+  [data-import-status] { min-height:1.3em; font-size:.82rem; }
+  @media (max-width: 760px) { .bib-import-layout { grid-template-columns:1fr; } }
+</style>

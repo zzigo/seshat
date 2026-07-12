@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { parse } from '@retorquere/bibtex-parser';
+import { inspectBibEntries } from '../../../lib/bibliography-import';
 
 const MAX_BIB_BYTES = 10 * 1024 * 1024;
 
@@ -14,12 +15,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return Response.json({ error: 'Bibliographies must be .bib files smaller than 10 MB.' }, { status: 413 });
   }
 
-  const entries: unknown[] = [];
+  const entries: any[] = [];
   const errors: unknown[] = [];
   for (const file of files) {
     const result = parse(await file.text());
     entries.push(...result.entries.map((entry) => ({ ...entry, sourceFile: file.name })));
     errors.push(...result.errors.map((error) => ({ ...error, sourceFile: file.name })));
   }
-  return Response.json({ entries, errors });
+  const identity = { email: String((locals.session as any)?.user?.email || ''), name: String((locals.session as any)?.user?.name || '') };
+  const inspected = await inspectBibEntries(entries, identity);
+  return Response.json({
+    entries: inspected.map(({ entry, attachment }) => ({ ...entry, attachment })),
+    errors,
+    storage: {
+      linked: inspected.filter((item) => item.attachment?.status === 'linked').length,
+      missing: inspected.filter((item) => item.attachment?.status === 'missing').length,
+      withoutAttachment: inspected.filter((item) => !item.attachment).length,
+      unavailable: inspected.filter((item) => item.attachment?.status === 'storage-unavailable').length,
+    },
+  });
 };

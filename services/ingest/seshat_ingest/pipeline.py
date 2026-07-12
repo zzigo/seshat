@@ -55,6 +55,7 @@ class IngestManifest:
     source_size_bytes: int
     parser: str
     parser_version: str | None
+    ocr: bool
     created_at: str
     artifacts: tuple[GeneratedArtifact, ...]
 
@@ -119,6 +120,119 @@ def _markdown_structure(markdown: str) -> dict[str, Any]:
     return {"schemaVersion": 1, "sections": sections}
 
 
+def _semantic_section(title: str) -> str:
+    normalized = re.sub(r"[^a-záéíóúüñ]+", " ", title.casefold()).strip()
+    normalized = re.sub(r"^\d+(?:\s+\d+)*\s+", "", normalized)
+    patterns = (
+        ("toc", r"^(table of contents|contents|índice|indice|contenido)$"),
+        ("introduction", r"^(introduction|introducción|introduccion)(\b|$)"),
+        ("references", r"^(references|bibliography|works cited|referencias|bibliografía|bibliografia)(\b|$)"),
+        ("appendix", r"^(appendix|appendices|apéndice|apendice|anexo)(\b|$)"),
+    )
+    return next((kind for kind, pattern in patterns if re.search(pattern, normalized)), "section")
+
+
+def _section_level(title: str, explicit: Any) -> int:
+    numbered = re.match(r"^\s*(\d+(?:\.\d+){0,5})(?:[.)]|\s)", title)
+    if numbered:
+        return min(6, numbered.group(1).count(".") + 1)
+    return max(1, min(6, int(explicit) if isinstance(explicit, int) else 1))
+
+
+def _docling_structure(document: dict[str, Any], markdown: str) -> dict[str, Any]:
+    """Build a compact, page-addressable outline from Docling's durable model."""
+    collections = {
+        key: value for key, value in document.items()
+        if isinstance(value, list) and key in {
+            "texts", "pictures", "tables", "groups", "key_value_items", "form_items"
+        }
+    }
+
+    def resolve(reference: Any) -> dict[str, Any] | None:
+        path = reference.get("$ref", "") if isinstance(reference, dict) else ""
+        match = re.fullmatch(r"#/(\w+)/(\d+)", path)
+        if not match:
+            return None
+        rows = collections.get(match.group(1), [])
+        index = int(match.group(2))
+        return rows[index] if index < len(rows) else None
+
+    def page_of(item: dict[str, Any]) -> int | None:
+        provenance = item.get("prov")
+        if not isinstance(provenance, list):
+            return None
+        for entry in provenance:
+            page = entry.get("page_no") if isinstance(entry, dict) else None
+            if isinstance(page, int) and page > 0:
+                return page
+        return None
+
+    ordered: list[dict[str, Any]] = []
+
+    def walk(reference: Any) -> None:
+        item = resolve(reference)
+        if not item:
+            return
+        if item.get("label") in {"page_header", "page_footer"} or item.get("content_layer") == "furniture":
+            return
+        if isinstance(item.get("children"), list) and item.get("label") in {"list", "ordered_list", "group"}:
+            for child in item["children"]:
+                walk(child)
+            return
+        ordered.append(item)
+
+    body = document.get("body")
+    for child in body.get("children", []) if isinstance(body, dict) else []:
+        walk(child)
+
+    sections: list[dict[str, Any]] = []
+    blocks: list[dict[str, Any]] = []
+    parents: list[tuple[int, str]] = []
+    current_section: str | None = None
+    kind_map = {
+        "text": "paragraph", "paragraph": "paragraph", "formula": "formula",
+        "picture": "picture", "table": "table", "list_item": "list",
+        "caption": "caption", "code": "code", "checkbox_selected": "form",
+        "checkbox_unselected": "form", "key_value_area": "form",
+    }
+
+    for item in ordered:
+        label = str(item.get("label") or "text")
+        text = str(item.get("text") or item.get("orig") or "").strip()
+        page = page_of(item)
+        if label in {"section_header", "title"} and text:
+            level = _section_level(text, item.get("level", 1))
+            while parents and parents[-1][0] >= level:
+                parents.pop()
+            section_id = f"section-{len(sections) + 1}"
+            sections.append({
+                "id": section_id,
+                "level": level,
+                "title": text,
+                "parentId": parents[-1][1] if parents else None,
+                "page": page,
+                "kind": _semantic_section(text),
+            })
+            parents.append((level, section_id))
+            current_section = section_id
+            continue
+        kind = kind_map.get(label, "paragraph")
+        if kind == "paragraph" and not text:
+            continue
+        blocks.append({
+            "id": f"block-{len(blocks) + 1}",
+            "kind": kind,
+            "label": label,
+            "page": page,
+            "sectionId": current_section,
+            "text": text[:240] if text else None,
+        })
+
+    if not sections and not blocks:
+        return _markdown_structure(markdown)
+    return {"schemaVersion": 2, "sections": sections, "blocks": blocks}
+
+
 def _default_converter(*, ocr: bool) -> Converter:
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -126,6 +240,9 @@ def _default_converter(*, ocr: bool) -> Converter:
 
     pdf_options = PdfPipelineOptions()
     pdf_options.do_ocr = ocr
+    if ocr:
+        from docling.datamodel.pipeline_options import RapidOcrOptions
+        pdf_options.ocr_options = RapidOcrOptions()
     return DocumentConverter(format_options={
         InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
     })
@@ -173,7 +290,8 @@ def ingest_document(
     else:
         conversion = (converter or _default_converter(ocr=request.ocr)).convert(source)
         document = conversion.document
-        json_bytes = json.dumps(document.export_to_dict(), ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+        document_dict = document.export_to_dict()
+        json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
         markdown_bytes = document.export_to_markdown().encode("utf-8")
         chunk_rows = list((chunker or _default_chunks)(document))
     chunk_bytes = b"".join(
@@ -181,7 +299,8 @@ def ingest_document(
         for row in chunk_rows
     )
     structure_bytes = json.dumps(
-        _markdown_structure(markdown_bytes.decode("utf-8")),
+        _docling_structure(document_dict, markdown_bytes.decode("utf-8")) if source.suffix.lower() != ".txt"
+        else _markdown_structure(markdown_bytes.decode("utf-8")),
         ensure_ascii=False,
         indent=2,
     ).encode("utf-8")
@@ -201,6 +320,7 @@ def ingest_document(
         source_size_bytes=source.stat().st_size,
         parser="plain-text" if source.suffix.lower() == ".txt" else "docling",
         parser_version=request.parser_version,
+        ocr=request.ocr,
         created_at=timestamp,
         artifacts=artifacts,
     )
