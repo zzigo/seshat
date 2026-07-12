@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeReaderLanguage, splitReadingSentences } from '../src/scripts/read-aloud';
+import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 
 test('segments reading text while preserving annotation offsets', () => {
   const source = '# Uno\n\nPrimera frase. Segunda frase con [enlace](https://example.test).';
@@ -16,4 +17,8 @@ test('normalizes catalog and BCP-47 language values for voice selection', () => 
   assert.equal(normalizeReaderLanguage('es-ES'), 'es');
   assert.equal(normalizeReaderLanguage('eng'), 'en');
   assert.equal(normalizeReaderLanguage('en_GB'), 'en');
+});
+
+test('phonemizes Spanish text for Kokoro', async () => {
+  assert.match(await phonemizeSpanish('Hola mundo.'), /ˈola/);
 });
