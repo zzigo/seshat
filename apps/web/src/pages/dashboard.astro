@@ -68,6 +68,19 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       {!stats.topConcepts.length && <div class="dashboard-empty">Resolve papers with OpenAlex to discover concepts.</div>}
     </section>
 
+    <section class="dashboard-panel voice-panel" data-voice-settings>
+      <header><div><span>Reader</span><h2>Voice settings</h2></div><small data-voice-summary>loading installed voices…</small></header>
+      <div class="voice-settings-body">
+        <p>Select the browser and Microsoft voices shown in the Reader menu. With no selection, every installed voice remains visible.</p>
+        <div class="voice-settings-tools">
+          <label><span>Find installed voice</span><input type="search" data-voice-search placeholder="Name or language…" /></label>
+          <button class="button quiet" type="button" data-microsoft-only>Microsoft only</button>
+          <button class="button quiet" type="button" data-show-all>Show all</button>
+        </div>
+        <div class="voice-checklist" data-voice-list aria-live="polite"></div>
+      </div>
+    </section>
+
     <section class="dashboard-panel account-panel">
       <header><div><span>Identity</span><h2>Logto account</h2></div><small>associated logins</small></header>
       <dl>
@@ -95,6 +108,33 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
   </section>
 
   <script>
+    const voiceSettingsRoot = document.querySelector<HTMLElement>('[data-voice-settings]');
+    if (voiceSettingsRoot && 'speechSynthesis' in window) {
+      const key = 'seshat.read-aloud.v1';
+      const readSettings = () => { try { return { engine:'native', voice:'', rate:1, nativeVoices:[], ...JSON.parse(localStorage.getItem(key) || '{}') }; } catch { return { engine:'native', voice:'', rate:1, nativeVoices:[] }; } };
+      const list = voiceSettingsRoot.querySelector<HTMLElement>('[data-voice-list]')!;
+      const search = voiceSettingsRoot.querySelector<HTMLInputElement>('[data-voice-search]')!;
+      const summary = voiceSettingsRoot.querySelector<HTMLElement>('[data-voice-summary]')!;
+      let voices: SpeechSynthesisVoice[] = [];
+      const save = (selected: string[]) => { const settings = readSettings(); localStorage.setItem(key, JSON.stringify({ ...settings, nativeVoices:selected })); };
+      const render = () => {
+        voices = speechSynthesis.getVoices().sort((a,b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+        const settings = readSettings(); const selected = new Set<string>(settings.nativeVoices || []); const query = search.value.trim().toLowerCase();
+        list.replaceChildren();
+        voices.filter((voice) => !query || `${voice.name} ${voice.lang}`.toLowerCase().includes(query)).forEach((voice) => {
+          const label=document.createElement('label'); const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.checked=selected.has(voice.name);
+          const text=document.createElement('span'); text.textContent=voice.name; const language=document.createElement('small'); language.textContent=`${voice.lang}${voice.localService?' · local':''}`;
+          checkbox.onchange=()=>{checkbox.checked?selected.add(voice.name):selected.delete(voice.name);save([...selected]);summary.textContent=selected.size?`${selected.size} of ${voices.length} shown`:`all ${voices.length} shown`;};
+          label.append(checkbox,text,language);list.appendChild(label);
+        });
+        summary.textContent=selected.size?`${selected.size} of ${voices.length} shown`:`all ${voices.length} shown`;
+      };
+      search.addEventListener('input',render);
+      voiceSettingsRoot.querySelector('[data-microsoft-only]')?.addEventListener('click',()=>{save(voices.filter((voice)=>/Microsoft/i.test(voice.name)).map((voice)=>voice.name));render();});
+      voiceSettingsRoot.querySelector('[data-show-all]')?.addEventListener('click',()=>{save([]);render();});
+      speechSynthesis.addEventListener('voiceschanged',render); render();
+    }
+
     // 1. Recover catalog form
     const recoverForm = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
     recoverForm?.addEventListener('submit', async (event) => {
@@ -125,4 +165,8 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
 
 <style>
   .account-dashboard{width:min(1180px,calc(100% - 36px));margin:0 auto;padding:76px 0 100px}.dashboard-head{display:flex;align-items:end;justify-content:space-between;gap:30px;padding-bottom:30px;border-bottom:1px solid var(--ink)}.dashboard-head h1{margin:7px 0 4px;font-size:clamp(40px,6vw,76px)}.dashboard-head p{margin:0;color:var(--muted);font:11px monospace}.dashboard-totals{display:grid;grid-template-columns:repeat(5,1fr);border-left:1px solid var(--ink);margin:22px 0}.dashboard-totals article{min-height:132px;display:flex;flex-direction:column;justify-content:space-between;padding:18px;border-top:1px solid var(--ink);border-right:1px solid var(--ink);border-bottom:1px solid var(--ink);background:rgba(255,255,255,.16)}.dashboard-totals span,.dashboard-panel header span{color:var(--green);font:9px monospace;letter-spacing:.08em;text-transform:uppercase}.dashboard-totals strong{font:42px/1 Georgia,serif}.dashboard-panel{border:1px solid var(--ink);background:rgba(255,255,255,.13)}.dashboard-panel>header{min-height:64px;display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--ink)}.dashboard-panel h2{margin:4px 0 0;font:25px/1.1 Georgia,serif}.dashboard-panel header small{color:var(--muted);font:9px monospace;text-transform:uppercase}.years-panel svg{width:100%;height:auto;display:block;overflow:visible}.years-panel line{stroke:var(--line);stroke-width:1}.year-area{fill:rgba(61,122,88,.11)}.year-line{fill:none;stroke:var(--green);stroke-width:2}.years-panel circle{fill:var(--paper);stroke:var(--gold);stroke-width:2}.years-panel text{fill:var(--muted);font:8px monospace;text-anchor:middle}.dashboard-columns{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin:22px 0}.ranking-panel ol{margin:0;padding:0;list-style:none}.ranking-panel li{min-height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);font:15px Georgia,serif}.ranking-panel li:last-child{border-bottom:0}.ranking-panel li b{color:var(--green);font:10px monospace}.tag-cloud{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;padding:17px}.tag-cloud>span{padding:7px 9px;border:1px solid var(--line);font:calc(10px * var(--weight)) monospace}.tag-cloud b{margin-left:7px;color:var(--green);font-size:8px}.concepts-panel{margin:22px 0}.concept-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));padding:8px}.concept-list span{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:34px;padding:4px 8px;border-bottom:1px solid var(--line);font:11px monospace}.concept-list i{width:8px;height:8px;background:#b07a3c}.concept-list b{color:var(--green);font-size:9px}.dashboard-empty{padding:35px;color:var(--muted);font:12px monospace;text-align:center}.account-panel dl{display:grid;grid-template-columns:repeat(3,1fr);margin:0}.account-panel dl div{padding:14px;border-right:1px solid var(--line)}.account-panel dt{color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel dd{margin:5px 0 0;overflow:hidden;font:12px monospace;text-overflow:ellipsis}.account-panel form{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:9px;align-items:end;padding:18px;border-top:1px solid var(--line)}.account-panel label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel input{height:37px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:12px monospace}.account-panel output{grid-column:1/-1;color:var(--green);font:10px monospace}.account-panel form p{grid-column:1/-1;margin:0;color:var(--muted);font:10px/1.4 monospace}.account-note{margin:0;padding:18px;color:var(--muted);font:11px monospace}@media(max-width:760px){.account-dashboard{padding-top:45px}.dashboard-head{align-items:start;flex-direction:column}.dashboard-totals{grid-template-columns:1fr 1fr}.dashboard-columns{grid-template-columns:1fr}.account-panel dl{grid-template-columns:1fr}.account-panel dl div{border-right:0;border-bottom:1px solid var(--line)}.account-panel form{grid-template-columns:1fr}.years-panel svg{min-width:650px}.years-panel{overflow:auto}}
+</style>
+
+<style>
+  .voice-panel{margin:22px 0}.voice-settings-body{padding:16px}.voice-settings-body>p{margin:0 0 14px;color:var(--muted);font:10px/1.5 monospace}.voice-settings-tools{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;align-items:end;gap:8px;margin-bottom:12px}.voice-settings-tools label{display:grid;gap:5px;color:var(--muted);font:8px monospace;text-transform:uppercase}.voice-settings-tools input{height:36px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:11px monospace}.voice-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));max-height:360px;overflow:auto;border:1px solid var(--line)}.voice-checklist label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;min-height:36px;padding:5px 9px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);font:10px monospace;cursor:pointer}.voice-checklist input{accent-color:var(--green)}.voice-checklist small{color:var(--muted);font-size:8px}@media(max-width:760px){.voice-settings-tools{grid-template-columns:1fr 1fr}.voice-settings-tools label{grid-column:1/-1}.voice-checklist{grid-template-columns:1fr}}
 </style>
