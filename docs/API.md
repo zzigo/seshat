@@ -234,7 +234,7 @@ If Wasabi deletion fails, database deletion is not performed and HTTP `502` is r
 - `GET /api/papers/:id` returns extracted paper state, candidates, provenance, and the catalog record.
 - `POST /api/papers/:id/enrich` queues deterministic OpenAlex resolution.
 - `POST /api/papers/:id/resolve` confirms an ambiguous candidate with `{ "openAlexId": "W…" }`.
-- `GET /api/knowledge-graph` returns ForceGraph-compatible nodes and edges. Query parameters: `paperId`, `collectionId`, `nodeKinds`, `edgeKinds`, `minimumWeight`, and `maximumNodes`. A focused request returns an empty graph with `focus.found=false` instead of leaking the global graph when that paper has not been processed yet.
+- `GET /api/knowledge-graph` returns ForceGraph-compatible nodes and edges. Query parameters: `paperId`, `collectionId`, `nodeKinds`, `edgeKinds`, `minimumWeight`, and `maximumNodes`. `paperId` produces a local one-item graph; `collectionId` includes collection members and their immediate graph neighbors; omitting both produces the global Knowledge Graph. A missing focused scope returns an empty graph with `focus.found=false` instead of leaking global data.
 - `POST /api/knowledge-graph/expand` rebuilds one paper graph from its extracted bibliography and, when OpenAlex is configured, resolves the paper and fetches bounded cited and related works.
 - `GET /api/knowledge-graph/association?edgeId=…` returns association evidence and provenance.
 

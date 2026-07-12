@@ -47,7 +47,7 @@ export function evaluateReferenceHealth(
     }
   }
 
-  if (item.type === 'article-journal' && !item.containerTitle) {
+  if (item.type === 'article' && !item.containerTitle) {
     issues.push(issue('missing-container', 'warning', 'Journal article has no journal title.', 'containerTitle'));
   }
 
@@ -75,4 +75,3 @@ export function evaluateReferenceHealth(
     evaluatedAt,
   };
 }
-

@@ -269,7 +269,7 @@ const schema = `
     id text PRIMARY KEY,
     owner_key text NOT NULL,
     cite_key text NOT NULL,
-    type text NOT NULL DEFAULT 'document',
+    type text NOT NULL DEFAULT 'misc',
     title text NOT NULL,
     contributors jsonb NOT NULL DEFAULT '[]'::jsonb,
     issued jsonb,
@@ -1586,7 +1586,7 @@ export class PostgresCatalog {
       await client.query(
         `INSERT INTO catalog_references
           (id, owner_key, cite_key, type, title, source, original_sha256)
-         VALUES ($1, $2, $3, 'document', $4, $5::jsonb, $6)`,
+         VALUES ($1, $2, $3, 'misc', $4, $5::jsonb, $6)`,
         [input.id, input.ownerKey, input.citeKey, input.title, JSON.stringify(input.source), input.originalSha256],
       );
       await client.query(

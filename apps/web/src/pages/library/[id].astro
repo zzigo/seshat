@@ -1,5 +1,6 @@
 ---
 import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, normalizeBibliographicType } from '@seshat/core';
 import Shell from '../../components/Shell.astro';
 import { getCatalog, ownerKeyFor } from '../../lib/catalog';
 import { getWasabiClient } from '../../lib/wasabi';
@@ -7,6 +8,7 @@ import { getWasabiClient } from '../../lib/wasabi';
 const email = String((Astro.locals.session as any)?.user?.email || '');
 const reference = await getCatalog().get(ownerKeyFor(email), Astro.params.id || '');
 if (!reference) return new Response('Reference not found', { status: 404 });
+const normalizedReferenceType = normalizeBibliographicType(reference.type);
 const original = reference.artifacts.find((artifact) => artifact.kind === 'original');
 const structureArtifact = reference.artifacts.find((artifact) => artifact.kind === 'structure');
 type Section = { id: string; level: number; title: string; parentId?: string | null; sourceLine?: number };
@@ -76,7 +78,7 @@ const graphEdges = edgesResult.rows;
         </div>
         <div class="metadata-pair">
           <label><span>Type</span><select name="type">
-            {['document','article','article-journal','book','chapter','paper-conference','report','thesis'].map((type) => <option value={type} selected={reference.type === type}>{type}</option>)}
+            {BIBLATEX_ENTRY_TYPE_OPTIONS.map((type) => <option value={type.value} selected={normalizedReferenceType === type.value} title={type.description}>{type.label}</option>)}
           </select></label>
           <label><span>Citekey</span><input name="citeKey" value={reference.citeKey} maxlength="160" /></label>
         </div>

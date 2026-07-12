@@ -1,4 +1,4 @@
-import { isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_VALUES, isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { zoteroStyleAttachmentName } from '../../../../lib/attachment-filename';
@@ -51,7 +51,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     return Response.json({ error: 'Citekey may use letters, numbers, colon, underscore and hyphen.' }, { status: 400 });
   }
   const type = text(form.get('type')) || current.type;
-  const allowedTypes = new Set(['article', 'article-journal', 'book', 'chapter', 'document', 'paper-conference', 'report', 'thesis']);
+  const allowedTypes = new Set<string>(BIBLATEX_ENTRY_TYPE_VALUES);
   if (!allowedTypes.has(type)) return Response.json({ error: 'Unsupported reference type.' }, { status: 400 });
   const tags = [...new Set(text(form.get('tags')).split(/[,;\n]+/).map((tag) => tag.trim()).filter(Boolean))].slice(0, 100);
   const language = text(form.get('language')).slice(0, 32);

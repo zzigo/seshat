@@ -1,13 +1,16 @@
 import type { APIRoute } from 'astro';
+import { normalizeBibliographicType } from '@seshat/core';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { authenticateIntegration } from '../../../../lib/integration-auth';
 
 const cslType = (type: string): string => {
-  const supported = new Set([
-    'article', 'article-journal', 'book', 'chapter', 'document',
-    'paper-conference', 'report', 'thesis',
-  ]);
-  return supported.has(type) ? type : 'document';
+  const types: Record<string, string> = {
+    article: 'article-journal', book: 'book', booklet: 'pamphlet', inbook: 'chapter', incollection: 'chapter',
+    conference: 'paper-conference', inproceedings: 'paper-conference', proceedings: 'book', manual: 'report',
+    mastersthesis: 'thesis', phdthesis: 'thesis', techreport: 'report', unpublished: 'manuscript',
+    audio: 'song', music: 'song', recording: 'song', performance: 'speech', score: 'musical-score', misc: 'document',
+  };
+  return types[normalizeBibliographicType(type)] || 'document';
 };
 
 const cslAuthor = (value: unknown): Record<string, string> | null => {

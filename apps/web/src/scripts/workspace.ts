@@ -2,7 +2,7 @@ import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
-import { CONTRIBUTOR_ROLES, contributorSummary, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -51,7 +51,7 @@ const referenceState = (reference: any): string => {
 const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   id: reference.id,
   citeKey: reference.citeKey,
-  type: reference.type,
+  type: normalizeBibliographicType(reference.type),
   title: reference.title,
   contributors: normalizeContributors(reference.contributors || []),
   contributorsDisplay: contributorSummary(reference.contributors || []),
@@ -81,6 +81,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
 export function mountSeshatWorkspace(root: HTMLElement): void {
   const payload = readPayload();
   payload.keywordStyles ||= {};
+  payload.references.forEach((reference) => { reference.type = normalizeBibliographicType(reference.type); });
   const references = new Map(payload.references.map((reference) => [reference.id, reference]));
   const host = root.querySelector<HTMLElement>('[data-dockview-host]');
   const tree = root.querySelector<HTMLElement>('[data-library-tree]');
@@ -257,22 +258,21 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const selectedIds = () => [...selectedReferences].filter((id) => references.has(id));
   const bibtexEscape = (value: unknown) => String(value ?? '').replace(/[{}]/g, '').trim();
-  const bibtexType = (type: string) => ({
-    'article-journal': 'article', article: 'article', chapter: 'incollection',
-    'paper-conference': 'inproceedings', thesis: 'phdthesis', report: 'techreport', book: 'book',
-  }[type] || 'misc');
   const toBetterBibtex = (rows: ReferenceRow[]) => rows.map((row) => {
     const byRole = (role: Contributor['role']) => row.contributors.filter((person) => person.role === role)
       .map((person) => person.literal || [person.family, person.given].filter(Boolean).join(', ')).filter(Boolean).join(' and ');
+    const composer = byRole('composer');
+    const author = row.type === 'score' ? composer || byRole('author') : byRole('author');
     const fields: Array<[string, string]> = [
       ['title', row.title],
-      ['author', byRole('author')],
+      ['author', author],
       ['editor', byRole('editor')],
       ['translator', byRole('translator')],
-      ['composer', byRole('composer')],
+      ['composer', composer],
       ['year', String(row.year || '')],
       ['publisher', row.publisher],
       ['address', row.publisherPlace],
+      ['howpublished', row.type === 'score' ? 'Musical score' : ''],
       ['isbn', row.isbn],
       ['url', row.url],
       ['language', row.language],
@@ -280,7 +280,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       ['keywords', row.tags],
     ].filter((field): field is [string, string] => Boolean(field[1]?.trim()));
     const body = fields.map(([key, value]) => `  ${key} = {${bibtexEscape(value)}}`).join(',\n');
-    return `@${bibtexType(row.type)}{${row.citeKey || row.id},\n${body}\n}`;
+    return `@${biblatexEntryTypeFor(row.type)}{${row.citeKey || row.id},\n${body}\n}`;
   }).join('\n\n');
   const apaContributor = (person: Contributor) => {
     if (person.literal) return person.literal;
@@ -582,7 +582,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         { data: 'title', title: 'Title', width: 300 },
         { data: 'contributorsDisplay', title: 'Contributors', readOnly: true, className: 'contributors-cell', width: 260 },
         { data: 'year', title: 'Year', type: 'numeric', width: 72 },
-        { data: 'type', title: 'Type', type: 'dropdown', source: ['document','article','article-journal','book','chapter','paper-conference','report','thesis'], width: 130 },
+        { data: 'type', title: 'Type', type: 'dropdown', source: [...BIBLATEX_ENTRY_TYPE_VALUES], strict: true, allowInvalid: false, width: 150 },
         { data: 'publisher', title: 'Publisher', width: 210 },
         { data: 'publisherPlace', title: 'Place', width: 140 },
         { data: 'url', title: 'URL', width: 260 },
@@ -874,7 +874,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
     toolbar.appendChild(docControls);
 
-    const actions: Array<[string, string]> = [['text','Text'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
+    const actions: Array<[string, string]> = [['text','Text'],['graph','Graph'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
     for (const [kind, title] of actions) {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = title;
@@ -1159,6 +1159,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         return;
       }
       if (kind === 'graph') {
+        const globalGraph = !referenceId;
         element.classList.remove('future-tool-pod'); element.classList.add('graph-tool-pod');
         const header = document.createElement('header'); header.className = 'pod-heading graph-heading';
         const title = document.createElement('div'); title.innerHTML = `<div class="eyebrow">${reference ? 'Document' : 'Global'} graph</div><h2>${reference?.title || 'All catalogued knowledge'}</h2>`;
@@ -1170,7 +1171,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         body.append(stage,inspector); element.appendChild(body);
         let graph: any = null; let resizeGraph: ResizeObserver | null = null; let graphDocumentChange: EventListener | null = null; let currentGraphReferenceId = referenceId || null; const collapsed = new Set<string>(); let focusId: string | null = null;
         disposeAnnotation = () => { if (graphDocumentChange) window.removeEventListener('seshat:active-reference-changed', graphDocumentChange); resizeGraph?.disconnect(); graph?._destructor?.(); graph = null; };
-        const url = referenceId ? `/api/knowledge-graph?paperId=${encodeURIComponent(referenceId)}` : '/api/knowledge-graph';
+        const url = referenceId ? `/api/knowledge-graph?paperId=${encodeURIComponent(referenceId)}` : '/api/knowledge-graph?maximumNodes=1000';
         void fetch(url).then((response) => response.json()).then((data) => {
           if (disposed) return;
           const baseNodes = (data.nodes || []).map((node:any) => ({ ...node, classification:node.kind || 'automatic' }));
@@ -1193,8 +1194,25 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const button=(label:string,onClick:()=>void)=>{const control=document.createElement('button');control.type='button';control.textContent=label;control.addEventListener('click',onClick);controls.appendChild(control);return control;};
           const searchInput=document.createElement('input'); searchInput.type='search'; searchInput.className='graph-search'; searchInput.placeholder='Find node…'; searchInput.addEventListener('input',()=>{graphQuery=normalize(searchInput.value);update();}); controls.appendChild(searchInput);
           let loadReferenceGraph: (nextReferenceId: string) => Promise<void> = async () => undefined;
+          let loadGlobalGraph: (collectionId?: string) => Promise<void> = async () => undefined;
+          if(globalGraph){const scopeLabel=document.createElement('label');scopeLabel.className='graph-scope';const scopeText=document.createElement('span');scopeText.textContent='Scope';const scope=document.createElement('select');const all=document.createElement('option');all.value='';all.textContent='All references';scope.appendChild(all);payload.libraries.forEach((library)=>{const option=document.createElement('option');option.value=library.id;option.textContent=library.name;scope.appendChild(option);});scope.addEventListener('change',()=>void loadGlobalGraph(scope.value).catch((error)=>{count.textContent='Graph unavailable';inspector.textContent=error instanceof Error?error.message:'Could not load graph.';}));scopeLabel.append(scopeText,scope);controls.prepend(scopeLabel);}
           const renderPaper=async(node:any)=>{const id=String(node.properties?.referenceId||'');const openAlexId=String(node.properties?.openAlexId||''); inspector.innerHTML=`<div class="eyebrow">${safe(node.kind)}</div><h3>${safe(node.label)}</h3><p>${safe(openAlexId||'Local or bibliography-derived paper')}</p>`; if(!id){if(openAlexId)inspector.insertAdjacentHTML('beforeend',`<p><a href="https://openalex.org/${encodeURIComponent(openAlexId)}" target="_blank" rel="noreferrer">Open in OpenAlex ↗</a></p>`);return;} const response=await fetch(`/api/papers/${encodeURIComponent(id)}`); const data=await response.json(); if(!response.ok){inspector.insertAdjacentHTML('beforeend',`<p class="graph-error">${safe(data.error||'Paper details unavailable.')}</p>`);return;} const paper=data.paper; const work=(paper.openAlexWork||{}) as any; const workTopics=(Array.isArray(work.topics)?work.topics:[]).slice(0,4).map((topic:any)=>String(topic?.name||'')).filter(Boolean); const workType=String(work.type||data.reference?.type||''); const workVenue=String(work.venue?.name||''); const workYear=work.publicationYear?String(work.publicationYear):''; inspector.insertAdjacentHTML('beforeend',`<dl><dt>Status</dt><dd>${safe(paper.resolutionStatus)}</dd><dt>Method</dt><dd>${safe(paper.resolutionMethod||'—')}</dd><dt>Confidence</dt><dd>${Math.round(Number(paper.resolutionConfidence||0)*100)}%</dd>${workType?`<dt>Type</dt><dd>${safe(workType)}</dd>`:''}${workTopics.length?`<dt>Topics</dt><dd>${workTopics.map((topic:string)=>safe(topic)).join(' · ')}</dd>`:''}${workVenue?`<dt>Venue</dt><dd>${safe(workVenue)}</dd>`:''}${workYear?`<dt>Year</dt><dd>${safe(workYear)}</dd>`:''}</dl>`); const actions=document.createElement('div');actions.className='graph-inspector-actions'; const enrich=document.createElement('button');enrich.textContent='Enrich with OpenAlex';enrich.onclick=async()=>{enrich.disabled=true;await fetch(`/api/papers/${encodeURIComponent(id)}/enrich`,{method:'POST'});enrich.textContent='Queued';}; const expand=document.createElement('button');expand.textContent='Refresh references & related papers';expand.onclick=async()=>{expand.disabled=true;expand.textContent='Refreshing…';const result=await fetch('/api/knowledge-graph/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paperId:id})});if(result.ok){await loadReferenceGraph(id);expand.textContent='Refreshed';}else{const error=await result.json().catch(()=>({}));expand.textContent=error.error||'Refresh failed';expand.disabled=false;}}; actions.append(enrich,expand); inspector.appendChild(actions); if(paper.resolutionStatus==='ambiguous'){const candidates=document.createElement('div');candidates.className='graph-candidates';for(const candidate of paper.candidates||[]){const choose=document.createElement('button');const candidateTitle=document.createElement('strong');candidateTitle.textContent=candidate.work?.title||candidate.title||candidate.openAlexId;const candidateScore=document.createElement('small');candidateScore.textContent=`${Math.round(Number(candidate.score||candidate.confidence||0)*100)}% · confirm`;choose.append(candidateTitle,candidateScore);choose.onclick=async()=>{choose.disabled=true;const openAlexId=candidate.work?.id||candidate.openAlexId;const resolved=await fetch(`/api/papers/${encodeURIComponent(id)}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({openAlexId})});if(resolved.ok){await loadReferenceGraph(id);choose.textContent='Resolved';}else choose.textContent='Could not resolve';};candidates.appendChild(choose);}inspector.appendChild(candidates);}};
-          graph = new ForceGraph(stage).backgroundColor('rgba(0,0,0,0)').nodeId('id').nodeLabel((node:any) => `${node.label}\n${node.classification}`).nodeRelSize(5).linkColor(() => 'rgba(110,120,115,.34)').linkDirectionalArrowLength((link:any)=>String(link.relation||link.kind)==='cites'?3:0).linkDirectionalArrowRelPos(1).nodeCanvasObjectMode(() => 'after').nodeCanvasObject((node:any,ctx:CanvasRenderingContext2D,scale:number) => { const label=String(node.label || ''); ctx.font=`${Math.max(8,11/scale)}px ui-monospace`; ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#263129'; ctx.fillText(`${label} · ${node.classification}`,Number(node.x)+7,Number(node.y)+3); }).nodeAutoColorBy('kind').onNodeClick((node:any) => { focusId=String(node.id); if (folding) { if (collapsed.has(focusId)) collapsed.delete(focusId); else collapsed.add(focusId); } void renderPaper(node); update(); }).onLinkClick(async(link:any)=>{const edgeId=String(link.id||'');if(!edgeId)return;inspector.innerHTML='<p>Loading evidence…</p>';const response=await fetch(`/api/knowledge-graph/association?edgeId=${encodeURIComponent(edgeId)}`);const data=await response.json();if(!response.ok){inspector.innerHTML=`<p class="graph-error">${safe(data.error||'Evidence unavailable.')}</p>`;return;}const edge=data.association, evidence=edge.properties?.evidence||{}, provenance=edge.properties?.provenance||{};inspector.innerHTML=`<div class="eyebrow">Association evidence</div><h3>${safe(edge.sourceLabel)} → ${safe(edge.targetLabel)}</h3><dl><dt>Relation</dt><dd>${safe(edge.kind)}</dd><dt>Weight</dt><dd>${Number(edge.weight).toFixed(3)}</dd><dt>Method</dt><dd>${safe(evidence.method||'—')}</dd><dt>Count</dt><dd>${safe(evidence.count??'—')}</dd><dt>Source</dt><dd>${safe(provenance.source||'—')}</dd><dt>Generated</dt><dd>${safe(provenance.generatedAt||edge.createdAt||'—')}</dd></dl>${evidence.description?`<p>${safe(evidence.description)}</p>`:''}`;});
+          const normalizedNodeKind=(node:any)=>normalize(node.kind||node.classification).replaceAll('_','-');
+          const nodeColor=(node:any)=>{const kind=normalizedNodeKind(node);if(['concept','topic','relatedconcept'].includes(kind))return'#b07a3c';if(['person','author','editor','composer','performer'].includes(kind))return'#4f8265';if(['paper','work','document','publication','article','ebook'].includes(kind))return'#657c9f';if(['institution','organization','publisher','venue','journal'].includes(kind))return'#8b628d';if(['place','location','geographicregion'].includes(kind))return'#b35f58';if(['collection'].includes(kind))return'#d1a73b';if(['method','instrument','system'].includes(kind))return'#4d8c93';return'#7f837d';};
+          const polygon=(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,sides:number,rotation=-Math.PI/2)=>{for(let index=0;index<sides;index+=1){const angle=rotation+(index*Math.PI*2)/sides;const px=x+Math.cos(angle)*radius,py=y+Math.sin(angle)*radius;if(index===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);}ctx.closePath();};
+          const drawNode=(node:any,ctx:CanvasRenderingContext2D,scale:number)=>{const x=Number(node.x)||0,y=Number(node.y)||0,kind=normalizedNodeKind(node),radius=Math.max(4,Math.min(13,Number(node.properties?.radius)||5));ctx.save();ctx.beginPath();if(['concept','topic','relatedconcept'].includes(kind))ctx.rect(x-radius,y-radius,radius*2,radius*2);else if(['paper','work','document','publication','article','ebook'].includes(kind))polygon(ctx,x,y,radius*1.25,4,0);else if(['institution','organization','publisher','venue','journal'].includes(kind))polygon(ctx,x,y,radius*1.15,6);else if(['place','location','geographicregion'].includes(kind))polygon(ctx,x,y,radius*1.2,3);else if(['method','instrument','system'].includes(kind))polygon(ctx,x,y,radius*1.15,5);else ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle=nodeColor(node);ctx.fill();ctx.lineWidth=Math.max(.7,1/scale);ctx.strokeStyle='rgba(20,30,25,.72)';ctx.stroke();if(kind==='collection'){ctx.beginPath();ctx.arc(x,y,radius*.55,0,Math.PI*2);ctx.stroke();}const label=String(node.label||'');ctx.font=`${Math.max(8,11/scale)}px ui-monospace`;ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()||'#263129';ctx.fillText(label,x+radius+3,y+3);ctx.restore();};
+          graph = new ForceGraph(stage)
+            .backgroundColor('rgba(0,0,0,0)')
+            .nodeId('id')
+            .nodeLabel((node:any)=>String(node.label||''))
+            .nodeRelSize(5)
+            .linkColor(()=>'rgba(110,120,115,.34)')
+            .linkDirectionalArrowLength((link:any)=>String(link.relation||link.kind)==='cites'?3:0)
+            .linkDirectionalArrowRelPos(1)
+            .nodeCanvasObjectMode(()=>'replace')
+            .nodeCanvasObject(drawNode)
+            .onNodeClick((node:any)=>{focusId=String(node.id);if(folding){if(collapsed.has(focusId))collapsed.delete(focusId);else collapsed.add(focusId);}void renderPaper(node);update();})
+            .onLinkClick(async(link:any)=>{const edgeId=String(link.id||'');if(!edgeId)return;inspector.innerHTML='<p>Loading evidence…</p>';const response=await fetch(`/api/knowledge-graph/association?edgeId=${encodeURIComponent(edgeId)}`);const data=await response.json();if(!response.ok){inspector.innerHTML=`<p class="graph-error">${safe(data.error||'Evidence unavailable.')}</p>`;return;}const edge=data.association,evidence=edge.properties?.evidence||{},provenance=edge.properties?.provenance||{};inspector.innerHTML=`<div class="eyebrow">Association evidence</div><h3>${safe(edge.sourceLabel)} → ${safe(edge.targetLabel)}</h3><dl><dt>Relation</dt><dd>${safe(edge.kind)}</dd><dt>Weight</dt><dd>${Number(edge.weight).toFixed(3)}</dd><dt>Method</dt><dd>${safe(evidence.method||'—')}</dd><dt>Count</dt><dd>${safe(evidence.count??'—')}</dd><dt>Source</dt><dd>${safe(provenance.source||'—')}</dd><dt>Generated</dt><dd>${safe(provenance.generatedAt||edge.createdAt||'—')}</dd></dl>${evidence.description?`<p>${safe(evidence.description)}</p>`:''}`;});
           graph.graphData({nodes:allNodes,links:allLinks});
           slider('Repulsion',30,900,220,10,(value) => { graph.d3Force('charge')?.strength(-value); graph.d3ReheatSimulation(); });
           slider('Distance',20,240,75,5,(value) => { graph.d3Force('link')?.distance(value); graph.d3ReheatSimulation(); });
@@ -1206,12 +1224,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           ([['Papers','paper'],['Authors','author'],['Topics','topic'],['Venues','venue'],['Institutions','institution'],['Collections','collection']] as Array<[string,string]>).forEach(([label,key]) => toggle(label,true,(checked) => { enabled[key]=checked; update(); }));
           ([['Citations','cites'],['Related papers','related-to'],['Coupling','bibliographic-coupling'],['Co-citation','co-citation'],['Shared author','shared-author'],['Shared topic','shared-topic']] as Array<[string,string]>).forEach(([label,key]) => toggle(label,true,(checked) => { enabledEdges[key]=checked; update(); }));
           button('Reset',()=>{focusId=null;collapsed.clear();searchInput.value='';graphQuery='';update();graph.zoomToFit(350,40);});
-          const refreshSources=button('Refresh sources',()=>{void (async()=>{if(!currentGraphReferenceId)return;refreshSources.disabled=true;refreshSources.textContent='Refreshing…';try{const response=await fetch('/api/knowledge-graph/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paperId:currentGraphReferenceId})});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not refresh graph sources.');await loadReferenceGraph(currentGraphReferenceId);refreshSources.textContent=result.warning==='openalex_not_configured'?'Bibliography refreshed':'Sources refreshed';}catch(error){refreshSources.textContent=error instanceof Error?error.message:'Refresh failed';}finally{refreshSources.disabled=false;}})();});
+          if(!globalGraph){const refreshSources=button('Refresh sources',()=>{void (async()=>{if(!currentGraphReferenceId)return;refreshSources.disabled=true;refreshSources.textContent='Refreshing…';try{const response=await fetch('/api/knowledge-graph/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paperId:currentGraphReferenceId})});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not refresh graph sources.');await loadReferenceGraph(currentGraphReferenceId);refreshSources.textContent=result.warning==='openalex_not_configured'?'Bibliography refreshed':'Sources refreshed';}catch(error){refreshSources.textContent=error instanceof Error?error.message:'Refresh failed';}finally{refreshSources.disabled=false;}})();});}
           const importInput=document.createElement('input');importInput.type='file';importInput.accept='.pdf,application/pdf';importInput.hidden=true;importInput.onchange=()=>{const file=importInput.files?.[0];if(file)void ingestDocument(file);};controls.appendChild(importInput);button('Import PDF',()=>importInput.click());
           loadReferenceGraph=async(nextReferenceId:string)=>{currentGraphReferenceId=nextReferenceId;const nextReference=references.get(nextReferenceId);count.textContent='Loading…';title.innerHTML=`<div class="eyebrow">Document graph</div><h2>${safe(nextReference?.title||'Unknown document')}</h2>`;const response=await fetch(`/api/knowledge-graph?paperId=${encodeURIComponent(nextReferenceId)}`,{cache:'no-store'});const next=await response.json();if(!response.ok)throw new Error(next.error||'Could not load graph.');allNodes.splice(0,allNodes.length,...(next.nodes||[]).map((node:any)=>({...node,classification:node.kind||'automatic'})));allLinks.splice(0,allLinks.length,...(next.edges||[]).map((edge:any,index:number)=>({...edge,id:edge.id||`auto-edge:${index}`})));focusId=null;collapsed.clear();inspector.innerHTML=next.focus?.found===false?'<div class="eyebrow">No graph yet</div><p>Resolve or refresh this paper to build connections from its bibliography, citations, and related works.</p>':'<div class="eyebrow">Selection</div><p>Select a paper or association to inspect its evidence.</p>';update();window.requestAnimationFrame(()=>graph.zoomToFit(350,40));};
+          loadGlobalGraph=async(collectionId='')=>{count.textContent='Loading…';const collection=payload.libraries.find((library)=>library.id===collectionId);title.innerHTML=`<div class="eyebrow">Knowledge graph</div><h2>${safe(collection?.name||'All references')}</h2>`;const query=new URLSearchParams({maximumNodes:'1000'});if(collectionId)query.set('collectionId',collectionId);const response=await fetch(`/api/knowledge-graph?${query}`,{cache:'no-store'});const next=await response.json();if(!response.ok)throw new Error(next.error||'Could not load knowledge graph.');allNodes.splice(0,allNodes.length,...(next.nodes||[]).map((node:any)=>({...node,classification:node.kind||'automatic'})));allLinks.splice(0,allLinks.length,...(next.edges||[]).map((edge:any,index:number)=>({...edge,id:edge.id||`auto-edge:${index}`})));focusId=null;collapsed.clear();inspector.innerHTML=next.focus?.requested&&next.focus?.found===false?'<div class="eyebrow">Empty scope</div><p>This collection has no graph connections yet.</p>':'<div class="eyebrow">Selection</div><p>Select a paper or association to inspect its evidence.</p>';update();window.requestAnimationFrame(()=>graph.zoomToFit(350,40));};
           graphDocumentChange=((event:CustomEvent<{referenceId?:string}>)=>{const nextReferenceId=event.detail?.referenceId;if(nextReferenceId)void loadReferenceGraph(nextReferenceId).catch((error)=>{count.textContent='Graph unavailable';inspector.innerHTML=`<p class="graph-error">${safe(error instanceof Error?error.message:'Could not load graph.')}</p>`;});}) as EventListener;
-          window.addEventListener('seshat:active-reference-changed',graphDocumentChange);
-          resizeGraph = new ResizeObserver(([entry]) => graph.width(entry.contentRect.width).height(entry.contentRect.height)); resizeGraph.observe(stage);if(data.focus?.found===false)inspector.innerHTML='<div class="eyebrow">No graph yet</div><p>Use Refresh sources to build connections from this paper’s bibliography, citations, and related works.</p>'; update();
+          if(!globalGraph)window.addEventListener('seshat:active-reference-changed',graphDocumentChange);
+          resizeGraph = new ResizeObserver(([entry]) => graph.width(entry.contentRect.width).height(entry.contentRect.height)); resizeGraph.observe(stage);if(data.focus?.requested&&data.focus?.found===false)inspector.innerHTML='<div class="eyebrow">No graph yet</div><p>Use Refresh sources to build connections from this paper’s bibliography, citations, and related works.</p>'; update();
         }).catch((error) => { count.textContent='Graph unavailable'; stage.textContent=error instanceof Error ? error.message : 'Could not load graph.'; });
         return;
       }
@@ -2501,7 +2520,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (Number(input.value) || input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
       label.append(caption,input); form.appendChild(label);
     };
-    field('Title','title'); field('Cite key','citeKey'); field('Type','type'); field('Year','year'); field('Language','language'); field('Publisher','publisher'); field('Place','publisherPlace'); field('URL','url');
+    const typeField = () => {
+      const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = 'Type';
+      const select = document.createElement('select'); select.disabled = row.access === 'viewer';
+      BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType) => { const option = document.createElement('option'); option.value = entryType.value; option.textContent = entryType.label; option.title = entryType.description; option.selected = row.type === entryType.value; select.appendChild(option); });
+      select.addEventListener('change',() => { row.type = normalizeBibliographicType(select.value); refreshTable(); scheduleSave(row); });
+      label.append(caption,select); form.appendChild(label);
+    };
+    field('Title','title'); field('Cite key','citeKey'); typeField(); field('Year','year'); field('Language','language'); field('Publisher','publisher'); field('Place','publisherPlace'); field('URL','url');
     const section = (title: string, addTitle: string, onAdd: () => void) => {
       const block = document.createElement('section'); block.className = 'property-section'; const header = document.createElement('header'); const label = document.createElement('span'); label.textContent = title;
       const add = document.createElement('button'); add.type = 'button'; add.textContent = '+'; add.title = addTitle; add.disabled = row.access === 'viewer'; add.addEventListener('click',onAdd); header.append(label,add); block.appendChild(header); form.appendChild(block); return block;
@@ -2531,22 +2557,25 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       else addPanel('document-preview', 'document-preview', ref.title, 'right');
     },
     openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
-    openTool(kind: ToolKind, referenceId = activeReference || undefined) {
-      const suffix = referenceId || 'global';
+    openTool(kind: ToolKind, referenceId: string | null | undefined = activeReference || undefined) {
+      const globalGraph = kind === 'graph' && referenceId === null;
+      const effectiveReferenceId = globalGraph ? undefined : referenceId || undefined;
+      const suffix = effectiveReferenceId || 'global';
       let title = kind === 'agent' ? 'AI agent' : kind[0].toUpperCase() + kind.slice(1);
-      if (kind === 'graph') title = referenceId ? 'Document Graph' : 'Global Graph';
+      if (kind === 'graph') title = globalGraph ? 'Knowledge Graph' : 'Graph';
       if (kind === 'search') title = 'Corpus Search';
       if (kind === 'graph') {
-        const existing = api.panels.find((panel) => panel.id.startsWith('tool-graph'));
+        const panelId = globalGraph ? 'tool-knowledge-graph' : 'tool-graph';
+        const existing = api.getPanel(panelId);
         if (existing) {
-          if (referenceId) window.dispatchEvent(new CustomEvent('seshat:active-reference-changed', { detail: { referenceId } }));
+          if (effectiveReferenceId) window.dispatchEvent(new CustomEvent('seshat:active-reference-changed', { detail: { referenceId: effectiveReferenceId } }));
           existing.api.setActive();
           return;
         }
-        addPanel('tool-graph', `tool:${kind}:${referenceId || ''}`, title, 'right');
+        addPanel(panelId, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');
         return;
       }
-      addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${referenceId || ''}`, title, 'right');
+      addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');
     },
     openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
   };
@@ -3205,8 +3234,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const openHelp = () => {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
-    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; double-click it to read.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
+    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; double-click it to read.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
     addSection('Shortcuts',['⌘ Backspace — delete selected items','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
+    const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
     const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];
     rows.forEach(([name,state,title]) => { const row = document.createElement('div'); row.className = 'technology-row'; const led = document.createElement('i'); led.dataset.state = state; led.title = title; const label = document.createElement('span'); label.textContent = name; const status = document.createElement('small'); status.textContent = state; row.append(led,label,status); technology.appendChild(row); }); body.appendChild(technology); dialog.appendChild(body);
@@ -3278,6 +3308,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if (!response.ok) { setSaveState(result.error || 'Could not create library', 'error'); return; }
     payload.libraries.push(result.library); renderTree(search.value); setSaveState('library created');
   });
-  root.querySelectorAll<HTMLButtonElement>('[data-open-tool]').forEach((button) => button.addEventListener('click', () => controller.openTool(button.dataset.openTool as ToolKind)));
+  root.querySelectorAll<HTMLButtonElement>('[data-open-tool]').forEach((button) => button.addEventListener('click', () => {
+    const kind = button.dataset.openTool as ToolKind;
+    controller.openTool(kind, kind === 'graph' ? null : undefined);
+  }));
   renderTree(); renderKeywordCloud(); renderProperties(activeReference);
 }

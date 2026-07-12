@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { HeadObjectCommand, type HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import type { CatalogBibliographyInput } from '@seshat/catalog';
-import type { Contributor } from '@seshat/core';
+import { normalizeBibliographicType, type Contributor } from '@seshat/core';
 import { mapBibAttachment, type BibliographyAttachmentPath, type SeshatUserIdentity } from './bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from './wasabi';
 
@@ -61,12 +61,6 @@ export const inspectBibEntries = async (entries: any[], identity: SeshatUserIden
   return inspected;
 };
 
-const bibType = (value: string): string => ({
-  article: 'article-journal', book: 'book', inbook: 'chapter', incollection: 'chapter',
-  inproceedings: 'paper-conference', conference: 'paper-conference', proceedings: 'book',
-  phdthesis: 'thesis', mastersthesis: 'thesis', techreport: 'report',
-}[value.toLowerCase()] || 'document');
-
 const literal = (value: unknown): string => Array.isArray(value) ? value.map(String).join('; ') : String(value || '').trim();
 const keywordList = (value: unknown): string[] => [...new Set(literal(value).split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean))].slice(0, 200);
 
@@ -88,7 +82,7 @@ export const catalogInputForBibEntry = (
   const bucket = attachment ? getWasabiBucket() : undefined;
   return {
     id: randomUUID(), citeKey: String(entry.key || `import-${randomUUID().slice(0, 8)}`).slice(0, 160),
-    type: bibType(String(entry.type || 'document')), title: literal(fields.title) || 'Untitled reference',
+    type: normalizeBibliographicType(entry.type), title: literal(fields.title) || 'Untitled reference',
     contributors, issued: year ? { year } : undefined,
     identifiers: { ...(isbn.length ? { isbn } : {}), ...(doi ? { doi } : {}) },
     tags: [], abstract: literal(fields.abstract) || undefined, language: literal(fields.language) || undefined,

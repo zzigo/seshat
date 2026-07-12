@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   bibliographicFingerprint,
+  biblatexEntryTypeFor,
   evaluateReferenceHealth,
   generateCiteKey,
   isValidIsbn,
   normalizeDoi,
+  normalizeBibliographicType,
   type BibliographicItem,
 } from '../src/index.js';
 
@@ -36,6 +38,13 @@ const completeItem: BibliographicItem = {
 
 test('normalizes DOI URLs', () => {
   assert.equal(normalizeDoi('https://doi.org/10.1000/XYZ.123.'), '10.1000/xyz.123');
+});
+
+test('normalizes legacy catalog types into controlled BibLaTeX types', () => {
+  assert.equal(normalizeBibliographicType('article-journal'), 'article');
+  assert.equal(normalizeBibliographicType('musical-score'), 'score');
+  assert.equal(biblatexEntryTypeFor('score'), 'misc');
+  assert.equal(biblatexEntryTypeFor('performance'), 'performance');
 });
 
 test('validates ISBN checksums', () => {

@@ -171,7 +171,7 @@ The authenticated `/workspace` is a desktop-oriented shell:
 
 - Stable left tree: search, all references, hierarchical libraries, drag/drop moves, CRUD and read-only shared subtrees.
 - Handsontable catalog pod: fixed-height rows with truncated cell text, bulk scalar metadata editing, and a structured contributor mini editor opened from the Contributors cell or context menu.
-- Dockview host: catalog, PDF, extracted text, structure, BibTeX inspection, analysis, annotation and agent pods.
+- Dockview host: catalog, PDF, extracted text, local item GRAPH, global/collection Knowledge Graph, structure, BibTeX inspection, analysis, annotation and agent pods.
 - Bottom activity HUD: upload, extraction, identification, errors and “Open map” action.
 - Dockview layout persists in browser `localStorage`; temporary parsed BibTeX payloads use `sessionStorage`.
 
@@ -207,5 +207,9 @@ PDF papers follow a deterministic pipeline alongside the general document pipeli
 3. Enrichment is cached in PostgreSQL and merged without replacing fields listed in `source.curation.manualFields`.
 4. `catalog_papers` stores extraction, resolution, OpenAlex payload, expansion bounds, and provenance. The existing `catalog_graph_nodes` and `catalog_graph_edges` tables store the heterogeneous graph; no graph database is required.
 5. `scholarly-v1` builds stable paper, author, topic, venue, institution, and collection nodes. It records directed citations parsed from the document bibliography and returned by OpenAlex, OpenAlex related-work suggestions, and deterministic bibliographic-coupling, co-citation, shared-author, shared-topic, and collection associations with inspectable evidence. Parsed citations are matched back to local catalog papers by DOI or normalized title and year when possible.
+
+The item toolbar opens a one-paper GRAPH that follows the active document. The main workspace bar opens the Knowledge Graph across all Seshat references, with optional collection/folder scoping. Node classes are encoded redundantly through color and geometry rather than appended to visible labels: concepts/topics are squares, people circles, papers/works diamonds, institutions/venues hexagons, places triangles, methods/instruments pentagons, and collections ringed circles.
+
+Bibliographic `type` is controlled by a shared BibLaTeX-oriented registry used by Catalog, Item properties, detail editing, imports, exports, and API validation. The classic 14 BibTeX types are supplemented by BibLaTeX/Biber `audio`, `music`, and `performance`, the Seshat/Biber extension `recording`, and the convenience type `score`, which exports portably as `@misc` with `howpublished = {Musical score}`. Legacy CSL-like Seshat values are normalized on read and the next edit writes the controlled value.
 
 Expansion is deliberately one citation hop and capped at 100 references and 50 citing works per paper. Re-running the pipeline is idempotent because nodes and edges use stable IDs and pipeline-scoped replacement.

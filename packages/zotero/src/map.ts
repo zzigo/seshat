@@ -10,23 +10,23 @@ import {
 import type { ZoteroApiItem, ZoteroCreator, ZoteroItemData } from './types.js';
 
 const TYPE_MAP: Record<string, BibliographicType> = {
-  journalArticle: 'article-journal',
+  journalArticle: 'article',
   book: 'book',
-  bookSection: 'chapter',
-  conferencePaper: 'paper-conference',
-  thesis: 'thesis',
-  report: 'report',
-  webpage: 'webpage',
-  blogPost: 'webpage',
-  manuscript: 'manuscript',
-  film: 'motion-picture',
-  videoRecording: 'motion-picture',
-  artwork: 'document',
-  document: 'document',
-  encyclopediaArticle: 'entry-encyclopedia',
-  dictionaryEntry: 'entry-encyclopedia',
-  audioRecording: 'song',
-  musicScore: 'musical-score',
+  bookSection: 'incollection',
+  conferencePaper: 'inproceedings',
+  thesis: 'phdthesis',
+  report: 'techreport',
+  webpage: 'misc',
+  blogPost: 'misc',
+  manuscript: 'unpublished',
+  film: 'misc',
+  videoRecording: 'misc',
+  artwork: 'misc',
+  document: 'misc',
+  encyclopediaArticle: 'incollection',
+  dictionaryEntry: 'incollection',
+  audioRecording: 'audio',
+  musicScore: 'score',
 };
 
 const ROLE_MAP: Record<string, Contributor['role']> = {
@@ -113,7 +113,7 @@ export function mapZoteroItem(input: {
   return {
     id: `zotero:${libraryType}:${libraryId}:${item.key}`,
     citeKey,
-    type: TYPE_MAP[data.itemType || ''] || 'document',
+    type: TYPE_MAP[data.itemType || ''] || 'misc',
     title: data.title?.trim() || '',
     contributors,
     issued,
@@ -146,4 +146,3 @@ export function mapZoteroItem(input: {
     updatedAt: data.dateModified || importedAt,
   };
 }
-

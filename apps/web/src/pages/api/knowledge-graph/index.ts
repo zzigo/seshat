@@ -31,23 +31,42 @@ export const GET: APIRoute = async ({ locals, url }) => {
     nodes.filter((node: any) => node.properties?.referenceId === paperId || node.id === paperId || node.properties?.openAlexId === paperId)
       .forEach((node: any) => focusKeys.add(node.id));
   }
-  if (collectionId) focusKeys.add(`collection:${collectionId}`);
+  if (collectionId) {
+    const collectionKey = `collection:${collectionId}`;
+    if (nodes.some((node: any) => node.id === collectionKey)) focusKeys.add(collectionKey);
+  }
   const focusRequested = Boolean(paperId || collectionId);
   const focusFound = focusKeys.size > 0;
   if (focusRequested && !focusFound) {
     nodes = [];
     edges = [];
   } else if (focusFound) {
-    const connected = new Set(focusKeys);
+    const seeds = new Set(focusKeys);
+    if (collectionId) {
+      edges.forEach((edge: any) => {
+        if (focusKeys.has(edge.source)) seeds.add(edge.target);
+        if (focusKeys.has(edge.target)) seeds.add(edge.source);
+      });
+    }
+    const connected = new Set(seeds);
     edges.forEach((edge: any) => {
-      if (focusKeys.has(edge.source)) connected.add(edge.target);
-      if (focusKeys.has(edge.target)) connected.add(edge.source);
+      if (seeds.has(edge.source)) connected.add(edge.target);
+      if (seeds.has(edge.target)) connected.add(edge.source);
     });
     nodes = nodes.filter((node: any) => connected.has(node.id));
     const ids = new Set(nodes.map((node: any) => node.id));
     edges = edges.filter((edge: any) => ids.has(edge.source) && ids.has(edge.target));
   }
 
+  const kindPriority = (kind: unknown) => {
+    const normalized = String(kind || '').toLowerCase().replaceAll('_', '-');
+    if (['paper', 'work', 'document', 'publication', 'article', 'ebook'].includes(normalized)) return 0;
+    if (normalized === 'collection') return 1;
+    if (['author', 'person', 'editor', 'composer', 'performer'].includes(normalized)) return 2;
+    if (['topic', 'concept', 'relatedconcept'].includes(normalized)) return 3;
+    return 4;
+  };
+  nodes.sort((left: any, right: any) => kindPriority(left.kind) - kindPriority(right.kind) || String(left.label).localeCompare(String(right.label)));
   nodes = nodes.slice(0, maximumNodes);
   const ids = new Set(nodes.map((node: any) => node.id));
   edges = edges.filter((edge: any) => ids.has(edge.source) && ids.has(edge.target));
