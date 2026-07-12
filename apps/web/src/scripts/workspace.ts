@@ -2,7 +2,7 @@ import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
-import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -17,6 +17,7 @@ type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string;
+  bibliographicFields: Record<string,string>;
   libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
@@ -24,6 +25,7 @@ type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; 
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
+const PERSON_ROLE_LABELS:Partial<Record<Contributor['role'],string>>={author:'author',editor:'editor',translator:'translator',composer:'composer',performer:'performer',curator:'curator',producer:'producer',director:'director',conductor:'conductor',commentator:'commentator',annotator:'annotator',introduction:'introduction by',foreword:'foreword / prologue by',afterword:'afterword by',contributor:'other contributor'};
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
 const TREE_STATE_KEY = 'seshat.workspace.tree.v1';
@@ -49,6 +51,7 @@ const referenceState = (reference: any): string => {
   if (!hasText) return 'no extracted text';
   return 'ready';
 };
+const bibliographicFieldsFromReference=(reference:any):Record<string,string>=>{const source=reference.source||{};const values={...(source.bibtex||{}),...(source.biblatexFields||{})};const allowed=new Set<string>(BIBLATEX_FIELD_KEYS);return Object.fromEntries(Object.entries(values).filter(([key])=>allowed.has(key)).map(([key,value])=>[key,Array.isArray(value)?value.map(String).join('; '):String(value||'')]).filter(([,value])=>value));};
 const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   id: reference.id,
   citeKey: reference.citeKey,
@@ -65,6 +68,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   publisher: reference.publisher || '',
   publisherPlace: reference.publisherPlace || '',
   url: reference.url || '',
+  bibliographicFields: bibliographicFieldsFromReference(reference),
   format: referenceFileType(reference),
   fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
@@ -230,6 +234,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     form.set('publisher', row.publisher);
     form.set('publisherPlace', row.publisherPlace);
     form.set('url', row.url);
+    form.set('bibliographicFields', JSON.stringify(row.bibliographicFields));
     const response = await fetch(`/api/library/${row.id}/metadata`, { method: 'POST', body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Save failed');
@@ -264,15 +269,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       .map((person) => person.literal || [person.family, person.given].filter(Boolean).join(', ')).filter(Boolean).join(' and ');
     const composer = byRole('composer');
     const author = row.type === 'score' ? composer || byRole('author') : byRole('author');
-    const fields: Array<[string, string]> = [
+    const personFields=CONTRIBUTOR_ROLES.filter((role)=>!['author','composer','contributor'].includes(role)).map((role)=>[role,byRole(role)] as [string,string]);
+    const fields: Array<[string, string]> = [...Object.entries(row.bibliographicFields),
       ['title', row.title],
       ['author', author],
-      ['editor', byRole('editor')],
-      ['translator', byRole('translator')],
+      ...personFields,
       ['composer', composer],
       ['year', String(row.year || '')],
       ['publisher', row.publisher],
-      ['address', row.publisherPlace],
+      ['location', row.publisherPlace],
       ['howpublished', row.type === 'score' ? 'Musical score' : ''],
       ['isbn', row.isbn],
       ['url', row.url],
@@ -280,7 +285,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       ['abstract', row.abstract],
       ['keywords', row.tags],
     ].filter((field): field is [string, string] => Boolean(field[1]?.trim()));
-    const body = fields.map(([key, value]) => `  ${key} = {${bibtexEscape(value)}}`).join(',\n');
+    const uniqueFields=[...new Map(fields.map(([key,value])=>[key,[key,value] as [string,string]])).values()];
+    const body = uniqueFields.map(([key, value]) => `  ${key} = {${bibtexEscape(value)}}`).join(',\n');
     return `@${biblatexEntryTypeFor(row.type)}{${row.citeKey || row.id},\n${body}\n}`;
   }).join('\n\n');
   const apaContributor = (person: Contributor) => {
@@ -377,7 +383,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const referenceMenuItems = (ids: string[]) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     return [
-    { label: 'Edit contributors…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
+    { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
@@ -398,7 +404,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       role: person.role || 'author', family: person.family || '', given: person.given || '', literal: person.literal || '',
     }));
     if (!draft.length) draft.push({ role: 'author', family: '', given: '', literal: '' });
-    const dialog = dialogShell(`Contributors · ${row.title}`); dialog.classList.add('contributor-dialog');
+    const dialog = dialogShell(`Persons · ${row.title}`); dialog.classList.add('contributor-dialog');
     const editor = document.createElement('form'); editor.className = 'contributor-editor';
     const guidance = document.createElement('p'); guidance.className = 'contributor-guidance';
     guidance.textContent = 'Keep people structured as family + given. Use Literal for institutions or names that must not be parsed.';
@@ -417,7 +423,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         });
         const handle = document.createElement('span'); handle.className = 'contributor-handle'; handle.textContent = '⋮⋮'; handle.title = 'Drag to reorder'; handle.draggable = true;
         const role = document.createElement('select'); role.setAttribute('aria-label', `Role ${index + 1}`);
-        CONTRIBUTOR_ROLES.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = value; option.selected = value === person.role; role.appendChild(option); });
+        CONTRIBUTOR_ROLES.forEach((value) => { const option = document.createElement('option'); option.value = value; option.textContent = PERSON_ROLE_LABELS[value]||value; option.selected = value === person.role; role.appendChild(option); });
         role.addEventListener('change', () => { person.role = role.value as Contributor['role']; });
         const family = document.createElement('input'); family.placeholder = 'Family'; family.value = person.family; family.setAttribute('aria-label', `Family name ${index + 1}`);
         const given = document.createElement('input'); given.placeholder = 'Given'; given.value = person.given; given.setAttribute('aria-label', `Given name ${index + 1}`);
@@ -442,10 +448,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
     pasteDetails.append(pasteSummary, pasteArea, pasteButton);
     const footer = document.createElement('footer');
-    const add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Contributor';
+    const add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Person';
     add.addEventListener('click', () => { draft.push({ role: 'author', family: '', given: '', literal: '' }); render(); list.lastElementChild?.scrollIntoView({ block: 'nearest' }); });
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; cancel.addEventListener('click', () => dialog.close());
-    const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save contributors';
+    const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save persons';
     footer.append(add, cancel, save); editor.append(guidance, list, pasteDetails, footer); dialog.appendChild(editor);
     editor.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -455,7 +461,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       try { await saveReference(row); dialog.close(); }
       catch (error) {
         row.contributors = previous; row.contributorsDisplay = contributorSummary(previous); refreshTable(); renderTree(search.value);
-        save.disabled = false; save.textContent = 'Save contributors'; setSaveState(error instanceof Error ? error.message : 'Save failed', 'error');
+        save.disabled = false; save.textContent = 'Save persons'; setSaveState(error instanceof Error ? error.message : 'Save failed', 'error');
       }
     });
   };
@@ -547,6 +553,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     }, { passive: true });
 
     element.addEventListener('contextmenu', (event) => {
+      const header=(event.target as HTMLElement).closest('th');
+      if(header&&catalogTable){const coords=catalogTable.getCoords(header as HTMLTableCellElement);if(coords?.row===-1){openCatalogHeaderMenu(event);return;}}
       const ids = selectedIds();
       if (!ids.length) return;
       openContextMenu(event, referenceMenuItems(ids));
@@ -577,25 +585,38 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
       td.dataset.state = String(value || '').replaceAll(' ', '-');
     };
+    type CatalogColumn={key:string;group:string;column:Record<string,unknown>;defaultVisible:boolean};
+    const coreColumns:CatalogColumn[]=[
+      {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',width:300}},
+      {key:'persons',group:'Persons',defaultVisible:true,column:{data:'contributorsDisplay',title:'Persons',readOnly:true,className:'contributors-cell',width:260}},
+      {key:'year',group:'Date',defaultVisible:true,column:{data:'year',title:'Year',type:'numeric',width:72}},
+      {key:'entryType',group:'Identity',defaultVisible:true,column:{data:'type',title:'Entry type',type:'dropdown',source:[...BIBLATEX_ENTRY_TYPE_VALUES],strict:true,allowInvalid:false,width:150}},
+      {key:'publisher',group:'Publication',defaultVisible:true,column:{data:'publisher',title:'Publisher',width:210}},
+      {key:'location',group:'Publication',defaultVisible:true,column:{data:'publisherPlace',title:'Location',width:140}},
+      {key:'url',group:'Access',defaultVisible:true,column:{data:'url',title:'URL',width:260}},
+      {key:'isbn',group:'Identifiers',defaultVisible:true,column:{data:'isbn',title:'ISBN',width:150}},
+      {key:'language',group:'Description',defaultVisible:true,column:{data:'language',title:'Language',width:90}},
+      {key:'tags',group:'Description',defaultVisible:true,column:{data:'tags',title:'Tags',width:190}},
+      {key:'citeKey',group:'Identity',defaultVisible:true,column:{data:'citeKey',title:'Citekey',width:160}},
+      {key:'dateAdded',group:'System',defaultVisible:true,column:{data:'dateAdded',title:'Date added',readOnly:true,width:190}},
+      {key:'abstract',group:'Description',defaultVisible:true,column:{data:'abstract',title:'Abstract',width:320}},
+      {key:'fileType',group:'System',defaultVisible:true,column:{data:'fileType',title:'File',readOnly:true,renderer:fileRenderer,width:72}},
+      {key:'status',group:'System',defaultVisible:true,column:{data:'status',title:'State',readOnly:true,renderer:stateRenderer,width:130}},
+    ];
+    const coreFieldKeys=new Set(['title','year','publisher','location','url','isbn','language','abstract']);
+    const extendedColumns:CatalogColumn[]=BIBLATEX_FIELD_OPTIONS.filter((field)=>!('core' in field)&&!coreFieldKeys.has(field.key)).map((field)=>({key:`biblatex:${field.key}`,group:field.group,defaultVisible:false,column:{data:`bibliographicFields.${field.key}`,title:field.label,width:['note','annotation'].includes(field.key)?280:170}}));
+    const catalogColumns=[...coreColumns,...extendedColumns];
+    const visibleStorageKey='seshat.catalog.visible-columns.v1';const stickyStorageKey='seshat.catalog.sticky-columns.v1';
+    const storedVisible=(()=>{try{const parsed=JSON.parse(window.localStorage.getItem(visibleStorageKey)||'null');return Array.isArray(parsed)?new Set<string>(parsed):null;}catch{return null;}})();
+    const visibleColumns=storedVisible||new Set(catalogColumns.filter((item)=>item.defaultVisible).map((item)=>item.key));
+    let stickyColumns=Math.max(0,Math.min(2,Number(window.localStorage.getItem(stickyStorageKey)??2)));
+    const saveVisibleColumns=()=>window.localStorage.setItem(visibleStorageKey,JSON.stringify([...visibleColumns]));
+    const setColumnVisible=(key:string,visible:boolean)=>{const index=catalogColumns.findIndex((item)=>item.key===key);if(index<0||!catalogTable)return;if(visible){visibleColumns.add(key);catalogTable.getPlugin('hiddenColumns').showColumn(index);}else{visibleColumns.delete(key);catalogTable.getPlugin('hiddenColumns').hideColumn(index);}saveVisibleColumns();catalogTable.render();};
+    const setStickyColumns=(count:number)=>{stickyColumns=count;window.localStorage.setItem(stickyStorageKey,String(count));catalogTable?.updateSettings({fixedColumnsStart:count});setSaveState(count===2?'title and persons fixed':count===1?'title fixed':'fixed columns unlocked');};
+    const openCatalogHeaderMenu=(event:MouseEvent)=>{const groups=new Map<string,CatalogColumn[]>();catalogColumns.forEach((item)=>groups.set(item.group,[...(groups.get(item.group)||[]),item]));const fieldGroups:ContextMenuItem[]=[...groups].map(([group,items])=>({label:group,children:items.map((item)=>({label:String(item.column.title||item.key),checked:visibleColumns.has(item.key),action:()=>setColumnVisible(item.key,!visibleColumns.has(item.key))}))}));openContextMenu(event,[{label:'Fields',children:fieldGroups},{label:'Sticky columns',children:[{label:'Title + Persons',checked:stickyColumns===2,action:()=>setStickyColumns(2)},{label:'Title only',checked:stickyColumns===1,action:()=>setStickyColumns(1)},{label:'Unlock both',checked:stickyColumns===0,action:()=>setStickyColumns(0)}]},{label:'Show all fields',action:()=>catalogColumns.forEach((item)=>setColumnVisible(item.key,true))},{label:'Restore default fields',action:()=>catalogColumns.forEach((item)=>setColumnVisible(item.key,item.defaultVisible))}]);};
     catalogTable = new Handsontable(tableHost, {
       data: filteredRows(),
-      columns: [
-        { data: 'title', title: 'Title', width: 300 },
-        { data: 'contributorsDisplay', title: 'Contributors', readOnly: true, className: 'contributors-cell', width: 260 },
-        { data: 'year', title: 'Year', type: 'numeric', width: 72 },
-        { data: 'type', title: 'Type', type: 'dropdown', source: [...BIBLATEX_ENTRY_TYPE_VALUES], strict: true, allowInvalid: false, width: 150 },
-        { data: 'publisher', title: 'Publisher', width: 210 },
-        { data: 'publisherPlace', title: 'Place', width: 140 },
-        { data: 'url', title: 'URL', width: 260 },
-        { data: 'isbn', title: 'ISBN', width: 150 },
-        { data: 'language', title: 'Lang', width: 70 },
-        { data: 'tags', title: 'Tags', width: 190 },
-        { data: 'citeKey', title: 'Citekey', width: 160 },
-        { data: 'dateAdded', title: 'Date Added', readOnly: true, width: 190 },
-        { data: 'abstract', title: 'Abstract', width: 320 },
-        { data: 'fileType', title: 'File', readOnly: true, renderer: fileRenderer, width: 72 },
-        { data: 'status', title: 'State', readOnly: true, renderer: stateRenderer, width: 130 },
-      ],
+      columns: catalogColumns.map((item)=>item.column),
       rowHeaders: false,
       rowHeights: 28,
       autoRowSize: false,
@@ -603,7 +624,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       width: '100%',
       height: '100%',
       stretchH: 'none',
-      fixedColumnsStart: 2,
+      fixedColumnsStart: stickyColumns,
+      hiddenColumns:{columns:catalogColumns.map((item,index)=>visibleColumns.has(item.key)?-1:index).filter((index)=>index>=0),indicators:true},
       filters: true,
       dropdownMenu: true,
       multiColumnSorting: true,
@@ -623,13 +645,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       licenseKey: 'non-commercial-and-evaluation',
       afterChange: (changes, source) => {
         if (!changes?.length || ['loadData', 'rollback'].includes(String(source))) return;
-        const touched = new Set<string>();
-        for (const [visualRow] of changes) {
+        const touched = new Set<string>();let typeChanged=false;
+        for (const [visualRow,property] of changes) {
           const physicalRow = catalogTable?.toPhysicalRow(Number(visualRow)) ?? Number(visualRow);
           const row = catalogTable?.getSourceDataAtRow(physicalRow) as ReferenceRow | undefined;
           if (row?.id) touched.add(row.id);
+          if(property==='type')typeChanged=true;
         }
         touched.forEach((id) => { const row = references.get(id); if (row) scheduleSave(row); });
+        if(typeChanged&&activeReference)renderProperties(activeReference);
       },
       afterRenderer: (cell,visualRow) => {
         const physical=catalogTable?.toPhysicalRow(visualRow) ?? visualRow; const row=catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined; cell.draggable=Boolean(row);
@@ -2529,28 +2553,28 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const row = referenceId ? references.get(referenceId) : undefined; propertiesContent.replaceChildren();
     if (!row) { const empty = document.createElement('p'); empty.className = 'property-empty'; empty.textContent = 'Select an item to inspect its full record.'; propertiesContent.appendChild(empty); return; }
     const form = document.createElement('form'); form.className = 'property-form';
-    const field = (labelText: string, key: keyof Pick<ReferenceRow,'title'|'citeKey'|'type'|'year'|'language'|'publisher'|'publisherPlace'|'url'>) => {
+    const field = (labelText: string, key: keyof Pick<ReferenceRow,'title'|'citeKey'|'year'|'language'|'publisher'|'publisherPlace'|'url'|'abstract'|'isbn'>) => {
       const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = labelText;
-      const input = document.createElement('input'); input.value = String(row[key] || ''); input.disabled = row.access === 'viewer';
+      const input = key==='abstract'?document.createElement('textarea'):document.createElement('input'); input.value = String(row[key] || ''); input.disabled = row.access === 'viewer';
       input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (Number(input.value) || input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
       label.append(caption,input); form.appendChild(label);
     };
+    const biblatexField=(definition:(typeof BIBLATEX_FIELD_OPTIONS)[number])=>{const coreKey=definition.key==='location'?'publisherPlace':definition.key;const core=new Set(['title','year','language','publisher','publisherPlace','url','abstract','isbn']);if(core.has(coreKey)){field(definition.label,coreKey as any);return;}const label=document.createElement('label');label.className='property-field';const caption=document.createElement('span');caption.textContent=definition.label;const input=['note','annotation'].includes(definition.key)?document.createElement('textarea'):document.createElement('input');input.value=row.bibliographicFields[definition.key]||'';input.disabled=row.access==='viewer';input.addEventListener('change',()=>{const value=input.value.trim();if(value)row.bibliographicFields[definition.key]=value;else delete row.bibliographicFields[definition.key];refreshTable();scheduleSave(row);});label.append(caption,input);form.appendChild(label);};
     const typeField = () => {
       const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = 'Type';
       const select = document.createElement('select'); select.disabled = row.access === 'viewer';
       BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType) => { const option = document.createElement('option'); option.value = entryType.value; option.textContent = entryType.label; option.title = entryType.description; option.selected = row.type === entryType.value; select.appendChild(option); });
-      select.addEventListener('change',() => { row.type = normalizeBibliographicType(select.value); refreshTable(); scheduleSave(row); });
+      select.addEventListener('change',() => { row.type = normalizeBibliographicType(select.value); refreshTable(); scheduleSave(row); renderProperties(row.id); });
       label.append(caption,select); form.appendChild(label);
     };
-    field('Title','title'); field('Cite key','citeKey'); typeField(); field('Year','year'); field('Language','language'); field('Publisher','publisher'); field('Place','publisherPlace'); field('URL','url');
+    field('Title','title'); field('Cite key','citeKey'); typeField();
     const section = (title: string, addTitle: string, onAdd: () => void) => {
       const block = document.createElement('section'); block.className = 'property-section'; const header = document.createElement('header'); const label = document.createElement('span'); label.textContent = title;
       const add = document.createElement('button'); add.type = 'button'; add.textContent = '+'; add.title = addTitle; add.disabled = row.access === 'viewer'; add.addEventListener('click',onAdd); header.append(label,add); block.appendChild(header); form.appendChild(block); return block;
     };
-    const people = section('Contributors','Add or edit contributors',() => openContributorEditor(row));
+    const people = section('Persons','Add or edit persons and their roles',() => openContributorEditor(row));
     row.contributors.forEach((person) => { const item = document.createElement('button'); item.type = 'button'; item.className = 'property-person'; item.disabled = row.access === 'viewer'; item.textContent = `${person.role || 'author'} · ${person.family || person.literal || ''}${person.given ? `, ${person.given}` : ''}`; item.addEventListener('click',() => openContributorEditor(row)); people.appendChild(item); });
-    const isbns = section('ISBN','Add ISBN',async () => { const value = await requestText('Add ISBN','ISBN'); if (!value) return; row.isbn = [...new Set([...row.isbn.split(/[;,]+/).map((item) => item.trim()).filter(Boolean),value])].join('; '); renderProperties(row.id); scheduleSave(row); });
-    row.isbn.split(/[;,]+/).map((item) => item.trim()).filter(Boolean).forEach((isbn) => { const token = document.createElement('div'); token.className = 'property-token'; token.textContent = isbn; isbns.appendChild(token); });
+    biblatexFieldsFor(row.type).filter((definition)=>definition.key!=='title').forEach(biblatexField);
     const keywords = section('Keywords','Keywords are managed in the cloud at left',() => undefined);
     keywords.querySelector('button')?.remove(); row.keywords.forEach((keyword) => { const token = document.createElement('div'); token.className = 'property-token'; const color = payload.keywordStyles[keyword]; if (color) token.style.boxShadow = `inset 3px 0 ${color}`; token.textContent = keyword; keywords.appendChild(token); });
     propertiesContent.appendChild(form);
@@ -2639,16 +2663,18 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let contextMenu: HTMLElement | null = null;
   const closeContextMenu = () => { contextMenu?.remove(); contextMenu = null; };
-  const openContextMenu = (event: MouseEvent, items: Array<{ label: string; danger?: boolean; disabled?: boolean; swatch?: string; action: () => void | Promise<void> }>) => {
+  type ContextMenuItem={label:string;danger?:boolean;disabled?:boolean;swatch?:string;checked?:boolean;children?:ContextMenuItem[];action?:()=>void|Promise<void>};
+  const openContextMenu = (event: MouseEvent, items: ContextMenuItem[]) => {
     event.preventDefault(); event.stopPropagation(); closeContextMenu();
-    const menu = document.createElement('div'); menu.className = 'seshat-context-menu'; menu.setAttribute('role', 'menu');
-    items.forEach((item) => {
-      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem');
+    const buildMenu=(entries:ContextMenuItem[],nested=false)=>{const menu = document.createElement('div'); menu.className = nested?'seshat-context-menu context-submenu':'seshat-context-menu'; menu.setAttribute('role', 'menu');
+    entries.forEach((item) => {
+      const wrap=document.createElement('div');wrap.className='context-menu-item';const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem');
       if (item.swatch) { const swatch = document.createElement('i'); swatch.className = 'context-swatch'; swatch.style.background = item.swatch; button.appendChild(swatch); }
-      button.append(item.label);
+      if(item.checked!==undefined){const check=document.createElement('i');check.className='context-check';check.textContent=item.checked?'✓':'';button.appendChild(check);}button.append(item.label);if(item.children?.length){const arrow=document.createElement('span');arrow.className='context-arrow';arrow.textContent='›';button.appendChild(arrow);wrap.append(button,buildMenu(item.children,true));}else wrap.appendChild(button);
       button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
-      button.addEventListener('click', () => { closeContextMenu(); void item.action(); }); menu.appendChild(button);
-    });
+      if(item.action)button.addEventListener('click', () => { closeContextMenu(); void item.action?.(); }); menu.appendChild(wrap);
+    });return menu;};
+    const menu=buildMenu(items);
     root.appendChild(menu); contextMenu = menu;
     const bounds = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
@@ -3258,7 +3284,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const openHelp = () => {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
-    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; double-click it to read.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
+    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
     addSection('Shortcuts',['⌘ Backspace — delete selected items','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
     const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);

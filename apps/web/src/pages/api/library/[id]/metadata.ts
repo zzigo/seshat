@@ -1,4 +1,4 @@
-import { BIBLATEX_ENTRY_TYPE_VALUES, isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { zoteroStyleAttachmentName } from '../../../../lib/attachment-filename';
@@ -23,11 +23,11 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const structured = form.get('contributors');
   if (structured !== null) {
     try { const parsed = JSON.parse(String(structured)); if (!Array.isArray(parsed)) throw new Error('array'); contributorInput = parsed; }
-    catch { return Response.json({ error: 'Contributors must be a valid array.' }, { status: 400 }); }
+    catch { return Response.json({ error: 'Persons must be a valid array.' }, { status: 400 }); }
   } else {
     contributorInput = text(form.get('authors')).split(/[\n;]+/).map((author) => author.trim()).filter(Boolean);
   }
-  if (contributorInput.length > 50) return Response.json({ error: 'Use at most 50 contributors.' }, { status: 400 });
+  if (contributorInput.length > 50) return Response.json({ error: 'Use at most 50 persons.' }, { status: 400 });
   const contributors = normalizeContributors(contributorInput);
 
   const yearText = text(form.get('year'));
@@ -67,6 +67,13 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
       url = parsed.toString();
     } catch { return Response.json({ error: 'URL must be a valid http(s) address.' }, { status: 400 }); }
   }
+  let bibliographicFields: Record<string,string> = {};
+  try {
+    const parsed=JSON.parse(String(form.get('bibliographicFields')||'{}'));
+    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error('object');
+    const allowed=new Set<string>(BIBLATEX_FIELD_KEYS);
+    bibliographicFields=Object.fromEntries(Object.entries(parsed).filter(([key])=>allowed.has(key)).map(([key,value])=>[key,String(value||'').trim().slice(0,5000)]).filter(([,value])=>value));
+  } catch { return Response.json({error:'BibLaTeX fields must be a valid object.'},{status:400}); }
   const currentYear = current.issued?.year ? String(current.issued.year) : '';
   const currentIsbns = ((current.identifiers?.isbn as string[] | undefined) || []).join('\n');
   const existingManual = new Set<string>((current.source?.curation as any)?.manualFields || []);
@@ -86,6 +93,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   markChanged('publisher', current.publisher || '', publisher);
   markChanged('publisherPlace', current.publisherPlace || '', publisherPlace);
   markChanged('url', current.url || '', url || '');
+  markChanged('biblatexFields', JSON.stringify((current.source as any)?.biblatexFields||{}), JSON.stringify(bibliographicFields));
   const reference = await catalog.updateMetadata(ownerKey, current.id, {
     title,
     citeKey,
@@ -99,6 +107,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     publisher: publisher || undefined,
     publisherPlace: publisherPlace || undefined,
     url,
+    bibliographicFields,
     manualFields: [...manualFields],
   });
   let storageRename: { ok: boolean; from?: string; to?: string; warning?: string } = { ok: true };

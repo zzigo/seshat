@@ -153,6 +153,7 @@ export interface CatalogMetadataUpdate {
   publisher?: string;
   publisherPlace?: string;
   url?: string;
+  bibliographicFields?: Record<string, string>;
   manualFields: string[];
 }
 
@@ -1450,14 +1451,17 @@ export class PostgresCatalog {
        SET title=$3, cite_key=$4, type=$5, contributors=$6::jsonb, issued=$7::jsonb,
            identifiers=$8::jsonb, tags=$9::text[], abstract=$10, language=$11,
            publisher=$12, publisher_place=$13, url=$14,
-           source=jsonb_set(source, '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $15::jsonb, true),
+           source=jsonb_set(
+             jsonb_set(source, '{biblatexFields}', $16::jsonb, true),
+             '{curation}', COALESCE(source->'curation', '{}'::jsonb) || $15::jsonb, true
+           ),
            updated_at=now()
        WHERE owner_key=$1 AND id=$2
        RETURNING *`,
       [ownerKey, id, input.title, input.citeKey, input.type, JSON.stringify(input.contributors),
         JSON.stringify(input.issued ?? null), JSON.stringify(input.identifiers), input.tags,
         input.abstract || null, input.language || null, input.publisher || null, input.publisherPlace || null,
-        input.url || null, JSON.stringify(curation)],
+        input.url || null, JSON.stringify(curation), JSON.stringify(input.bibliographicFields || {})],
     );
     return result.rows[0] ? this.hydrate(result.rows[0]) : null;
   }

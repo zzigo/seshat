@@ -23,6 +23,58 @@ export const BIBLATEX_ENTRY_TYPE_OPTIONS = [
 export type BibliographicType = typeof BIBLATEX_ENTRY_TYPE_OPTIONS[number]['value'];
 export const BIBLATEX_ENTRY_TYPE_VALUES: readonly BibliographicType[] = BIBLATEX_ENTRY_TYPE_OPTIONS.map((option) => option.value);
 
+export const BIBLATEX_FIELD_OPTIONS = [
+  { key:'title', label:'Title', group:'Identity', core:true, types:'all' },
+  { key:'subtitle', label:'Subtitle', group:'Identity', types:'all' },
+  { key:'titleaddon', label:'Title add-on', group:'Identity', types:'all' },
+  { key:'shorttitle', label:'Short title', group:'Identity', types:'all' },
+  { key:'year', label:'Year', group:'Date', core:true, types:'all' },
+  { key:'month', label:'Month', group:'Date', types:'all' },
+  { key:'date', label:'Date', group:'Date', types:['audio','music','performance','recording','misc','unpublished'] },
+  { key:'journaltitle', label:'Journal title', group:'Publication', types:['article'] },
+  { key:'booktitle', label:'Book / proceedings title', group:'Publication', types:['inbook','incollection','inproceedings','conference'] },
+  { key:'maintitle', label:'Main title', group:'Publication', types:['inbook','incollection'] },
+  { key:'eventtitle', label:'Event title', group:'Publication', types:['inproceedings','conference','proceedings','performance'] },
+  { key:'eventdate', label:'Event date', group:'Publication', types:['inproceedings','conference','proceedings','performance'] },
+  { key:'venue', label:'Venue', group:'Publication', types:['inproceedings','conference','proceedings','performance','recording','audio','music'] },
+  { key:'publisher', label:'Publisher', group:'Publication', core:true, types:['article','book','inbook','incollection','inproceedings','conference','proceedings','audio','music','recording','score','misc'] },
+  { key:'location', label:'Location / address', group:'Publication', core:true, types:'all' },
+  { key:'institution', label:'Institution', group:'Publication', types:['techreport'] },
+  { key:'organization', label:'Organization', group:'Publication', types:['manual','proceedings','inproceedings','conference'] },
+  { key:'school', label:'School', group:'Publication', types:['mastersthesis','phdthesis'] },
+  { key:'series', label:'Series', group:'Publication', types:['article','book','inbook','incollection','inproceedings','conference','proceedings','audio','music','recording','score'] },
+  { key:'volume', label:'Volume', group:'Part', types:['article','book','inbook','incollection','inproceedings','conference','proceedings','audio','music','recording','score'] },
+  { key:'number', label:'Number', group:'Part', types:['article','book','inbook','incollection','inproceedings','conference','proceedings','techreport','audio','music','recording','score'] },
+  { key:'issue', label:'Issue', group:'Part', types:['article'] },
+  { key:'edition', label:'Edition', group:'Part', types:['book','inbook','incollection','manual','score'] },
+  { key:'chapter', label:'Chapter', group:'Part', types:['inbook','incollection'] },
+  { key:'pages', label:'Pages', group:'Part', types:['article','inbook','incollection','inproceedings','conference'] },
+  { key:'pagetotal', label:'Total pages', group:'Part', types:['book','proceedings','manual','mastersthesis','phdthesis','techreport'] },
+  { key:'version', label:'Version', group:'Part', types:['manual','misc','audio','music','recording'] },
+  { key:'type', label:'Work / medium type', group:'Format', types:['mastersthesis','phdthesis','techreport','audio','music','performance','recording','misc','score'] },
+  { key:'howpublished', label:'How published', group:'Format', types:['booklet','misc','unpublished','score','audio','music','recording'] },
+  { key:'entrysubtype', label:'Entry subtype', group:'Format', types:'all' },
+  { key:'doi', label:'DOI', group:'Identifiers', types:['article','book','inbook','incollection','inproceedings','conference','proceedings','techreport'] },
+  { key:'isbn', label:'ISBN', group:'Identifiers', core:true, types:['book','inbook','incollection','proceedings','manual','score'] },
+  { key:'issn', label:'ISSN', group:'Identifiers', types:['article','proceedings','audio','music','recording'] },
+  { key:'eprint', label:'E-print identifier', group:'Identifiers', types:['article','unpublished','techreport','misc'] },
+  { key:'eprinttype', label:'E-print type', group:'Identifiers', types:['article','unpublished','techreport','misc'] },
+  { key:'userd', label:'Catalog / recording number', group:'Identifiers', types:['audio','music','recording','score'] },
+  { key:'url', label:'URL', group:'Access', core:true, types:'all' },
+  { key:'urldate', label:'Access date', group:'Access', types:'all' },
+  { key:'language', label:'Language', group:'Description', core:true, types:'all' },
+  { key:'abstract', label:'Abstract', group:'Description', core:true, types:'all' },
+  { key:'note', label:'Note', group:'Description', types:'all' },
+  { key:'annotation', label:'Annotation', group:'Description', types:'all' },
+] as const;
+
+export type BiblatexFieldKey = typeof BIBLATEX_FIELD_OPTIONS[number]['key'];
+export const BIBLATEX_FIELD_KEYS: readonly BiblatexFieldKey[] = BIBLATEX_FIELD_OPTIONS.map((field) => field.key);
+export const biblatexFieldsFor = (value: unknown) => {
+  const type = normalizeBibliographicType(value);
+  return BIBLATEX_FIELD_OPTIONS.filter((field) => field.types === 'all' || (field.types as readonly string[]).includes(type));
+};
+
 const LEGACY_BIBLIOGRAPHIC_TYPES: Record<string, BibliographicType> = {
   document: 'misc', article: 'article', 'article-journal': 'article', book: 'book', chapter: 'incollection',
   'paper-conference': 'inproceedings', thesis: 'phdthesis', report: 'techreport', webpage: 'misc',
@@ -46,7 +98,7 @@ export interface Contributor {
   family?: string;
   given?: string;
   literal?: string;
-  role: 'author' | 'editor' | 'translator' | 'composer' | 'performer' | 'contributor';
+  role: 'author' | 'editor' | 'translator' | 'composer' | 'performer' | 'curator' | 'producer' | 'director' | 'conductor' | 'commentator' | 'annotator' | 'introduction' | 'foreword' | 'afterword' | 'contributor';
 }
 
 export interface PartialDate {

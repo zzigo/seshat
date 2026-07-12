@@ -71,7 +71,7 @@ const graphEdges = edgesResult.rows;
       <form class="metadata-form" data-metadata-form data-reference-id={reference.id}>
         <label><span>Title</span><input name="title" value={reference.title} maxlength="1000" required /></label>
         <input type="hidden" name="contributors" value={JSON.stringify(reference.contributors)} />
-        <label><span>Contributors <small>edit structurally in Workspace</small></span><textarea rows="4" readonly>{authors.join('\n')}</textarea></label>
+        <label><span>Persons <small>edit roles structurally in Workspace</small></span><textarea rows="4" readonly>{authors.join('\n')}</textarea></label>
         <div class="metadata-pair">
           <label><span>Year</span><input name="year" value={year} inputmode="numeric" pattern="[0-9]{1,4}" /></label>
           <label><span>ISBN <small>one per line</small></span><textarea name="isbns" rows="3">{isbns.join('\n')}</textarea></label>

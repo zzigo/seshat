@@ -1,6 +1,6 @@
 ---
 import crypto from 'node:crypto';
-import { contributorSummary } from '@seshat/core';
+import { BIBLATEX_FIELD_KEYS, contributorSummary } from '@seshat/core';
 import DropLayer from '../components/DropLayer.astro';
 import { getCatalog, ownerKeyFor } from '../lib/catalog';
 import { referenceFileType } from '../lib/reference-file';
@@ -24,6 +24,7 @@ const keywordList = (source: any): string[] => {
   const raw = source?.keywords ?? source?.bibtex?.keywords ?? [];
   return [...new Set((Array.isArray(raw) ? raw : String(raw || '').split(/[,;\n]+/)).map((value) => String(value).trim()).filter(Boolean))];
 };
+const bibliographicFields=(source:any)=>{const allowed=new Set<string>(BIBLATEX_FIELD_KEYS);const values={...(source?.bibtex||{}),...(source?.biblatexFields||{})};return Object.fromEntries(Object.entries(values).filter(([key])=>allowed.has(key)).map(([key,value])=>[key,Array.isArray(value)?value.map(String).join('; '):String(value||'')]).filter(([,value])=>value));};
 const referenceState = (reference: typeof references[number]): string => {
   const active = reference.jobs.find((job) => job.status === 'running' || job.status === 'queued');
   const failed = reference.jobs.find((job) => job.status === 'failed');
@@ -52,6 +53,7 @@ const payload = {
     publisher: reference.publisher || '',
     publisherPlace: reference.publisherPlace || '',
     url: reference.url || '',
+    bibliographicFields: bibliographicFields(reference.source),
     format: referenceFileType(reference),
     fileType: referenceFileType(reference).toUpperCase() || '—',
     filename: String((reference.source as any).originalFilename || reference.title),

@@ -1,6 +1,6 @@
 import type { Contributor } from './types.js';
 
-export const CONTRIBUTOR_ROLES = ['author', 'editor', 'translator', 'composer', 'performer', 'contributor'] as const;
+export const CONTRIBUTOR_ROLES = ['author', 'editor', 'translator', 'composer', 'performer', 'curator', 'producer', 'director', 'conductor', 'commentator', 'annotator', 'introduction', 'foreword', 'afterword', 'contributor'] as const;
 
 const organizationWords = /\b(university|universidad|université|institute|institut|college|committee|association|society|press|museum|orchestra|ensemble|department|ministerio|ministry|centre|center|laboratory|lab)\b/i;
 const particles = new Set(['da', 'de', 'del', 'della', 'der', 'di', 'dos', 'du', 'la', 'le', 'van', 'von']);

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { HeadObjectCommand, type HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import type { CatalogBibliographyInput } from '@seshat/catalog';
-import { normalizeBibliographicType, type Contributor } from '@seshat/core';
+import { BIBLATEX_FIELD_KEYS, normalizeBibliographicType, type Contributor } from '@seshat/core';
 import { mapBibAttachment, type BibliographyAttachmentPath, type SeshatUserIdentity } from './bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from './wasabi';
 
@@ -73,12 +73,21 @@ export const catalogInputForBibEntry = (
   const people = (field: string, role: Contributor['role']): Contributor[] => (Array.isArray(fields[field]) ? fields[field] : []).map((person: any) => ({
     family: String(person.lastName || '').trim(), given: String(person.firstName || '').trim(), role,
   })).filter((person: Contributor) => person.family || person.given);
-  const contributors = [...people('author', 'author'), ...people('editor', 'editor'), ...people('translator', 'translator')];
+  const contributors = [
+    ...people('author','author'),...people('editor','editor'),...people('translator','translator'),
+    ...people('composer','composer'),...people('performer','performer'),...people('curator','curator'),
+    ...people('producer','producer'),...people('director','director'),...people('conductor','conductor'),
+    ...people('commentator','commentator'),...people('annotator','annotator'),...people('introduction','introduction'),
+    ...people('foreword','foreword'),...people('afterword','afterword'),
+  ];
   const year = Number(String(fields.year || fields.date || '').match(/\d{4}/)?.[0]) || undefined;
   const isbn = literal(fields.isbn).split(/[;,\s]+/).filter(Boolean);
   const doi = literal(fields.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
   const input = String(entry.input || JSON.stringify(entry));
   const attachment = inspected.attachment?.status === 'linked' ? inspected.attachment : null;
+  const coreFields=new Set(['title','author','editor','translator','year','publisher','address','location','isbn','url','language','abstract','keywords']);
+  const allowedFields=new Set<string>(BIBLATEX_FIELD_KEYS);
+  const biblatexFields=Object.fromEntries(Object.entries(fields).filter(([key])=>allowedFields.has(key)&&!coreFields.has(key)).map(([key,value])=>[key,literal(value)]).filter(([,value])=>value));
   const bucket = attachment ? getWasabiBucket() : undefined;
   return {
     id: randomUUID(), citeKey: String(entry.key || `import-${randomUUID().slice(0, 8)}`).slice(0, 160),
@@ -90,7 +99,7 @@ export const catalogInputForBibEntry = (
     publisherPlace: literal(fields.address || fields.location) || undefined,
     url: literal(fields.url) || undefined,
     source: {
-      provider: 'bibtex', sourceFile, importedAt: new Date().toISOString(), bibtex: fields, raw: input,
+      provider: 'bibtex', sourceFile, importedAt: new Date().toISOString(), bibtex: fields, biblatexFields, raw: input,
       keywords: keywordList(fields.keywords),
       ...(attachment ? { originalFilename: attachment.filename, wasabiObjectKey: attachment.objectKey, wasabiStorageRoot: attachment.storageRoot } : {}),
     },

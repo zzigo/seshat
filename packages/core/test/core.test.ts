@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   bibliographicFingerprint,
   biblatexEntryTypeFor,
+  biblatexFieldsFor,
   evaluateReferenceHealth,
   generateCiteKey,
   isValidIsbn,
@@ -45,6 +46,16 @@ test('normalizes legacy catalog types into controlled BibLaTeX types', () => {
   assert.equal(normalizeBibliographicType('musical-score'), 'score');
   assert.equal(biblatexEntryTypeFor('score'), 'misc');
   assert.equal(biblatexEntryTypeFor('performance'), 'performance');
+});
+
+test('selects BibLaTeX fields by entry type', () => {
+  const article = new Set(biblatexFieldsFor('article').map((field) => field.key));
+  const thesis = new Set(biblatexFieldsFor('phdthesis').map((field) => field.key));
+  const recording = new Set(biblatexFieldsFor('recording').map((field) => field.key));
+  assert.equal(article.has('journaltitle'), true);
+  assert.equal(article.has('school'), false);
+  assert.equal(thesis.has('school'), true);
+  assert.equal(recording.has('userd'), true);
 });
 
 test('validates ISBN checksums', () => {
