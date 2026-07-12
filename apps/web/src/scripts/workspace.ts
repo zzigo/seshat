@@ -901,7 +901,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
     toolbar.appendChild(docControls);
 
-    const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,report:setSaveState});toolbar.appendChild(readButton);
+    const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';const stopReadButton=document.createElement('button');stopReadButton.type='button';stopReadButton.className='read-aloud-stop';stopReadButton.textContent='Stop';stopReadButton.hidden=true;readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,stopButton:stopReadButton,report:setSaveState});toolbar.append(readButton,stopReadButton);
 
     const actions: Array<[string, string]> = [['text','Text'],['graph','Graph'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
     for (const [kind, title] of actions) {
