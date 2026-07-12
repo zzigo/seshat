@@ -26,6 +26,7 @@ class BrowserSpeechEngine {
   pause() { speechSynthesis.pause(); }
   resume() { speechSynthesis.resume(); }
   stop() { speechSynthesis.cancel(); this.utterance = null; }
+  prepare() { speechSynthesis.cancel(); speechSynthesis.resume(); this.utterance = null; }
 
   async speak(options: SpeakOptions): Promise<void> {
     await new Promise<void>((resolve, reject) => {
@@ -65,6 +66,7 @@ class BrowserSpeechEngine {
       utterance.onerror = (event) => event.error === 'canceled' || event.error === 'interrupted'
         ? finish()
         : finish(new Error(`${options.voice.name} · ${event.error || 'speech synthesis failed'}`));
+      if (speechSynthesis.paused) speechSynthesis.resume();
       speechSynthesis.speak(utterance);
     });
   }
