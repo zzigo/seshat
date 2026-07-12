@@ -180,7 +180,8 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
         }, 180);
       };
 
-      const savedSidebar = localStorage.getItem('seshat-sidebar') || 'visible';
+      const phoneLayout = matchMedia('(max-width: 1000px) and (pointer: coarse)').matches;
+      const savedSidebar = phoneLayout ? 'visible' : (localStorage.getItem('seshat-sidebar') || 'visible');
       let isCollapsed = savedSidebar === 'collapsed';
       updateSidebarState(isCollapsed);
 

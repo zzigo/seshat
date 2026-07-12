@@ -39,13 +39,18 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const references = [];
   const libraries = [];
-  for (const group of groups.values()) {
-    const library = await catalog.ensureLibraryPath(ownerKey, group.directories);
-    if (!library) throw new Error('LIBRARY_PATH_CREATE_FAILED');
-    libraries.push(library);
-    const imported = await catalog.importBibliography(ownerKey, library.id,
-      group.entries.map(({ inspected: item, sourceFile }) => catalogInputForBibEntry(item, sourceFile)));
-    references.push(...imported);
+  try {
+    for (const group of groups.values()) {
+      const library = await catalog.ensureLibraryPath(ownerKey, group.directories);
+      if (!library) throw new Error('LIBRARY_PATH_CREATE_FAILED');
+      libraries.push(library);
+      const imported = await catalog.importBibliography(ownerKey, library.id,
+        group.entries.map(({ inspected: item, sourceFile }) => catalogInputForBibEntry(item, sourceFile)));
+      references.push(...imported);
+    }
+  } catch(error) {
+    const message=error instanceof Error?error.message:'BIBLIOGRAPHY_IMPORT_FAILED';console.error('[seshat:bibliography-import]',error);
+    return Response.json({error:message==='WASABI_OBJECT_ALREADY_LINKED'?'A linked file belongs to another catalog item and could not be merged.':message},{status:message==='WASABI_OBJECT_ALREADY_LINKED'?409:500});
   }
   return Response.json({
     ok: true, imported: references.length, references, libraries, errors,

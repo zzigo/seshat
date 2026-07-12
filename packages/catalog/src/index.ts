@@ -1383,6 +1383,25 @@ export class PostgresCatalog {
       const library = await client.query('SELECT id FROM catalog_libraries WHERE id=$1 AND owner_key=$2', [libraryId, ownerKey]);
       if (!library.rows[0]) throw new Error('LIBRARY_NOT_FOUND');
       for (const entry of entries.slice(0, 5000)) {
+        if(entry.artifact){
+          const linked=await client.query(`SELECT reference.id FROM catalog_artifacts artifact JOIN catalog_references reference ON reference.id=artifact.reference_id WHERE reference.owner_key=$1 AND artifact.object_key=$2 LIMIT 1`,[ownerKey,entry.artifact.objectKey]);
+          if(linked.rows[0]){
+            const referenceId=String(linked.rows[0].id);importedIds.push(referenceId);
+            await client.query(`UPDATE catalog_references SET
+              title=CASE WHEN trim(title)='' OR lower(title)='untitled reference' THEN $3 ELSE title END,
+              type=CASE WHEN type IN ('','misc','document') AND $4<>'misc' THEN $4 ELSE type END,
+              contributors=CASE WHEN jsonb_array_length(contributors)=0 THEN $5::jsonb ELSE contributors END,
+              issued=COALESCE(issued,$6::jsonb),identifiers=$7::jsonb||identifiers,
+              tags=ARRAY(SELECT DISTINCT value FROM unnest(tags||$8::text[]) value WHERE trim(value)<>''),
+              abstract=COALESCE(NULLIF(abstract,''),$9),language=COALESCE(NULLIF(language,''),$10),
+              publisher=COALESCE(NULLIF(publisher,''),$11),publisher_place=COALESCE(NULLIF(publisher_place,''),$12),url=COALESCE(NULLIF(url,''),$13),
+              source=jsonb_set(source||($14::jsonb-'provider'-'originalFilename'-'wasabiObjectKey'-'wasabiStorageRoot'),'{biblatexFields}',COALESCE(source->'biblatexFields','{}'::jsonb)||COALESCE($14::jsonb->'biblatexFields','{}'::jsonb),true),updated_at=now()
+              WHERE owner_key=$1 AND id=$2`,[ownerKey,referenceId,entry.title,entry.type,JSON.stringify(entry.contributors),JSON.stringify(entry.issued??null),JSON.stringify(entry.identifiers),entry.tags??[],entry.abstract||null,entry.language||null,entry.publisher||null,entry.publisherPlace||null,entry.url||null,JSON.stringify(entry.source)]);
+            await client.query('INSERT INTO catalog_library_items (library_id,reference_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[libraryId,referenceId]);
+            await client.query('DELETE FROM catalog_library_items WHERE library_id=$1 AND reference_id=$2',[`inbox:${ownerKey}`,referenceId]);
+            continue;
+          }
+        }
         const result = await client.query(
           `INSERT INTO catalog_references
              (id,owner_key,cite_key,type,title,contributors,issued,identifiers,tags,abstract,language,publisher,publisher_place,url,source,original_sha256,created_at)

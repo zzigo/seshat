@@ -92,6 +92,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const tree = root.querySelector<HTMLElement>('[data-library-tree]');
   const search = root.querySelector<HTMLInputElement>('[data-tree-search]');
   const saveState = root.querySelector<HTMLElement>('[data-save-state]');
+  const isPhoneLayout=()=>window.matchMedia('(max-width: 1000px) and (pointer: coarse)').matches;
   const consoleRoot = root.querySelector<HTMLElement>('[data-workspace-console]');
   const consoleCurrent = root.querySelector<HTMLElement>('[data-console-current]');
   const consoleCount = root.querySelector<HTMLElement>('[data-console-count]');
@@ -911,8 +912,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     original.href = `/api/library/${reference.id}/original`; original.target = '_blank'; original.textContent = 'Original ↗';
     toolbar.appendChild(original);
 
-    // Close button for mobile portrait viewports
-    if (panelId && window.innerWidth < 500) {
+    // Phone document close returns to the collection sidebar.
+    if (panelId && isPhoneLayout()) {
       const closeBtn = document.createElement('button');
       closeBtn.type = 'button';
       closeBtn.innerHTML = '✕';
@@ -927,6 +928,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       closeBtn.addEventListener('click', () => {
         element.classList.remove('maximized-pod');
         api.getPanel(panelId)?.api.close();
+        if(api.hasMaximizedGroup())api.exitMaximizedGroup();root.classList.remove('mobile-focus-mode','properties-open');window.dispatchEvent(new CustomEvent('seshat:set-sidebar',{detail:{collapsed:false}}));
       });
       toolbar.appendChild(closeBtn);
     }
@@ -1147,10 +1149,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
   };
 
-  const derivativeRenderer = (referenceId: string, kind: 'text' | 'structure'): IContentRenderer => {
+  const derivativeRenderer = (referenceId: string, kind: 'text' | 'structure', panelId?:string): IContentRenderer => {
     const element = panel(`${kind}-pod`);
-    return { element, init() { void mountText(element, referenceId, kind === 'text' ? 'markdown' : 'structure'); } };
+    return { element, init() { const header=document.createElement('header');header.className='pod-heading';header.innerHTML=`<div><div class="eyebrow">Document</div><h2>${kind==='text'?'Text':'Structure'}</h2></div>`;addMobileCloseButton(header,panelId);element.appendChild(header);void mountText(element, referenceId, kind === 'text' ? 'markdown' : 'structure'); } };
   };
+
+  const maximizePhonePanel=(panelId:string)=>{if(!isPhoneLayout())return;root.classList.remove('properties-open');root.classList.add('mobile-focus-mode');window.setTimeout(()=>{const target=api.getPanel(panelId);if(!target)return;if(api.hasMaximizedGroup())api.exitMaximizedGroup();target.api.setActive();api.maximizeGroup(target);window.dispatchEvent(new Event('resize'));},0);};
+  const closePhoneAuxiliaryPanels=(except?:string)=>{if(!isPhoneLayout())return;api.panels.filter((candidate)=>candidate.id!==except&&candidate.id!=='document-preview'&&candidate.id!=='catalog').forEach((candidate)=>candidate.api.close());};
+  const restorePhoneDocument=()=>{if(!isPhoneLayout())return;root.classList.remove('properties-open');const documentPanel=api.getPanel('document-preview');if(!documentPanel){root.classList.remove('mobile-focus-mode');window.dispatchEvent(new CustomEvent('seshat:set-sidebar',{detail:{collapsed:false}}));return;}maximizePhonePanel('document-preview');};
 
   const addMobileCloseButton = (header: HTMLElement, panelId?: string) => {
     if (!panelId) return;
@@ -1167,6 +1173,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     closeBtn.style.marginLeft = 'auto';
     closeBtn.addEventListener('click', () => {
       api.getPanel(panelId)?.api.close();
+      window.setTimeout(restorePhoneDocument,0);
     });
     header.appendChild(closeBtn);
   };
@@ -2522,8 +2529,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       }
       if (name === 'document-preview') return previewRenderer(options.id);
       if (name.startsWith('document:')) return documentRenderer(name.slice('document:'.length), options.id);
-      if (name.startsWith('text:')) return derivativeRenderer(name.slice('text:'.length), 'text');
-      if (name.startsWith('structure:')) return derivativeRenderer(name.slice('structure:'.length), 'structure');
+      if (name.startsWith('text:')) return derivativeRenderer(name.slice('text:'.length), 'text',options.id);
+      if (name.startsWith('structure:')) return derivativeRenderer(name.slice('structure:'.length), 'structure',options.id);
       if (name.startsWith('tool:')) {
         const [, kind, referenceId] = name.split(':');
         return toolRenderer(kind as ToolKind, referenceId || undefined, options.id);
@@ -2543,9 +2550,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const addPanel = (id: string, component: string, title: string, direction: 'right' | 'below' | 'within' = 'right') => {
     const existing = api.getPanel(id);
-    if (existing) { existing.api.setActive(); return; }
+    if (existing) { existing.api.setActive(); return existing; }
     const referencePanel = api.activePanel || api.panels[api.panels.length - 1];
-    api.addPanel({ id, component, title, position: referencePanel ? { referencePanel, direction } : undefined });
+    return api.addPanel({ id, component, title, position: referencePanel ? { referencePanel, direction } : undefined });
   };
 
   function renderProperties(referenceId: string | null) {
@@ -2583,19 +2590,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const controller = {
     openCatalog() { addPanel('catalog', 'catalog', 'Catalog', 'within'); },
     openDocument(referenceId: string, split = false) {
-      if (window.innerWidth < 500) {
-        const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');
-        if (root && !root.classList.contains('collapsed-sidebar')) {
-          window.dispatchEvent(new CustomEvent('seshat:set-sidebar', { detail: { collapsed: true } }));
-        }
-      }
-      activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return; renderProperties(referenceId); root.classList.add('properties-open');
-      if (split) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
+      const phone=isPhoneLayout();if(phone){window.dispatchEvent(new CustomEvent('seshat:set-sidebar',{detail:{collapsed:true}}));root.classList.remove('properties-open');closePhoneAuxiliaryPanels();}
+      activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return; renderProperties(referenceId); if(!phone)root.classList.add('properties-open');
+      if (split&&!phone) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
       const existing = api.getPanel('document-preview');
       if (existing) { previewRender?.(referenceId); existing.api.setTitle(ref.title); existing.api.setActive(); }
       else addPanel('document-preview', 'document-preview', ref.title, 'right');
+      if(phone)maximizePhonePanel('document-preview');
     },
-    openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId); addPanel(`${kind}-${referenceId}`, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right'); },
+    openDerivative(referenceId: string, kind: 'text' | 'structure') { const ref = references.get(referenceId);const panelId=`${kind}-${referenceId}`;closePhoneAuxiliaryPanels(panelId);addPanel(panelId, `${kind}:${referenceId}`, `${kind === 'text' ? 'Text' : 'Structure'} · ${ref?.title || ''}`, 'right');maximizePhonePanel(panelId); },
     openTool(kind: ToolKind, referenceId: string | null | undefined = activeReference || undefined) {
       const globalGraph = kind === 'graph' && referenceId === null;
       const effectiveReferenceId = globalGraph ? undefined : referenceId || undefined;
@@ -2608,15 +2611,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const existing = api.getPanel(panelId);
         if (existing) {
           if (effectiveReferenceId) window.dispatchEvent(new CustomEvent('seshat:active-reference-changed', { detail: { referenceId: effectiveReferenceId } }));
-          existing.api.setActive();
+          existing.api.setActive();maximizePhonePanel(panelId);
           return;
         }
-        addPanel(panelId, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');
+        closePhoneAuxiliaryPanels(panelId);addPanel(panelId, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');maximizePhonePanel(panelId);
         return;
       }
-      addPanel(`tool-${kind}-${suffix}`, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');
+      const panelId=`tool-${kind}-${suffix}`;closePhoneAuxiliaryPanels(panelId);addPanel(panelId, `tool:${kind}:${effectiveReferenceId || ''}`, title, 'right');maximizePhonePanel(panelId);
     },
-    openBibliography(batchId: string, title = 'Bibliography') { addPanel(`bibliography-${batchId}`, `bibliography:${batchId}`, title, 'right'); },
+    openBibliography(batchId: string, title = 'Bibliography') { const panelId=`bibliography-${batchId}`;closePhoneAuxiliaryPanels(panelId);addPanel(panelId, `bibliography:${batchId}`, title, 'right');maximizePhonePanel(panelId); },
   };
 
   async function deleteReference(referenceId: string) {
