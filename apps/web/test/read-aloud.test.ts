@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences } from '../src/scripts/read-aloud';
+import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences, steppedReaderRate } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 import { billableCharacterCount, chirpMonth, nextChirpRenewal } from '../src/lib/chirp';
+import { chirpAccessAllowed } from '../src/lib/chirp-access';
 
 test('segments reading text while preserving annotation offsets', () => {
   const source = '# Uno\n\nPrimera frase. Segunda frase con [enlace](https://example.test).';
@@ -29,4 +30,16 @@ test('counts Chirp usage by Unicode characters and renews on the next UTC month'
   assert.equal(chirpMonth(new Date('2026-12-31T23:59:59Z')), '2026-12');
   assert.equal(nextChirpRenewal(new Date('2026-12-31T23:59:59Z')), '2027-01-01T00:00:00.000Z');
   assert.equal(narrationCharacterCount('Primera frase. Segunda frase.', 'es'), 29);
+});
+
+test('steps reader speed by quarters within safe playback bounds', () => {
+  assert.equal(steppedReaderRate(1,.25),1.25);
+  assert.equal(steppedReaderRate(.5,-.25),.5);
+  assert.equal(steppedReaderRate(2,.25),2);
+});
+
+test('restricts Chirp to the configured server allowlist', () => {
+  const previous=process.env.GOOGLE_TTS_ALLOWED_EMAILS;process.env.GOOGLE_TTS_ALLOWED_EMAILS='reader@example.test, ADMIN@MUSIKI.ORG.AR';
+  try{assert.equal(chirpAccessAllowed('reader@example.test'),true);assert.equal(chirpAccessAllowed('admin@musiki.org.ar'),true);assert.equal(chirpAccessAllowed('other@example.test'),false);}
+  finally{if(previous===undefined)delete process.env.GOOGLE_TTS_ALLOWED_EMAILS;else process.env.GOOGLE_TTS_ALLOWED_EMAILS=previous;}
 });

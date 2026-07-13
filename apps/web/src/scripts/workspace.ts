@@ -23,7 +23,7 @@ type ReferenceRow = {
   libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
-type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string> };
+type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string>; chirpEnabled:boolean };
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
@@ -90,6 +90,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
 export function mountSeshatWorkspace(root: HTMLElement): void {
   const payload = readPayload();
   payload.keywordStyles ||= {};
+  payload.chirpEnabled = Boolean(payload.chirpEnabled);
   payload.references.forEach((reference) => { reference.type = normalizeBibliographicType(reference.type); });
   const references = new Map(payload.references.map((reference) => [reference.id, reference]));
   const host = root.querySelector<HTMLElement>('[data-dockview-host]');
@@ -448,8 +449,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: 'Search for candidate in Wasabi…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => searchForCandidate(editableIds[0]) },
     { label: 'Render Kokoro narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openKokoroNarration(row); } },
     { label: `Erase Kokoro narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasKokoroNarration), danger: true, action: () => eraseKokoroNarrations(editableIds.filter((id)=>references.get(id)?.hasKokoroNarration)) },
-    { label: 'Render Google Chirp narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openChirpNarration(row); } },
-    { label: `Erase Google Chirp narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasChirpNarration), danger: true, action: () => eraseChirpNarrations(editableIds.filter((id)=>references.get(id)?.hasChirpNarration)) },
+    ...(payload.chirpEnabled ? [
+      { label: 'Render Google Chirp narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openChirpNarration(row); } },
+      { label: `Erase Google Chirp narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasChirpNarration), danger: true, action: () => eraseChirpNarrations(editableIds.filter((id)=>references.get(id)?.hasChirpNarration)) },
+    ] : []),
     { label: `Extract text & structure${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'extract') },
     { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
     { label: `Enrich papers with OpenAlex${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'scholarly') },
@@ -962,7 +965,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
     toolbar.appendChild(docControls);
 
-    const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';const stopReadButton=document.createElement('button');stopReadButton.type='button';stopReadButton.className='read-aloud-stop';stopReadButton.textContent='Stop';stopReadButton.hidden=true;readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,stopButton:stopReadButton,report:setSaveState});toolbar.append(readButton,stopReadButton);
+    const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';const stopReadButton=document.createElement('button');stopReadButton.type='button';stopReadButton.className='read-aloud-stop';stopReadButton.textContent='Stop';stopReadButton.hidden=true;readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,stopButton:stopReadButton,report:setSaveState,chirpEnabled:payload.chirpEnabled});toolbar.append(readButton,stopReadButton);
 
     const actions: Array<[string, string]> = [['text','Text'],['graph','Graph'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
     for (const [kind, title] of actions) {

@@ -1,6 +1,7 @@
 import textToSpeech from '@google-cloud/text-to-speech';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
+import { chirpAccessAllowed } from '../../../../lib/chirp-access';
 import { billableCharacterCount, chirpMonth, chirpVoice, CHIRP_PROVIDER, CHIRP_VOICES, DEFAULT_CHIRP_LIMIT, DEFAULT_CHIRP_WARNING, nextChirpRenewal } from '../../../../lib/chirp';
 
 let client:InstanceType<typeof textToSpeech.TextToSpeechClient>|undefined;
@@ -9,12 +10,14 @@ const configured=()=>Boolean(process.env.GOOGLE_CLOUD_PROJECT&&process.env.GOOGL
 
 export const GET:APIRoute=async({locals})=>{
   const email=String((locals.session as any)?.user?.email||'').trim().toLowerCase();if(!email)return Response.json({error:'authentication_required'},{status:401});
+  if(!chirpAccessAllowed(email))return Response.json({error:'chirp_access_denied'},{status:403});
   const month=chirpMonth(),{limit,warning}=limits(),used=await getCatalog().getTtsUsage(CHIRP_PROVIDER,month);
   return Response.json({configured:configured(),provider:CHIRP_PROVIDER,month,used,remaining:Math.max(0,limit-used),limit,warning,renewsAt:nextChirpRenewal(),voices:CHIRP_VOICES},{headers:{'Cache-Control':'private, no-store'}});
 };
 
 export const POST:APIRoute=async({request,locals,params})=>{
   const email=String((locals.session as any)?.user?.email||'').trim().toLowerCase();if(!email)return Response.json({error:'authentication_required'},{status:401});
+  if(!chirpAccessAllowed(email))return Response.json({error:'chirp_access_denied'},{status:403});
   if(!configured())return Response.json({error:'Google Chirp is not configured.'},{status:503});
   const ownerKey=ownerKeyFor(email),catalog=getCatalog(),reference=await catalog.get(ownerKey,params.id||'');if(!reference)return Response.json({error:'not_found'},{status:404});
   const body=await request.json().catch(()=>null),text=String(body?.text||'').trim(),voice=chirpVoice(String(body?.voice||''));

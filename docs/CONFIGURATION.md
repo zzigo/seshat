@@ -36,6 +36,7 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `GOOGLE_APPLICATION_CREDENTIALS` | Required for Chirp | none | Absolute server path to the service-account JSON; keep it outside the repository |
 | `GOOGLE_TTS_MONTHLY_CHARACTER_LIMIT` | No | `900000` | Hard application-wide Chirp character limit per UTC calendar month |
 | `GOOGLE_TTS_WARNING_CHARACTERS` | No | `700000` | Usage level at which Chirp responses expose a warning state |
+| `GOOGLE_TTS_ALLOWED_EMAILS` | No | `lucianoazzigotti@gmail.com,admin@musiki.org.ar` | Comma-separated identities allowed to see and call Google Chirp features |
 | `SESHAT_INTEGRATION_TOKEN` | Required for external consumers | none | Long random bearer secret for trusted server-to-server citation search; never expose it to browser code |
 | `SESHAT_INTEGRATION_OWNER_KEY` | Optional | owner derived from `X-Seshat-Owner` email | Fixed 32-character catalog owner key for a deployment exposing one curated bibliography to trusted consumers |
 | `MUSIKI_API_URL` | No | `https://musiki.org.ar` | Musiki server used to list registered users and course groups in Share Library |

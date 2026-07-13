@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { DeleteObjectsCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
+import { chirpAccessAllowed } from '../../../../lib/chirp-access';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 
 const exec = promisify(execFile);
@@ -20,6 +21,7 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
   const voice = safePart(url.searchParams.get('voice') || '', 'voice');
   const language = safePart(url.searchParams.get('language') || reference.language || '', 'und');
   const provider = url.searchParams.get('provider') === 'chirp' ? 'chirp' : 'kokoro';
+  if (provider === 'chirp' && !chirpAccessAllowed(email)) return Response.json({ error:'chirp_access_denied' }, { status:403 });
   const artifactKind = provider === 'chirp' ? 'chirp-audio' : 'kokoro-audio';
   const segment = Math.max(0, Math.min(9999, Number(url.searchParams.get('segment') || 0)));
   const input = new Uint8Array(await request.arrayBuffer());
@@ -58,6 +60,7 @@ export const DELETE: APIRoute = async ({ locals, params, url }) => {
   const ownerKey=ownerKeyFor(email);const catalog=getCatalog();const reference=await catalog.get(ownerKey,params.id||'');
   if(!reference||reference.access!=='owner')return Response.json({error:'not_found'},{status:404});
   const artifactKind=url.searchParams.get('provider')==='chirp'?'chirp-audio':'kokoro-audio';
+  if(artifactKind==='chirp-audio'&&!chirpAccessAllowed(email))return Response.json({error:'chirp_access_denied'},{status:403});
   const bucket=getWasabiBucket();const artifacts=reference.artifacts.filter((item)=>item.kind===artifactKind&&item.bucket===bucket);
   for(let offset=0;offset<artifacts.length;offset+=1000){const batch=artifacts.slice(offset,offset+1000);const result=await getWasabiClient().send(new DeleteObjectsCommand({Bucket:bucket,Delete:{Quiet:true,Objects:batch.map((item)=>({Key:item.objectKey}))}}));const failures=(result.Errors||[]).filter((error)=>!['NoSuchBucket','NoSuchKey','NotFound'].includes(String(error.Code||'')));if(failures.length)return Response.json({error:'Narration files could not be deleted.'},{status:502});}
   await catalog.pool.query(`DELETE FROM catalog_artifacts artifact USING catalog_references reference WHERE artifact.reference_id=reference.id AND reference.id=$1 AND reference.owner_key=$2 AND artifact.kind=$3`,[reference.id,ownerKey,artifactKind]);
