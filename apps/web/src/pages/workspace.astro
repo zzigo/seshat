@@ -140,6 +140,10 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
         <span class="console-count" data-console-count>0 jobs</span>
         <div class="console-drawer" data-console-drawer hidden><ol data-console-log></ol></div>
       </footer>
+      <div class="narration-render-progress" data-narration-progress hidden>
+        <div><strong data-narration-progress-label>Rendering narration</strong><span data-narration-progress-value>0%</span></div>
+        <progress max="100" value="0" data-narration-progress-bar></progress>
+      </div>
     </div>
     <script is:inline type="application/json" id="seshat-workspace-data" set:html={serialized}></script>
     <DropLayer authenticated={true} workspace={true} />
