@@ -967,6 +967,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     toolbar.appendChild(docControls);
 
     const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';const stopReadButton=document.createElement('button');stopReadButton.type='button';stopReadButton.className='read-aloud-stop';stopReadButton.textContent='Stop';stopReadButton.hidden=true;readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,stopButton:stopReadButton,report:setSaveState,chirpEnabled:payload.chirpEnabled});toolbar.append(readButton,stopReadButton);
+    if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const rendered=document.createElement('button');rendered.type='button';rendered.className='rendered-narration-button';rendered.textContent='▶ OGG';rendered.title=`Play rendered ${provider} narration`;rendered.addEventListener('click',()=>element.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}})));toolbar.appendChild(rendered);}
 
     const actions: Array<[string, string]> = [['text','Text'],['graph','Graph'],['structure','Structure'],['analysis','Analysis'],['annotation','Annotate']];
     for (const [kind, title] of actions) {
@@ -1009,6 +1010,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     element.replaceChildren();
     const reference = references.get(referenceId);
     if (!reference) { element.textContent = 'Reference not found.'; return; }
+    element.dataset.referenceId = referenceId;
+    if (panelId) element.dataset.panelId = panelId; else delete element.dataset.panelId;
     activeReference = referenceId;
     window.dispatchEvent(new CustomEvent('seshat:active-reference-changed', { detail: { referenceId } }));
     element.appendChild(podToolbar(reference, element, panelId));
@@ -3110,7 +3113,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
         glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
         glyph.setAttribute('aria-label', glyph.title);
-        const title = document.createElement('span'); title.textContent = reference.title; item.appendChild(glyph);
+        const title = document.createElement('span'); title.className='tree-reference-title'; title.textContent = reference.title; item.appendChild(glyph);
         const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
         if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
         if (isProcessingReference(reference)) {
@@ -3118,6 +3121,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           item.classList.add('is-processing'); item.appendChild(spinner);
         }
         item.appendChild(title);
+        if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const play=document.createElement('span');play.className='tree-narration-play';play.textContent='▶';play.title=`Play rendered ${provider} narration`;play.setAttribute('aria-label',play.title);const activate=(event:Event)=>{event.preventDefault();event.stopPropagation();controller.openDocument(reference.id);window.setTimeout(()=>{const pod=root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(reference.id)}"]`);pod?.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}}));},60);};play.addEventListener('pointerdown',(event)=>event.stopPropagation());play.addEventListener('touchend',(event)=>event.stopPropagation(),{passive:true});play.addEventListener('click',activate);item.appendChild(play);}
         item.addEventListener('click', (event) => {
           if (event.detail > 1) return;
           if (event.shiftKey && treeSelectionAnchor) {
@@ -3353,8 +3357,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const openHelp = () => {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
-    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
-    addSection('Shortcuts',['⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
+    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','Rendered narrations have a blue ▶ in the collection sidebar and a ▶ OGG control in the document toolbar.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
+    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
     const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
     const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Kokoro local TTS','beta','Local browser inference with Web Speech fallback'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];
@@ -3383,6 +3387,21 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (event.key === 'g' || event.key === 'z' || event.key === 'y') {
         event.preventDefault(); shortcutPrefix=event.key; window.clearTimeout(shortcutPrefixTimer); setSaveState(`${event.key} …`);
         shortcutPrefixTimer=window.setTimeout(() => { shortcutPrefix=''; setSaveState('ready'); },1000); return;
+      }
+      if (event.key.toLowerCase() === 'r') {
+        const activePanelId=api.activePanel?.id;
+        const activePod=activePanelId
+          ? root.querySelector<HTMLElement>(`.document-pod[data-panel-id="${CSS.escape(activePanelId)}"]`)
+          : null;
+        const referencePod=activeReference
+          ? root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(activeReference)}"]`)
+          : null;
+        const readButton=(activePod || referencePod || root.querySelector<HTMLElement>('.document-pod'))
+          ?.querySelector<HTMLButtonElement>('.read-aloud-button');
+        if (!readButton) { setSaveState('open an item before using Read','error'); return; }
+        event.preventDefault();
+        readButton.dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:event.shiftKey}));
+        return;
       }
     }
     if (event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey && (event.code === 'Backslash' || event.key === '\\' || event.key === '|')) {

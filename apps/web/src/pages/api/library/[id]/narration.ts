@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { DeleteObjectsCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { chirpAccessAllowed } from '../../../../lib/chirp-access';
@@ -12,6 +12,31 @@ import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 
 const exec = promisify(execFile);
 const safePart = (value: string, fallback: string) => value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
+const offsetPart = (value: string | null) => Math.max(0, Math.min(999_999_999, Math.floor(Number(value) || 0)));
+
+export const GET: APIRoute = async ({ request, locals, params, url }) => {
+  const email=String((locals.session as any)?.user?.email||'').trim().toLowerCase();
+  if(!email)return Response.json({error:'authentication_required'},{status:401});
+  const provider=url.searchParams.get('provider')==='chirp'?'chirp':'kokoro';
+  if(provider==='chirp'&&!chirpAccessAllowed(email))return Response.json({error:'chirp_access_denied'},{status:403});
+  const reference=await getCatalog().get(ownerKeyFor(email),params.id||'');
+  if(!reference)return Response.json({error:'not_found'},{status:404});
+  const kind=provider==='chirp'?'chirp-audio':'kokoro-audio';
+  const bucket=getWasabiBucket();
+  const artifacts=reference.artifacts.filter((item)=>item.kind===kind&&item.bucket===bucket).sort((a,b)=>a.objectKey.localeCompare(b.objectKey));
+  if(!artifacts.length)return Response.json({error:'narration_not_found'},{status:404});
+  const segmentMetadata=(objectKey:string,index:number)=>{const name=objectKey.split('/').at(-1)||'';const match=name.match(/^(\d+)(?:-(\d+)-(\d+))?\.ogg$/);return{index:match?Number(match[1]):index,startOffset:match?.[2]?Number(match[2]):null,endOffset:match?.[3]?Number(match[3]):null};};
+  if(url.searchParams.get('manifest')==='1')return Response.json({provider,segments:artifacts.map((artifact,index)=>({...segmentMetadata(artifact.objectKey,index),sizeBytes:artifact.sizeBytes,url:`/api/library/${encodeURIComponent(reference.id)}/narration?provider=${provider}&segment=${index}`}))},{headers:{'Cache-Control':'private, no-store'}});
+  const requested=Math.max(0,Math.min(artifacts.length-1,Math.floor(Number(url.searchParams.get('segment')||0))));
+  const artifact=artifacts[requested];
+  const range=request.headers.get('range')||undefined;
+  const object=await getWasabiClient().send(new GetObjectCommand({Bucket:bucket,Key:artifact.objectKey,Range:range}));
+  if(!object.Body)return new Response('Not found',{status:404});
+  const headers=new Headers({'Content-Type':object.ContentType||artifact.mimeType||'audio/ogg; codecs=opus','Cache-Control':'private, max-age=3600','Accept-Ranges':'bytes'});
+  if(object.ContentLength!==undefined)headers.set('Content-Length',String(object.ContentLength));
+  if(object.ContentRange)headers.set('Content-Range',object.ContentRange);
+  return new Response(object.Body.transformToWebStream(),{status:range?206:200,headers});
+};
 
 export const POST: APIRoute = async ({ request, locals, params, url }) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
@@ -24,6 +49,7 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
   if (provider === 'chirp' && !chirpAccessAllowed(email)) return Response.json({ error:'chirp_access_denied' }, { status:403 });
   const artifactKind = provider === 'chirp' ? 'chirp-audio' : 'kokoro-audio';
   const segment = Math.max(0, Math.min(9999, Number(url.searchParams.get('segment') || 0)));
+  const startOffset=offsetPart(url.searchParams.get('startOffset'));const endOffset=Math.max(startOffset,offsetPart(url.searchParams.get('endOffset')));
   const input = new Uint8Array(await request.arrayBuffer());
   if (input.length < (provider === 'chirp' ? 16 : 44) || input.length > 32 * 1024 * 1024) return Response.json({ error: 'invalid_audio_segment' }, { status: 400 });
   const root = await mkdtemp(join(tmpdir(), 'seshat-narration-'));
@@ -38,7 +64,8 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
     }
     const bucket = getWasabiBucket();
     const storageRoot = String((reference.source as any)?.wasabiStorageRoot || `${process.env.WASABI_KEY_PREFIX || 'zzttuntref'}/seshat-derived/${ownerKey}`).replace(/\/+$/g, '');
-    const objectKey = `${storageRoot}/.seshat/${reference.id}/narration/${provider}/${language}-${voice}/${String(segment).padStart(4,'0')}.ogg`;
+    const offsets=endOffset>startOffset?`-${startOffset}-${endOffset}`:'';
+    const objectKey = `${storageRoot}/.seshat/${reference.id}/narration/${provider}/${language}-${voice}/${String(segment).padStart(4,'0')}${offsets}.ogg`;
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const stored = await getWasabiClient().send(new PutObjectCommand({ Bucket:bucket,Key:objectKey,Body:bytes,ContentType:'audio/ogg; codecs=opus',CacheControl:'private, no-store' }));
     await catalog.pool.query(

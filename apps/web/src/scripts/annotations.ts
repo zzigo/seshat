@@ -78,7 +78,9 @@ export async function mountAnnotationWorkspace(
     button.addEventListener('click', () => { if (pending) void createAnnotation(pending, color); }); palette.appendChild(button);
   });
   const comment = document.createElement('button'); comment.type = 'button'; comment.className = 'annotation-comment'; comment.textContent = 'M'; comment.title = 'Add comment and metadata';
-  comment.addEventListener('click', () => { if (pending) openEditor(undefined, pending); }); palette.appendChild(comment);
+  let commentTouch = 0;
+  comment.addEventListener('pointerup', (event) => { event.stopPropagation(); if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return; event.preventDefault(); commentTouch = performance.now(); if (pending) openEditor(undefined, pending); });
+  comment.addEventListener('click', (event) => { event.stopPropagation(); if (performance.now() - commentTouch < 700) return; if (pending) openEditor(undefined, pending); }); palette.appendChild(comment);
   document.body.appendChild(palette);
 
   const render = () => {
