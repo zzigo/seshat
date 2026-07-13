@@ -64,7 +64,7 @@ export async function mountAnnotationWorkspace(
   const reading = document.createElement('div'); reading.className = 'annotation-reading';
   const surface = document.createElement('div'); surface.className = 'annotation-surface'; surface.tabIndex = 0; reading.appendChild(surface);
   const rail = document.createElement('aside'); rail.className = 'annotation-rail';
-  const railHead = document.createElement('header'); railHead.innerHTML = '<strong>Annotations</strong><span>Select text · 1–8 · M</span>';
+  const railHead = document.createElement('header'); railHead.innerHTML = '<strong>Annotations</strong><span>Reading marks · click or contextual menu to classify</span>';
   const cards = document.createElement('div'); cards.className = 'annotation-cards'; rail.append(railHead, cards);
   if (options.indexOnly) { element.classList.add('annotation-index-only'); body.appendChild(rail); }
   else body.append(reading, rail);
@@ -92,9 +92,11 @@ export async function mountAnnotationWorkspace(
       const mark = document.createElement('mark'); const color = colorFor(annotation);
       mark.textContent = source.slice(annotation.startOffset, annotation.endOffset);
       mark.style.setProperty('--annotation-color', color.hex); mark.dataset.annotationId = annotation.id;
-      mark.dataset.sigil = color.sigil; mark.title = color.label;
+      const readingMark = annotation.noteType === 'reading-mark';
+      mark.dataset.sigil = readingMark ? 'READ' : color.sigil; mark.title = readingMark ? 'Reading mark · click to classify' : color.label;
       mark.classList.toggle('active', activeId === annotation.id);
       mark.addEventListener('click', (event) => { event.stopPropagation(); activeId = annotation.id; render(); openEditor(annotation); });
+      mark.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); activeId = annotation.id; render(); openEditor(annotation); });
       surface.appendChild(mark); cursor = annotation.endOffset;
     });
     if (!options.indexOnly) surface.append(document.createTextNode(source.slice(cursor)));
@@ -103,7 +105,8 @@ export async function mountAnnotationWorkspace(
     annotations.forEach((annotation) => {
       const color = colorFor(annotation); const card = document.createElement('article'); card.style.setProperty('--annotation-color', color.hex);
       card.classList.toggle('active', activeId === annotation.id); card.dataset.annotationId = annotation.id;
-      const meta = document.createElement('header'); const category = document.createElement('span'); category.textContent = `${color.sigil} · ${color.label}`;
+      const readingMark = annotation.noteType === 'reading-mark';
+      const meta = document.createElement('header'); const category = document.createElement('span'); category.textContent = readingMark ? `READ · ${color.label}` : `${color.sigil} · ${color.label}`;
       const status = document.createElement('small'); status.textContent = annotation.reviewStatus; meta.append(category, status);
       const quote = document.createElement('blockquote'); quote.textContent = annotation.quote;
       card.append(meta, quote);
@@ -111,8 +114,10 @@ export async function mountAnnotationWorkspace(
       card.addEventListener('click', () => {
         activeId = annotation.id; render();
         if (!options.indexOnly) surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (readingMark) openEditor(annotation);
       });
-      card.addEventListener('dblclick', () => openEditor(annotation)); cards.appendChild(card);
+      card.addEventListener('dblclick', () => { if (!readingMark) openEditor(annotation); });
+      card.addEventListener('contextmenu', (event) => { event.preventDefault(); activeId = annotation.id; render(); openEditor(annotation); }); cards.appendChild(card);
     });
     stats.replaceChildren();
     annotationColors.forEach((color) => {
@@ -175,8 +180,8 @@ export async function mountAnnotationWorkspace(
     palette.hidden = true;
     const dialog = document.createElement('dialog'); dialog.className = 'annotation-editor';
     dialogs.add(dialog);
-    const form = document.createElement('form');
-    const head = document.createElement('header'); const title = document.createElement('strong'); title.textContent = annotation ? 'Edit annotation' : 'Annotate selection';
+    const form = document.createElement('form'); const readingMark = annotation?.noteType === 'reading-mark';
+    const head = document.createElement('header'); const title = document.createElement('strong'); title.textContent = readingMark ? 'Classify reading mark' : annotation ? 'Edit annotation' : 'Annotate selection';
     const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; close.addEventListener('click', () => dialog.close()); head.append(title, close);
     const quote = document.createElement('blockquote'); quote.textContent = annotation?.quote || anchor?.quote || '';
     const colors = document.createElement('div'); colors.className = 'annotation-editor-colors'; let selected = colorFor(annotation || { color: annotationColors[0].hex });
@@ -186,8 +191,9 @@ export async function mountAnnotationWorkspace(
       button.addEventListener('click', () => { selected = color; colors.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); }); colors.appendChild(button);
     });
     const grid = document.createElement('div'); grid.className = 'annotation-editor-grid';
-    const noteType = selectField('Note type', [['','—'],['explanatory','Explanatory'],['critical','Critical'],['projective','Projective']], annotation?.noteType || '');
-    const review = selectField('State', [['captured','Captured'],['processed','Processed'],['citable','Citable'],['discarded','Discarded']], annotation?.reviewStatus || 'captured');
+    const noteType = selectField('Note type', [['','—'],['reading-mark','Reading mark'],['explanatory','Explanatory'],['critical','Critical'],['projective','Projective']], annotation?.noteType || '');
+    if (readingMark) { noteType.input.disabled = true; noteType.input.title = 'The reading-mark type is preserved so Read can resume here.'; }
+    const review = selectField('State', [['reading','Reading'],['captured','Captured'],['processed','Processed'],['citable','Citable'],['discarded','Discarded']], annotation?.reviewStatus || 'captured');
     const page = inputField('Page', annotation?.page ? String(annotation.page) : '', 'number'); const locator = inputField('Locator', annotation?.locator || '');
     const targets = inputField('Targets (comma separated)', annotation?.targets.join(', ') || ''); const tags = inputField('Tags (comma separated)', annotation?.tags.join(', ') || '');
     grid.append(noteType.label, review.label, page.label, locator.label, targets.label, tags.label);
@@ -200,7 +206,7 @@ export async function mountAnnotationWorkspace(
     parentContainer.appendChild(dialog);
     dialog.addEventListener('close', () => { dialogs.delete(dialog); dialog.remove(); });
     form.addEventListener('submit', (event) => {
-      event.preventDefault(); const details = { color: selected.hex, category: selected.category, noteType: noteType.input.value || undefined,
+      event.preventDefault(); const details = { color: selected.hex, category: selected.category, noteType: readingMark ? 'reading-mark' : noteType.input.value || undefined,
         reviewStatus: review.input.value, page: page.input.value ? Number(page.input.value) : undefined, locator: locator.input.value,
         targets: commaList(targets.input.value), tags: commaList(tags.input.value), note: note.value };
       if (annotation) void updateAnnotation(annotation, details); else if (anchor) void createAnnotation(anchor, selected, details);
