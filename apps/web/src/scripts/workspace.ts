@@ -2513,6 +2513,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const name = document.createElement('input'); name.type = 'text'; name.placeholder = 'New library name';
       name.value = (bibliographyFiles.get(batchId)?.[0]?.name || 'Bibliography').replace(/\.bib$/i, '');
       name.title = 'Fallback folder for records without a compatible file path';
+      const analysisToggle = document.createElement('label'); analysisToggle.className = 'bibliography-analysis-toggle';
+      const analysisCheckbox = document.createElement('input'); analysisCheckbox.type = 'checkbox'; analysisCheckbox.checked = true;
+      const analysisCopy = document.createElement('span');
+      const analysisTitle = document.createElement('strong'); analysisTitle.textContent = 'Analyze linked files automatically';
+      const analysisHelp = document.createElement('small'); analysisHelp.textContent = 'Turn off for large imports; analyze selected items later from the catalog menu.';
+      analysisCopy.append(analysisTitle, analysisHelp); analysisToggle.append(analysisCheckbox, analysisCopy);
       const importButton = document.createElement('button'); importButton.type = 'button'; importButton.textContent = 'Create tree and import';
       importButton.disabled = Number(data.storage?.unavailable || 0) > 0;
       importButton.addEventListener('click', async () => {
@@ -2522,6 +2528,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         setSaveState('creating tree & linking files…', 'saving');
         const form = new FormData(); files.forEach((file) => form.append('files', file, file.name));
         form.set('libraryName', name.value || 'BibTeX import');
+        form.set('analyzeAutomatically', analysisCheckbox.checked ? 'true' : 'false');
         try {
           const response = await fetch('/api/bibliography/import', { method: 'POST', body: form });
           const result = await response.json().catch(() => ({}));
@@ -2532,7 +2539,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           });
           (result.references || []).forEach((reference: any) => upsertRow(rowFromCatalogReference(reference)));
           bibliographyFiles.delete(batchId);
-          health.textContent = `${result.imported} imported · ${result.linked || 0} Wasabi files linked · ${result.missing?.length || 0} missing`;
+          health.textContent = `${result.imported} imported · ${result.linked || 0} Wasabi files linked · ${result.missing?.length || 0} missing · ${result.analyzeAutomatically ? 'analysis queued' : 'analysis deferred'}`;
           importButton.textContent = 'Imported'; setSaveState('bibliography imported'); renderTree(search.value);
         } catch (error) {
           importButton.disabled = false; importButton.textContent = 'Import references';
@@ -2542,7 +2549,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const storage = document.createElement('span'); storage.className = 'bibliography-storage-health';
       storage.textContent = `${data.storage?.linked || 0} linked · ${data.storage?.missing || 0} missing · ${data.storage?.withoutAttachment || 0} without file`;
       if (data.storage?.unavailable) storage.textContent += ' · Wasabi unavailable';
-      controls.append(name, importButton, storage); element.appendChild(controls);
+      controls.append(name, importButton, storage, analysisToggle); element.appendChild(controls);
       const preview = document.createElement('div'); preview.className = 'bibliography-tree-preview';
       const treeRoot: any = { children: new Map<string, any>(), files: [] };
       for (const entry of data.entries) {

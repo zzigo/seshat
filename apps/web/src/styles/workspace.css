@@ -490,6 +490,10 @@ html { max-width: 100%; overflow: hidden; }
 .bibliography-import-controls select, .bibliography-import-controls input, .bibliography-import-controls button { height: 32px; border: 1px solid var(--hairline); border-radius: 0; color: var(--ink); background: var(--paper); font: 10px monospace; }
 .bibliography-import-controls input { padding: 0 8px; }
 .bibliography-import-controls button { padding: 0 12px; color: var(--green); cursor: pointer; }
+.bibliography-analysis-toggle { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px; align-items: start; padding: 8px; border: 1px solid var(--hairline); color: var(--ink); font: 9px/1.35 monospace; }
+.bibliography-import-controls .bibliography-analysis-toggle input { width: auto; height: auto; margin: 2px 0 0; }
+.bibliography-analysis-toggle strong, .bibliography-analysis-toggle small { display: block; }
+.bibliography-analysis-toggle small { margin-top: 2px; color: var(--muted); font-size: 8px; }
 .bibliography-pod-list article { display: grid; grid-template-columns: 95px minmax(0,1fr) minmax(120px,auto); gap: 14px; align-items: center; min-height: 70px; border-bottom: 1px solid var(--hairline); }
 .bibliography-pod-list article > span { color: var(--gold); font: 9px monospace; text-transform: uppercase; }
 .bibliography-pod-list strong, .bibliography-pod-list small { display: block; }

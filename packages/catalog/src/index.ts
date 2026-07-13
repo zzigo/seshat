@@ -1423,7 +1423,12 @@ export class PostgresCatalog {
     return result.rowCount === 1;
   }
 
-  async importBibliography(ownerKey: string, libraryId: string, entries: CatalogBibliographyInput[]): Promise<CatalogReference[]> {
+  async importBibliography(
+    ownerKey: string,
+    libraryId: string,
+    entries: CatalogBibliographyInput[],
+    options: { analyzeAutomatically?: boolean } = {},
+  ): Promise<CatalogReference[]> {
     await this.ensureSchema();
     const client = await this.pool.connect();
     const importedIds: string[] = [];
@@ -1486,12 +1491,14 @@ export class PostgresCatalog {
               entry.artifact.sizeBytes, entry.artifact.sha256, entry.artifact.etag],
           );
           if (!artifactResult.rows[0]) throw new Error('WASABI_OBJECT_ALREADY_LINKED');
-          for (const job of buildInitialJobs(referenceId)) {
-            await client.query(
-              `INSERT INTO catalog_jobs(id,reference_id,stage,status,attempts,created_at,updated_at)
-               VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(reference_id,stage) DO NOTHING`,
-              [job.id, referenceId, job.stage, job.status, job.attempts, job.createdAt, job.updatedAt],
-            );
+          if (options.analyzeAutomatically !== false) {
+            for (const job of buildInitialJobs(referenceId)) {
+              await client.query(
+                `INSERT INTO catalog_jobs(id,reference_id,stage,status,attempts,created_at,updated_at)
+                 VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(reference_id,stage) DO NOTHING`,
+                [job.id, referenceId, job.stage, job.status, job.attempts, job.createdAt, job.updatedAt],
+              );
+            }
           }
         }
       }

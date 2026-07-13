@@ -26,6 +26,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const inspected = await inspectBibEntries(parsed.map((item) => item.entry), { email, name: String(user?.name || '') });
   const ownerKey = ownerKeyFor(email);
   const catalog = getCatalog();
+  const analyzeAutomatically = String(form?.get('analyzeAutomatically') ?? 'true') !== 'false';
   const fallbackName = String(form?.get('libraryName') || '').trim().replace(/\s+/g, ' ')
     || (files.length === 1 ? files[0].name.replace(/\.bib$/i, '') : `BibTeX import ${new Date().toISOString().slice(0, 10)}`);
   const groups = new Map<string, { directories: string[]; entries: Array<{ inspected: typeof inspected[number]; sourceFile: string }> }>();
@@ -45,7 +46,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       if (!library) throw new Error('LIBRARY_PATH_CREATE_FAILED');
       libraries.push(library);
       const imported = await catalog.importBibliography(ownerKey, library.id,
-        group.entries.map(({ inspected: item, sourceFile }) => catalogInputForBibEntry(item, sourceFile)));
+        group.entries.map(({ inspected: item, sourceFile }) => catalogInputForBibEntry(item, sourceFile)),
+        { analyzeAutomatically });
       references.push(...imported);
     }
   } catch(error) {
@@ -53,7 +55,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return Response.json({error:message==='WASABI_OBJECT_ALREADY_LINKED'?'A linked file belongs to another catalog item and could not be merged.':message},{status:message==='WASABI_OBJECT_ALREADY_LINKED'?409:500});
   }
   return Response.json({
-    ok: true, imported: references.length, references, libraries, errors,
+    ok: true, imported: references.length, references, libraries, errors, analyzeAutomatically,
     linked: inspected.filter((item) => item.attachment?.status === 'linked').length,
     missing: inspected.filter((item) => item.attachment?.status === 'missing').map((item) => item.attachment?.relativePath),
     unavailable: inspected.filter((item) => item.attachment?.status === 'storage-unavailable').length,

@@ -21,6 +21,10 @@ const batch = Astro.url.searchParams.get('batch') || '';
         <div class="bib-storage-summary" data-storage-summary></div>
         <div class="bib-import-actions">
           <label><span>Fallback folder for records without a file</span><input data-library-name maxlength="160" value="BibTeX import" /></label>
+          <label class="bib-analysis-toggle">
+            <input type="checkbox" data-analyze-automatically checked />
+            <span><strong>Analyze linked files automatically</strong><small>Queues extraction and enrichment. Turn this off for large imports; you can analyze selected items later from the catalog menu.</small></span>
+          </label>
           <button class="button primary" type="button" data-import disabled>Create tree and import</button>
           <output data-import-status aria-live="polite"></output>
         </div>
@@ -39,6 +43,7 @@ const batch = Astro.url.searchParams.get('batch') || '';
       const importButton = board.querySelector('[data-import]');
       const importStatus = board.querySelector('[data-import-status]');
       const libraryName = board.querySelector('[data-library-name]');
+      const analyzeAutomatically = board.querySelector('[data-analyze-automatically]');
       let sourceRows = [];
       const authorText = (fields) => (fields.author || []).map((person) => [person.lastName, person.firstName].filter(Boolean).join(', ')).join(' · ');
       const renderTree = (entries) => {
@@ -108,10 +113,11 @@ const batch = Astro.url.searchParams.get('batch') || '';
         try {
           const form = new FormData(); sourceRows.forEach((row) => form.append('files', row.file, row.name));
           form.set('libraryName', libraryName.value || 'BibTeX import');
+          form.set('analyzeAutomatically', analyzeAutomatically.checked ? 'true' : 'false');
           const response = await fetch('/api/bibliography/import', { method: 'POST', body: form });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || 'Import failed.');
-          importStatus.textContent = result.imported + ' references imported · ' + result.linked + ' files linked' + (result.missing.length ? ' · ' + result.missing.length + ' missing' : '');
+          importStatus.textContent = result.imported + ' references imported · ' + result.linked + ' files linked' + (result.missing.length ? ' · ' + result.missing.length + ' missing' : '') + (result.analyzeAutomatically ? ' · analysis queued' : ' · analysis deferred');
           window.setTimeout(() => { window.location.href = '/workspace'; }, 900);
         } catch (error) { importStatus.textContent = error.message || 'Import failed.'; importButton.disabled = false; }
       });
@@ -133,6 +139,10 @@ const batch = Astro.url.searchParams.get('batch') || '';
   .bib-import-actions { display:grid; gap:.75rem; margin-top:1rem; }
   .bib-import-actions label { display:grid; gap:.35rem; font-size:.78rem; }
   .bib-import-actions input { width:100%; padding:.65rem; }
+  .bib-import-actions .bib-analysis-toggle { grid-template-columns:auto minmax(0,1fr); align-items:start; padding:.7rem; border:1px solid var(--c-border, #d9d4ca); }
+  .bib-import-actions .bib-analysis-toggle input { width:auto; margin:.15rem 0 0; padding:0; }
+  .bib-analysis-toggle strong, .bib-analysis-toggle small { display:block; }
+  .bib-analysis-toggle small { margin-top:.2rem; color:var(--c-muted, #706b62); font-weight:normal; line-height:1.35; }
   [data-import-status] { min-height:1.3em; font-size:.82rem; }
   @media (max-width: 760px) { .bib-import-layout { grid-template-columns:1fr; } }
 </style>
