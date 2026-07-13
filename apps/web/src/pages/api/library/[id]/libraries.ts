@@ -30,12 +30,15 @@ export const PUT: APIRoute = async ({ request, locals, params }) => {
   }
 };
 
-export const DELETE: APIRoute = async ({ request, locals, params }) => {
+export const DELETE: APIRoute = async ({ request, locals, params, url }) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
   if (!email) return Response.json({ error: 'authentication_required' }, { status: 401 });
   const body = await request.json().catch(() => null);
-  const libraryId = String(body?.libraryId || '');
+  const libraryId = String(url.searchParams.get('libraryId') || body?.libraryId || '');
   if (!libraryId || libraryId.startsWith('inbox:')) return Response.json({ error: 'collection_required' }, { status: 400 });
-  const removed = await getCatalog().removeFromLibrary(ownerKeyFor(email), params.id || '', libraryId);
-  return removed ? Response.json({ ok: true }) : Response.json({ error: 'item_or_collection_not_found' }, { status: 404 });
+  const catalog=getCatalog(),ownerKey=ownerKeyFor(email),referenceId=params.id||'';
+  const removed = await catalog.removeFromLibrary(ownerKey, referenceId, libraryId);
+  if(!removed)return Response.json({ error: 'item_or_collection_not_found' }, { status: 404 });
+  const updated=await catalog.get(ownerKey,referenceId);
+  return Response.json({ ok: true,libraryIds:updated?.libraryIds||[] });
 };

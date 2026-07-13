@@ -352,19 +352,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     selectedReferences.clear();
     renderTree(search.value);
   };
-  const removeReferencesFromCollection = async (ids: string[]) => {
-    if (!activeLibrary || isInboxLibraryId(activeLibrary)) return;
-    const collectionId = activeLibrary;
+  const removeReferencesFromCollection = async (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
+    if (!requestedCollectionId || isInboxLibraryId(requestedCollectionId)) return;
+    const collectionId = requestedCollectionId;
     setSaveState('removing from collection…', 'saving');
     let removed = 0;
     for (const id of ids) {
-      const response = await fetch(`/api/library/${encodeURIComponent(id)}/libraries`, {
-        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ libraryId: collectionId }),
-      });
+      const response = await fetch(`/api/library/${encodeURIComponent(id)}/libraries?libraryId=${encodeURIComponent(collectionId)}`, { method: 'DELETE' });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) { setSaveState(result.error || 'Could not remove item from collection', 'error'); continue; }
       const reference = references.get(id);
-      if (reference) reference.libraryIds = reference.libraryIds.filter((libraryId) => libraryId !== collectionId);
+      if (reference) reference.libraryIds = Array.isArray(result.libraryIds) ? result.libraryIds : reference.libraryIds.filter((libraryId) => libraryId !== collectionId);
       removed += 1;
     }
     selectedReferences.clear(); refreshTable(); renderTree(search.value);
@@ -437,10 +435,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       status.textContent = error instanceof Error ? error.message : 'Candidate search failed'; setSaveState(status.textContent, 'error');
     }
   };
-  const referenceMenuItems = (ids: string[]) => {
+  const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
-    const removableIds = activeLibrary && !isInboxLibraryId(activeLibrary)
-      ? ids.filter((id) => references.get(id)?.libraryIds.includes(activeLibrary!)) : [];
+    const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
+    const removableIds = requestedCollectionId && !isInboxLibraryId(requestedCollectionId) && collection?.access !== 'viewer'
+      ? editableIds.filter((id) => references.get(id)?.libraryIds.includes(requestedCollectionId)) : [];
     return [
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
@@ -459,7 +458,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Refresh graph (OpenAlex)${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'refresh-graph') },
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
-    { label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds) },
+    { label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds,requestedCollectionId) },
     { label: `Delete item and files${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
     ];
   };
@@ -3153,7 +3152,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           if (!selectedReferences.has(reference.id)) {
             selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
           }
-          openContextMenu(event, referenceMenuItems(selectedIds()));
+          openContextMenu(event, referenceMenuItems(selectedIds(),library.id));
         });
         item.addEventListener('dragover', (event) => {
           if (!event.dataTransfer?.types.includes('Files')) return;
@@ -3175,7 +3174,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             if (!selectedReferences.has(reference.id)) {
               selectedReferences.clear(); selectedReferences.add(reference.id); renderTree(search.value);
             }
-            openContextMenu(event, referenceMenuItems(selectedIds()));
+            openContextMenu(event, referenceMenuItems(selectedIds(),library.id));
           }, 560);
         });
         item.addEventListener('pointermove', clearReferenceLongPress);
