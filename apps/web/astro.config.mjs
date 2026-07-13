@@ -27,7 +27,9 @@ export default defineConfig({
     plugins: [omitFoliatePdf],
     // Emit hoisted component scripts as external files so the strict
     // workspace CSP (script-src 'self') does not block them.
-    build: { assetsInlineLimit: 0 },
+    // Keep the previous release's hashed assets during in-place production
+    // builds so already-open tabs do not receive transient 404 responses.
+    build: { assetsInlineLimit: 0, emptyOutDir: false },
   },
   security: {
     checkOrigin: false,

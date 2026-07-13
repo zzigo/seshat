@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences, steppedReaderRate } from '../src/scripts/read-aloud';
+import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 import { billableCharacterCount, chirpMonth, nextChirpRenewal } from '../src/lib/chirp';
 import { chirpAccessAllowed } from '../src/lib/chirp-access';
@@ -37,6 +37,12 @@ test('steps reader speed by quarters within safe playback bounds', () => {
   assert.equal(steppedReaderRate(1,.25),1.25);
   assert.equal(steppedReaderRate(.5,-.25),.5);
   assert.equal(steppedReaderRate(2,.25),2);
+});
+
+test('samples chapter labels across the full timeline', () => {
+  assert.deepEqual(visibleChapterLabelIndexes(4,5),[0,1,2,3]);
+  assert.deepEqual(visibleChapterLabelIndexes(20,5),[0,5,10,14,19]);
+  assert.deepEqual(visibleChapterLabelIndexes(20,1),[0]);
 });
 
 test('restricts Chirp to the configured server allowlist', () => {
