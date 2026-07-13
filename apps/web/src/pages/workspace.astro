@@ -63,6 +63,7 @@ const payload = {
     hasOriginal: reference.artifacts.some((artifact) => artifact.kind === 'original'),
     hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
     hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+    hasKokoroNarration: reference.artifacts.some((artifact) => artifact.kind === 'kokoro-audio'),
     needsOcr: referenceFileType(reference) === 'pdf' && reference.artifacts.some((artifact) => artifact.kind === 'original')
       && (!reference.artifacts.some((artifact) => artifact.kind === 'markdown') || reference.wordCount < 20),
     access: reference.access,
@@ -80,6 +81,7 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content="Seshat curatorial workspace" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Seshat" />
     <link rel="manifest" href="/manifest.json" />

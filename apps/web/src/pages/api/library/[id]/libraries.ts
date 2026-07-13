@@ -29,3 +29,13 @@ export const PUT: APIRoute = async ({ request, locals, params }) => {
     return Response.json({ error: missing ? String(error.message).toLowerCase() : 'The reference could not be moved.' }, { status: missing ? 404 : 400 });
   }
 };
+
+export const DELETE: APIRoute = async ({ request, locals, params }) => {
+  const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
+  if (!email) return Response.json({ error: 'authentication_required' }, { status: 401 });
+  const body = await request.json().catch(() => null);
+  const libraryId = String(body?.libraryId || '');
+  if (!libraryId || libraryId.startsWith('inbox:')) return Response.json({ error: 'collection_required' }, { status: 400 });
+  const removed = await getCatalog().removeFromLibrary(ownerKeyFor(email), params.id || '', libraryId);
+  return removed ? Response.json({ ok: true }) : Response.json({ error: 'item_or_collection_not_found' }, { status: 404 });
+};

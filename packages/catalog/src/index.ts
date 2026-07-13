@@ -1374,6 +1374,18 @@ export class PostgresCatalog {
     } finally { client.release(); }
   }
 
+  async removeFromLibrary(ownerKey: string, referenceId: string, libraryId: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `DELETE FROM catalog_library_items item
+       USING catalog_libraries library
+       WHERE item.library_id=library.id AND library.owner_key=$1
+         AND item.library_id=$2 AND item.reference_id=$3`,
+      [ownerKey, libraryId, referenceId],
+    );
+    return result.rowCount === 1;
+  }
+
   async importBibliography(ownerKey: string, libraryId: string, entries: CatalogBibliographyInput[]): Promise<CatalogReference[]> {
     await this.ensureSchema();
     const client = await this.pool.connect();

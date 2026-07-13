@@ -26,7 +26,6 @@ class BrowserSpeechEngine {
   pause() { speechSynthesis.pause(); }
   resume() { speechSynthesis.resume(); }
   stop() { speechSynthesis.cancel(); this.utterance = null; }
-  prepare() { speechSynthesis.cancel(); speechSynthesis.resume(); this.utterance = null; }
 
   async speak(options: SpeakOptions): Promise<void> {
     await new Promise<void>((resolve, reject) => {
@@ -44,8 +43,9 @@ class BrowserSpeechEngine {
         error ? reject(error) : resolve();
       };
       const startTimer = window.setTimeout(() => {
+        console.warn('[seshat:browser-speech] voice did not start', { voice: options.voice.name, language: utterance.lang, pending: speechSynthesis.pending, speaking: speechSynthesis.speaking, paused: speechSynthesis.paused });
         if (this.utterance === utterance) speechSynthesis.cancel();
-        finish(options.isCurrent() ? new Error(`Voice ${options.voice.name} did not start.`) : undefined);
+        finish(options.isCurrent() ? new Error(`Voice ${options.voice.name} did not start · pending ${speechSynthesis.pending} · paused ${speechSynthesis.paused}.`) : undefined);
       }, 20000);
       utterance.voice = options.voice;
       utterance.lang = options.voice.lang || options.language;
@@ -63,10 +63,9 @@ class BrowserSpeechEngine {
         }, 2000);
       };
       utterance.onend = () => finish();
-      utterance.onerror = (event) => event.error === 'canceled' || event.error === 'interrupted'
+      utterance.onerror = (event) => { console.warn('[seshat:browser-speech] utterance error', { voice:options.voice.name,error:event.error }); event.error === 'canceled' || event.error === 'interrupted'
         ? finish()
-        : finish(new Error(`${options.voice.name} · ${event.error || 'speech synthesis failed'}`));
-      if (speechSynthesis.paused) speechSynthesis.resume();
+        : finish(new Error(`${options.voice.name} · ${event.error || 'speech synthesis failed'}`)); };
       speechSynthesis.speak(utterance);
     });
   }

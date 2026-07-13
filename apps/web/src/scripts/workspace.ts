@@ -10,7 +10,7 @@ import { referenceFileType } from '../lib/reference-file';
 import screenfull from 'screenfull';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
-import { readAloud } from './read-aloud';
+import { KOKORO_VOICES, normalizeReaderLanguage, readAloud } from './read-aloud';
 
 registerAllModules();
 
@@ -19,7 +19,7 @@ type ReferenceRow = {
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string;
   bibliographicFields: Record<string,string>;
-  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
+  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
 type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string> };
@@ -79,6 +79,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   hasOriginal: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original'),
   hasStructure: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'structure'),
   hasText: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown'),
+  hasKokoroNarration: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'kokoro-audio'),
   needsOcr: referenceFileType(reference) === 'pdf' && (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original')
     && (!(reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown') || Number(reference.wordCount || 0) < 20),
   access: reference.access || 'owner',
@@ -348,6 +349,39 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     selectedReferences.clear();
     renderTree(search.value);
   };
+  const removeReferencesFromCollection = async (ids: string[]) => {
+    if (!activeLibrary || isInboxLibraryId(activeLibrary)) return;
+    const collectionId = activeLibrary;
+    setSaveState('removing from collection…', 'saving');
+    let removed = 0;
+    for (const id of ids) {
+      const response = await fetch(`/api/library/${encodeURIComponent(id)}/libraries`, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ libraryId: collectionId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) { setSaveState(result.error || 'Could not remove item from collection', 'error'); continue; }
+      const reference = references.get(id);
+      if (reference) reference.libraryIds = reference.libraryIds.filter((libraryId) => libraryId !== collectionId);
+      removed += 1;
+    }
+    selectedReferences.clear(); refreshTable(); renderTree(search.value);
+    setSaveState(`${removed} ${removed === 1 ? 'item' : 'items'} removed from collection`);
+  };
+  const openKokoroNarration = (reference: ReferenceRow) => {
+    const dialog=dialogShell(`Kokoro narration · ${reference.title}`);const form=document.createElement('form');form.className='dialog-form';
+    const languageLabel=document.createElement('label');languageLabel.textContent='Language';const language=document.createElement('select');
+    [['es','Spanish'],['en','English']].forEach(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;option.selected=normalizeReaderLanguage(reference.language||navigator.language)===value;language.appendChild(option);});languageLabel.appendChild(language);
+    const voiceLabel=document.createElement('label');voiceLabel.textContent='Voice';const voice=document.createElement('select');voiceLabel.appendChild(voice);
+    const renderVoices=()=>{voice.replaceChildren();const code=language.value;KOKORO_VOICES.filter((item)=>code==='es'?item.id.startsWith('e'):!item.id.startsWith('e')).forEach((item)=>{const option=document.createElement('option');option.value=item.id;option.textContent=item.label;voice.appendChild(option);});};language.onchange=renderVoices;renderVoices();
+    const note=document.createElement('p');note.textContent='Creates cached OGG/Opus segments in Wasabi. Keep this workspace open until rendering finishes.';
+    const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const submit=document.createElement('button');submit.type='submit';submit.className='primary';submit.textContent='Render narration';footer.append(cancel,submit);form.append(languageLabel,voiceLabel,note,footer);dialog.appendChild(form);
+    form.onsubmit=(event)=>{event.preventDefault();const selectedLanguage=language.value,selectedVoice=voice.value;dialog.close();const activityId=`kokoro-narration-${reference.id}`;updateActivity(activityId,{state:'working',referenceId:reference.id,message:`${reference.title} · preparing Kokoro narration`});setSaveState('rendering Kokoro narration…','saving');void readAloud.renderNarration(reference.id,selectedLanguage,selectedVoice,(message)=>{updateActivity(activityId,{state:'working',referenceId:reference.id,message:`${reference.title} · ${message}`});setSaveState(message,'saving');}).then((segments)=>{reference.hasKokoroNarration=true;renderTree(search.value);updateActivity(activityId,{state:'complete',referenceId:reference.id,message:`${reference.title} · ${segments} OGG ${segments===1?'segment':'segments'} ready`});setSaveState('Kokoro narration ready');}).catch((error)=>{const message=error instanceof Error?error.message:'Narration failed';updateActivity(activityId,{state:'error',referenceId:reference.id,message:`${reference.title} · ${message}`});setSaveState(message,'error');});};
+  };
+  const eraseKokoroNarrations = async (ids:string[]) => {
+    setSaveState('erasing Kokoro narration…','saving');let erased=0;
+    for(const id of ids){const response=await fetch(`/api/library/${encodeURIComponent(id)}/narration`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok){setSaveState(result.error||'Narration could not be erased','error');continue;}const reference=references.get(id);if(reference)reference.hasKokoroNarration=false;erased+=1;}
+    renderTree(search.value);setSaveState(`${erased} Kokoro ${erased===1?'narration':'narrations'} erased`);
+  };
   const searchForCandidate = async (referenceId: string) => {
     const reference = references.get(referenceId); if (!reference) return;
     const dialog = dialogShell(`Search candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
@@ -384,19 +418,24 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   };
   const referenceMenuItems = (ids: string[]) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
+    const removableIds = activeLibrary && !isInboxLibraryId(activeLibrary)
+      ? ids.filter((id) => references.get(id)?.libraryIds.includes(activeLibrary!)) : [];
     return [
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
     { label: 'Search for candidate in Wasabi…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => searchForCandidate(editableIds[0]) },
+    { label: 'Render Kokoro narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openKokoroNarration(row); } },
+    { label: `Erase Kokoro narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasKokoroNarration), danger: true, action: () => eraseKokoroNarrations(editableIds.filter((id)=>references.get(id)?.hasKokoroNarration)) },
     { label: `Extract text & structure${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'extract') },
     { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
     { label: `Enrich papers with OpenAlex${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'scholarly') },
     { label: `Refresh graph (OpenAlex)${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'refresh-graph') },
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
-    { label: `Delete selected${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
+    { label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds) },
+    { label: `Delete item and files${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
     ];
   };
 
@@ -3042,6 +3081,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const kind = treeReferenceKind(reference);
         const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
         glyph.classList.toggle('needs-ocr', reference.needsOcr);
+        glyph.classList.toggle('has-narration', reference.hasKokoroNarration);
         glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
         glyph.setAttribute('aria-label', glyph.title);
         const title = document.createElement('span'); title.textContent = reference.title; item.appendChild(glyph);

@@ -12,8 +12,9 @@ const removeKeys = async (bucket: string, keys: string[]): Promise<number> => {
       Bucket: bucket,
       Delete: { Quiet: true, Objects: batch.map((Key) => ({ Key })) },
     }));
-    if (result.Errors?.length) throw new Error(`WASABI_DELETE_FAILED:${result.Errors[0]?.Code || 'unknown'}`);
-    removed += batch.length;
+    const failures = (result.Errors || []).filter((error) => !['NoSuchBucket', 'NoSuchKey', 'NotFound'].includes(String(error.Code || '')));
+    if (failures.length) throw new Error(`WASABI_DELETE_FAILED:${failures[0]?.Code || 'unknown'}`);
+    removed += batch.length - (result.Errors?.length || 0);
   }
   return removed;
 };
@@ -30,19 +31,16 @@ export const DELETE: APIRoute = async ({ locals, params }) => {
     await catalog.cancelJobsForDeletion(ownerKey, reference.id);
     const byBucket = new Map<string, string[]>();
     const wasabiBucket = getWasabiBucket();
-    let preservedLinkedObjects = 0;
-    let skippedLegacyObjects = 0;
     for (const artifact of reference.artifacts) {
-      if (artifact.provider === 'wasabi-linked') { preservedLinkedObjects += 1; continue; }
+      if (!['wasabi', 'wasabi-linked'].includes(artifact.provider)) continue;
       const bucket = artifact.bucket || wasabiBucket;
-      if (bucket !== wasabiBucket) { skippedLegacyObjects += 1; continue; }
       byBucket.set(bucket, [...(byBucket.get(bucket) || []), artifact.objectKey]);
     }
     let objectsDeleted = 0;
     for (const [bucket, keys] of byBucket) objectsDeleted += await removeKeys(bucket, keys);
     const deleted = await catalog.deleteReference(ownerKey, reference.id);
     if (!deleted) return Response.json({ error: 'not_found' }, { status: 404 });
-    return Response.json({ ok: true, id: reference.id, objectsDeleted, preservedLinkedObjects, skippedLegacyObjects });
+    return Response.json({ ok: true, id: reference.id, objectsDeleted });
   } catch (error) {
     console.error('[seshat:delete]', error);
     return Response.json({ error: 'The reference and its stored files could not be deleted.' }, { status: 502 });
