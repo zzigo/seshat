@@ -20,6 +20,7 @@
     "@seshat/catalog": "^0.1.0",
     "@seshat/core": "*",
     "@seshat/retrieval": "*",
+    "@seshat/zotero": "*",
     "astro": "^6.2.1",
     "auth-astro": "^4.2.0",
     "d3-force-3d": "^3.0.6",

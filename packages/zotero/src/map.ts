@@ -11,6 +11,8 @@ import type { ZoteroApiItem, ZoteroCreator, ZoteroItemData } from './types.js';
 
 const TYPE_MAP: Record<string, BibliographicType> = {
   journalArticle: 'article',
+  magazineArticle: 'article',
+  newspaperArticle: 'article',
   book: 'book',
   bookSection: 'incollection',
   conferencePaper: 'inproceedings',
@@ -19,6 +21,7 @@ const TYPE_MAP: Record<string, BibliographicType> = {
   webpage: 'misc',
   blogPost: 'misc',
   manuscript: 'unpublished',
+  preprint: 'unpublished',
   film: 'misc',
   videoRecording: 'misc',
   artwork: 'misc',
@@ -27,6 +30,10 @@ const TYPE_MAP: Record<string, BibliographicType> = {
   dictionaryEntry: 'incollection',
   audioRecording: 'audio',
   musicScore: 'score',
+  presentation: 'performance',
+  podcast: 'audio',
+  radioBroadcast: 'audio',
+  tvBroadcast: 'audio',
 };
 
 const ROLE_MAP: Record<string, Contributor['role']> = {
@@ -36,6 +43,12 @@ const ROLE_MAP: Record<string, Contributor['role']> = {
   translator: 'translator',
   composer: 'composer',
   performer: 'performer',
+  curator: 'curator',
+  producer: 'producer',
+  director: 'director',
+  conductor: 'conductor',
+  commenter: 'commentator',
+  bookAuthor: 'contributor',
 };
 
 function mapCreator(creator: ZoteroCreator): Contributor {

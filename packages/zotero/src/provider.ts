@@ -5,7 +5,13 @@ import type {
   BibliographicItem,
 } from '@seshat/core';
 import { mapZoteroItem } from './map.js';
-import type { ZoteroApiItem, ZoteroProviderOptions } from './types.js';
+import type {
+  ZoteroApiCollection,
+  ZoteroApiItem,
+  ZoteroKeyInfo,
+  ZoteroObjectPage,
+  ZoteroProviderOptions,
+} from './types.js';
 
 export class ZoteroApiError extends Error {
   constructor(
@@ -42,14 +48,103 @@ export class ZoteroProvider implements BibliographyProvider {
     };
   }
 
-  private async request(path: string, params?: URLSearchParams): Promise<Response> {
+  private async request(path: string, params?: URLSearchParams, init: RequestInit = {}): Promise<Response> {
     const url = `${this.libraryPath()}${path}${params?.size ? `?${params}` : ''}`;
-    const response = await this.fetcher(url, { headers: this.headers() });
+    const response = await this.fetcher(url, {
+      ...init,
+      headers: { ...this.headers(), ...init.headers },
+    });
     if (!response.ok && response.status !== 404) {
       const body = await response.text();
       throw new ZoteroApiError(`Zotero request failed with ${response.status}.`, response.status, body.slice(0, 500));
     }
     return response;
+  }
+
+  async keyInfo(): Promise<ZoteroKeyInfo> {
+    const response = await this.fetcher(`${this.apiBaseUrl}/keys/current`, { headers: this.headers() });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new ZoteroApiError(`Zotero key verification failed with ${response.status}.`, response.status, body.slice(0, 500));
+    }
+    return response.json() as Promise<ZoteroKeyInfo>;
+  }
+
+  async itemTemplate(itemType: string): Promise<Record<string, unknown>> {
+    const url = new URL(`${this.apiBaseUrl}/items/new`);
+    url.searchParams.set('itemType', itemType);
+    const response = await this.fetcher(url, { headers: this.headers() });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new ZoteroApiError(`Zotero item template failed with ${response.status}.`, response.status, body.slice(0, 500));
+    }
+    return response.json() as Promise<Record<string, unknown>>;
+  }
+
+  private async objectPage<T>(path: string, start = 0, limit = 100): Promise<ZoteroObjectPage<T>> {
+    const response = await this.request(path, new URLSearchParams({
+      format: 'json', start: String(Math.max(0, start)), limit: String(Math.min(100, Math.max(1, limit))),
+      sort: 'dateModified', direction: 'asc',
+    }));
+    const objects = await response.json() as T[];
+    const total = Number(response.headers.get('Total-Results') || objects.length);
+    const nextStart = start + objects.length;
+    return {
+      objects,
+      total,
+      nextStart: nextStart < total ? nextStart : undefined,
+      libraryVersion: Number(response.headers.get('Last-Modified-Version')) || undefined,
+    };
+  }
+
+  collectionPage(start = 0, limit = 100): Promise<ZoteroObjectPage<ZoteroApiCollection>> {
+    return this.objectPage('/collections', start, limit);
+  }
+
+  itemPage(start = 0, limit = 100, topOnly = true): Promise<ZoteroObjectPage<ZoteroApiItem>> {
+    return this.objectPage(topOnly ? '/items/top' : '/items', start, limit);
+  }
+
+  async createCollection(data: { name: string; parentCollection?: string | false }): Promise<ZoteroApiCollection> {
+    const response = await this.request('/collections', undefined, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Zotero-Write-Token': crypto.randomUUID().replaceAll('-', '') }, body: JSON.stringify([data]),
+    });
+    const result = await response.json() as { successful?: Record<string, ZoteroApiCollection | string>; failed?: Record<string, unknown> };
+    const saved = Object.values(result.successful || {})[0];
+    if (!saved) throw new ZoteroApiError('Zotero did not create the collection.', response.status, JSON.stringify(result.failed || {}).slice(0, 500));
+    if (typeof saved !== 'string') return saved;
+    const version = Number(response.headers.get('Last-Modified-Version')) || 0;
+    return { key: saved, version, data: { key: saved, version, name: data.name, parentCollection: data.parentCollection || false } };
+  }
+
+  async updateCollection(key: string, version: number, data: { name: string; parentCollection?: string | false }): Promise<number> {
+    const response = await this.request(`/collections/${encodeURIComponent(key)}`, undefined, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Unmodified-Since-Version': String(version) },
+      body: JSON.stringify({ key, version, ...data }),
+    });
+    return Number(response.headers.get('Last-Modified-Version')) || version;
+  }
+
+  async createItem(data: Record<string, unknown>): Promise<ZoteroApiItem> {
+    const response = await this.request('/items', undefined, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Zotero-Write-Token': crypto.randomUUID().replaceAll('-', '') }, body: JSON.stringify([data]),
+    });
+    const result = await response.json() as { successful?: Record<string, ZoteroApiItem | string>; failed?: Record<string, unknown> };
+    const saved = Object.values(result.successful || {})[0];
+    if (!saved) throw new ZoteroApiError('Zotero did not create the item.', response.status, JSON.stringify(result.failed || {}).slice(0, 500));
+    if (typeof saved !== 'string') return saved;
+    const version = Number(response.headers.get('Last-Modified-Version')) || 0;
+    return { key: saved, version, data: { key: saved, version, ...data } } as ZoteroApiItem;
+  }
+
+  async updateItem(key: string, version: number, data: Record<string, unknown>): Promise<number> {
+    const response = await this.request(`/items/${encodeURIComponent(key)}`, undefined, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'If-Unmodified-Since-Version': String(version) },
+      body: JSON.stringify(data),
+    });
+    return Number(response.headers.get('Last-Modified-Version')) || version;
   }
 
   private async children(itemKey: string): Promise<ZoteroApiItem[]> {
@@ -113,4 +208,3 @@ export class ZoteroProvider implements BibliographyProvider {
     });
   }
 }
-

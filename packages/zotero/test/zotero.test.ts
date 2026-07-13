@@ -93,3 +93,46 @@ test('maps Zotero attachment children as source references', async () => {
   assert.equal(item?.artifacts[0].storage.objectKey, 'PDF00001');
 });
 
+test('verifies a key without putting the credential in the request URL', async () => {
+  let requestUrl = ''; let requestHeaders = new Headers();
+  const provider = new ZoteroProvider({
+    libraryType: 'users', libraryId: '42', apiKey: 'server-secret',
+    fetch: async (input, init) => {
+      requestUrl = String(input); requestHeaders = new Headers(init?.headers);
+      return Response.json({ userID: 42, username: 'researcher', access: { user: { library: true, write: true } } });
+    },
+  });
+  const info = await provider.keyInfo();
+  assert.equal(info.userID, 42);
+  assert.equal(requestHeaders.get('Zotero-API-Key'), 'server-secret');
+  assert.doesNotMatch(requestUrl, /server-secret/);
+});
+
+test('pages collection metadata with parent keys and library versions', async () => {
+  const provider = new ZoteroProvider({
+    libraryType: 'users', libraryId: '42',
+    fetch: async () => Response.json([{ key: 'CHILD001', version: 8, data: { key: 'CHILD001', version: 8, name: 'Child', parentCollection: 'ROOT0001' } }], {
+      headers: { 'Total-Results': '2', 'Last-Modified-Version': '21' },
+    }),
+  });
+  const page = await provider.collectionPage(0, 1);
+  assert.equal(page.objects[0].data.parentCollection, 'ROOT0001');
+  assert.equal(page.nextStart, 1);
+  assert.equal(page.libraryVersion, 21);
+});
+
+test('uses version guards for remote item updates', async () => {
+  let method = ''; let headers = new Headers(); let body = '';
+  const provider = new ZoteroProvider({
+    libraryType: 'users', libraryId: '42',
+    fetch: async (_input, init) => {
+      method = String(init?.method || 'GET'); headers = new Headers(init?.headers); body = String(init?.body || '');
+      return new Response(null, { status: 204, headers: { 'Last-Modified-Version': '33' } });
+    },
+  });
+  const version = await provider.updateItem('ABCD1234', 7, { title: 'Revised' });
+  assert.equal(version, 33);
+  assert.equal(method, 'PATCH');
+  assert.equal(headers.get('If-Unmodified-Since-Version'), '7');
+  assert.deepEqual(JSON.parse(body), { title: 'Revised' });
+});

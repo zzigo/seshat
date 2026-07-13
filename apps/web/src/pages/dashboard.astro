@@ -3,9 +3,11 @@ import Shell from '../components/Shell.astro';
 import { getCatalog, isSessionAccountAdmin, ownerKeyFor, sessionIdentity } from '../lib/catalog';
 import { chirpAccessAllowed } from '../lib/chirp-access';
 import { chirpMonth, CHIRP_VOICES, DEFAULT_CHIRP_LIMIT, nextChirpRenewal } from '../lib/chirp';
+import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 
 const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
 const catalog = getCatalog(); const stats = await catalog.dashboardStats(ownerKeyFor(identity.email));
+const zoteroStatus = await getZoteroConnectionStatus(ownerKeyFor(identity.email));
 const admin = isSessionAccountAdmin(session);
 const linkedEmailsQuery = await catalog.pool.query(
   'SELECT DISTINCT current_email FROM catalog_identities WHERE owner_key = $1 ORDER BY current_email ASC',
@@ -70,6 +72,36 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       <header><div><span>Knowledge graph</span><h2>Concept network</h2></div><small>connected items</small></header>
       <div class="concept-list">{stats.topConcepts.map((concept) => <span><i></i>{concept.name}<b>{concept.count}</b></span>)}</div>
       {!stats.topConcepts.length && <div class="dashboard-empty">Resolve papers with OpenAlex to discover concepts.</div>}
+    </section>
+
+    <section class="dashboard-panel zotero-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)}>
+      <header>
+        <div><span>Bibliography bridge</span><h2>Zotero synchronization</h2></div>
+        <small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · connected` : 'not connected'}</small>
+      </header>
+      <form data-zotero-form>
+        <label class="zotero-key-field"><span>Zotero API key</span><input type="password" name="apiKey" autocomplete="off" placeholder={zoteroStatus.connected ? 'Stored securely — leave blank to keep it' : 'Paste a library API key'} /></label>
+        <label><span>Direction</span><select name="syncMode">
+          <option value="bidirectional" selected={zoteroStatus.syncMode === 'bidirectional' || !zoteroStatus.syncMode}>Bidirectional · read + write</option>
+          <option value="pull" selected={zoteroStatus.syncMode === 'pull'}>Pull from Zotero</option>
+          <option value="push" selected={zoteroStatus.syncMode === 'push'}>Push to Zotero</option>
+        </select></label>
+        <label class="zotero-analysis-check"><input type="checkbox" name="analyzeAutomatically" checked={zoteroStatus.analyzeAutomatically !== false} /><span><b>Analyze linked files automatically</b><small>Turn off before a massive first synchronization.</small></span></label>
+        <div class="zotero-actions">
+          <button class="button primary" type="submit">Test & save</button>
+          <button class="button quiet" type="button" data-zotero-preview disabled={!zoteroStatus.connected}>Preview sync</button>
+          <button class="button quiet" type="button" data-zotero-sync disabled>Sync now</button>
+          <button class="button quiet" type="button" data-zotero-disconnect hidden={!zoteroStatus.connected}>Disconnect</button>
+        </div>
+        <output data-zotero-output aria-live="polite"></output>
+      </form>
+      <div class="zotero-contract">
+        <div><span>Local scope</span><strong>Zotero/</strong><small>Only this metafolder participates in remote writes.</small></div>
+        <div><span>Binary originals</span><strong>Wasabi</strong><small>Zotero sync changes metadata, collections and membership.</small></div>
+        <div><span>Deletion policy</span><strong>Non-destructive</strong><small>No automatic remote or local deletions.</small></div>
+        <div><span>Last synchronization</span><strong>{zoteroStatus.lastSyncedAt ? new Date(zoteroStatus.lastSyncedAt).toLocaleString() : 'Never'}</strong><small>{zoteroStatus.libraryVersion ? `library version ${zoteroStatus.libraryVersion}` : 'Preview required before first sync'}</small></div>
+      </div>
+      <div class="zotero-preview" data-zotero-preview-result hidden></div>
     </section>
 
     <section class="dashboard-panel voice-panel" data-voice-settings>
@@ -150,6 +182,45 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       chirpVoice.addEventListener('change',()=>{let next:any={};try{next=JSON.parse(localStorage.getItem(key)||'{}');}catch{}localStorage.setItem(key,JSON.stringify({...next,voice:chirpVoice.value}));});
     }
 
+    const zoteroRoot = document.querySelector<HTMLElement>('[data-zotero-settings]');
+    if (zoteroRoot) {
+      const form=zoteroRoot.querySelector<HTMLFormElement>('[data-zotero-form]')!;
+      const output=zoteroRoot.querySelector<HTMLOutputElement>('[data-zotero-output]')!;
+      const state=zoteroRoot.querySelector<HTMLElement>('[data-zotero-state]')!;
+      const previewButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-preview]')!;
+      const syncButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-sync]')!;
+      const disconnectButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-disconnect]')!;
+      const previewResult=zoteroRoot.querySelector<HTMLElement>('[data-zotero-preview-result]')!;
+      let previewVersion=0;
+      const busy=(value:boolean)=>{[...form.querySelectorAll<HTMLButtonElement>('button')].forEach((button)=>button.disabled=value);if(!value){previewButton.disabled=zoteroRoot.dataset.connected!=='true';syncButton.disabled=!previewVersion;}};
+      form.addEventListener('submit',async(event)=>{
+        event.preventDefault();busy(true);output.value='Verifying Zotero permissions…';
+        const data=new FormData(form);const body={apiKey:String(data.get('apiKey')||''),syncMode:String(data.get('syncMode')||'bidirectional'),analyzeAutomatically:data.get('analyzeAutomatically')==='on'};
+        const response=await fetch('/api/zotero/connection',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));
+        if(response.ok){zoteroRoot.dataset.connected='true';state.textContent=`${result.username} · connected`;previewButton.disabled=false;disconnectButton.hidden=false;form.querySelector<HTMLInputElement>('[name=apiKey]')!.value='';output.value='Connection saved. Run Preview before synchronizing.';}
+        else output.value=result.error||'Zotero connection failed.';busy(false);
+      });
+      previewButton.addEventListener('click',async()=>{
+        busy(true);previewVersion=0;syncButton.disabled=true;output.value='Reading Zotero structure and checking duplicates…';
+        const response=await fetch('/api/zotero/preview',{cache:'no-store'});const result=await response.json().catch(()=>({}));
+        if(!response.ok){output.value=result.error||'Preview failed.';busy(false);return;}
+        previewVersion=Number(result.remote.libraryVersion||0);const changes=result.changes||{};
+        previewResult.hidden=false;previewResult.innerHTML=`<article><span>Remote</span><strong>${Number(result.remote.items).toLocaleString()}</strong><small>${Number(result.remote.collections).toLocaleString()} collections · version ${previewVersion}</small></article><article><span>Already mapped</span><strong>${Number(result.local.mapped).toLocaleString()}</strong><small>${Number(result.local.items).toLocaleString()} current Seshat items</small></article><article><span>Safe merges</span><strong>${Number(changes.automaticMerges||0).toLocaleString()}</strong><small>unique DOI or ISBN matches</small></article><article><span>Review candidates</span><strong>${Number(changes.possibleDuplicates||0).toLocaleString()}</strong><small>not merged automatically</small></article><article><span>New items</span><strong>${Number(changes.newItems||0).toLocaleString()}</strong><small>will be created below Zotero/</small></article>`;
+        output.value=`Preview ready · ${result.plan.mode} · analysis ${result.plan.analyzeAutomatically?'enabled':'deferred'}.`;busy(false);
+      });
+      syncButton.addEventListener('click',async()=>{
+        if(!previewVersion)return;busy(true);output.value='Synchronizing Zotero. Keep this page open…';
+        const response=await fetch('/api/zotero/sync',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({confirmLibraryVersion:previewVersion})});const result=await response.json().catch(()=>({}));
+        if(response.status===409){previewVersion=0;output.value='Zotero changed after the preview. Run Preview again.';busy(false);return;}
+        if(!response.ok){output.value=result.error||'Synchronization failed.';busy(false);return;}
+        output.value=`Sync complete · pulled ${result.pulled.items} · merged ${result.pulled.merged} · pushed ${result.pushed.items} · ${result.conflicts.length} conflicts.`;previewVersion=0;syncButton.disabled=true;window.setTimeout(()=>location.reload(),1800);
+      });
+      disconnectButton.addEventListener('click',async()=>{
+        if(!confirm('Disconnect Zotero? Mirrored Seshat items and folders will remain.'))return;busy(true);
+        const response=await fetch('/api/zotero/connection',{method:'DELETE'});if(response.ok){zoteroRoot.dataset.connected='false';state.textContent='not connected';disconnectButton.hidden=true;previewVersion=0;output.value='Zotero disconnected. Mirrored data was preserved.';}else output.value='Could not disconnect Zotero.';busy(false);
+      });
+    }
+
     // 1. Recover catalog form
     const recoverForm = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
     recoverForm?.addEventListener('submit', async (event) => {
@@ -180,6 +251,10 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
 
 <style>
   .account-dashboard{width:min(1180px,calc(100% - 36px));margin:0 auto;padding:76px 0 100px}.dashboard-head{display:flex;align-items:end;justify-content:space-between;gap:30px;padding-bottom:30px;border-bottom:1px solid var(--ink)}.dashboard-head h1{margin:7px 0 4px;font-size:clamp(40px,6vw,76px)}.dashboard-head p{margin:0;color:var(--muted);font:11px monospace}.dashboard-totals{display:grid;grid-template-columns:repeat(5,1fr);border-left:1px solid var(--ink);margin:22px 0}.dashboard-totals article{min-height:132px;display:flex;flex-direction:column;justify-content:space-between;padding:18px;border-top:1px solid var(--ink);border-right:1px solid var(--ink);border-bottom:1px solid var(--ink);background:rgba(255,255,255,.16)}.dashboard-totals span,.dashboard-panel header span{color:var(--green);font:9px monospace;letter-spacing:.08em;text-transform:uppercase}.dashboard-totals strong{font:42px/1 Georgia,serif}.dashboard-panel{border:1px solid var(--ink);background:rgba(255,255,255,.13)}.dashboard-panel>header{min-height:64px;display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--ink)}.dashboard-panel h2{margin:4px 0 0;font:25px/1.1 Georgia,serif}.dashboard-panel header small{color:var(--muted);font:9px monospace;text-transform:uppercase}.years-panel svg{width:100%;height:auto;display:block;overflow:visible}.years-panel line{stroke:var(--line);stroke-width:1}.year-area{fill:rgba(61,122,88,.11)}.year-line{fill:none;stroke:var(--green);stroke-width:2}.years-panel circle{fill:var(--paper);stroke:var(--gold);stroke-width:2}.years-panel text{fill:var(--muted);font:8px monospace;text-anchor:middle}.dashboard-columns{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin:22px 0}.ranking-panel ol{margin:0;padding:0;list-style:none}.ranking-panel li{min-height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);font:15px Georgia,serif}.ranking-panel li:last-child{border-bottom:0}.ranking-panel li b{color:var(--green);font:10px monospace}.tag-cloud{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;padding:17px}.tag-cloud>span{padding:7px 9px;border:1px solid var(--line);font:calc(10px * var(--weight)) monospace}.tag-cloud b{margin-left:7px;color:var(--green);font-size:8px}.concepts-panel{margin:22px 0}.concept-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));padding:8px}.concept-list span{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:34px;padding:4px 8px;border-bottom:1px solid var(--line);font:11px monospace}.concept-list i{width:8px;height:8px;background:#b07a3c}.concept-list b{color:var(--green);font-size:9px}.dashboard-empty{padding:35px;color:var(--muted);font:12px monospace;text-align:center}.account-panel dl{display:grid;grid-template-columns:repeat(3,1fr);margin:0}.account-panel dl div{padding:14px;border-right:1px solid var(--line)}.account-panel dt{color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel dd{margin:5px 0 0;overflow:hidden;font:12px monospace;text-overflow:ellipsis}.account-panel form{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:9px;align-items:end;padding:18px;border-top:1px solid var(--line)}.account-panel label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.account-panel input{height:37px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:12px monospace}.account-panel output{grid-column:1/-1;color:var(--green);font:10px monospace}.account-panel form p{grid-column:1/-1;margin:0;color:var(--muted);font:10px/1.4 monospace}.account-note{margin:0;padding:18px;color:var(--muted);font:11px monospace}@media(max-width:760px){.account-dashboard{padding-top:45px}.dashboard-head{align-items:start;flex-direction:column}.dashboard-totals{grid-template-columns:1fr 1fr}.dashboard-columns{grid-template-columns:1fr}.account-panel dl{grid-template-columns:1fr}.account-panel dl div{border-right:0;border-bottom:1px solid var(--line)}.account-panel form{grid-template-columns:1fr}.years-panel svg{min-width:650px}.years-panel{overflow:auto}}
+</style>
+
+<style>
+  .zotero-panel{margin:22px 0}.zotero-panel form{display:grid;grid-template-columns:minmax(280px,1.4fr) minmax(190px,.6fr);gap:12px;padding:16px}.zotero-panel form>label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.zotero-panel input[type=password],.zotero-panel select{width:100%;height:38px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:10px monospace}.zotero-analysis-check{grid-column:1/-1!important;grid-template-columns:auto 1fr!important;align-items:start;padding:9px;border:1px solid var(--line);text-transform:none!important}.zotero-analysis-check input{margin-top:3px;accent-color:var(--green)}.zotero-analysis-check b,.zotero-analysis-check small{display:block}.zotero-analysis-check b{color:var(--ink);font-size:9px}.zotero-analysis-check small{margin-top:3px;font-size:8px}.zotero-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.zotero-panel output{grid-column:1/-1;min-height:16px;color:var(--green);font:9px/1.4 monospace}.zotero-contract,.zotero-preview{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--ink)}.zotero-contract>div,.zotero-preview>article{min-height:92px;padding:12px;border-right:1px solid var(--line)}.zotero-contract span,.zotero-preview span{display:block;color:var(--muted);font:7px monospace;text-transform:uppercase}.zotero-contract strong,.zotero-preview strong{display:block;margin:8px 0 5px;font:15px monospace}.zotero-preview strong{font:27px Georgia,serif}.zotero-contract small,.zotero-preview small{display:block;color:var(--muted);font:8px/1.4 monospace}.zotero-preview{grid-template-columns:repeat(5,1fr);border-top:1px dashed var(--ink)}@media(max-width:760px){.zotero-panel form{grid-template-columns:1fr}.zotero-contract,.zotero-preview{grid-template-columns:1fr 1fr}.zotero-contract>div,.zotero-preview>article{border-bottom:1px solid var(--line)}}
 </style>
 
 <style>

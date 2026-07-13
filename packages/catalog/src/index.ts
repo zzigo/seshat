@@ -473,6 +473,41 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS catalog_library_shares_grantee_idx
     ON catalog_library_shares (grantee_owner_key);
+  CREATE TABLE IF NOT EXISTS catalog_zotero_connections (
+    owner_key text PRIMARY KEY,
+    library_type text NOT NULL DEFAULT 'users' CHECK (library_type IN ('users','groups')),
+    library_id text NOT NULL,
+    username text NOT NULL,
+    api_key_ciphertext text NOT NULL,
+    sync_mode text NOT NULL DEFAULT 'bidirectional' CHECK (sync_mode IN ('pull','push','bidirectional')),
+    analyze_automatically boolean NOT NULL DEFAULT true,
+    library_version bigint,
+    last_synced_at timestamptz,
+    last_error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS catalog_zotero_collections (
+    owner_key text NOT NULL,
+    zotero_key text NOT NULL,
+    library_id text NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
+    version bigint NOT NULL DEFAULT 0,
+    parent_zotero_key text,
+    name text NOT NULL,
+    synced_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,zotero_key),
+    UNIQUE(owner_key,library_id)
+  );
+  CREATE TABLE IF NOT EXISTS catalog_zotero_items (
+    owner_key text NOT NULL,
+    zotero_key text NOT NULL,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    version bigint NOT NULL DEFAULT 0,
+    synced_hash text NOT NULL DEFAULT '',
+    synced_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,zotero_key),
+    UNIQUE(owner_key,reference_id)
+  );
   CREATE TABLE IF NOT EXISTS catalog_annotations (
     id text PRIMARY KEY,
     reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
