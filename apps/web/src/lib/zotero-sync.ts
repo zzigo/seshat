@@ -209,34 +209,45 @@ const mirrorCollections = async (
 const pullItems = async (input: {
   ownerKey: string; rootLibraryId: string; libraryId: string; items: ZoteroApiItem[];
   collectionMap: Map<string, any>; analyzeAutomatically: boolean; skip: Set<string>;
+  conflicts: ZoteroSyncResult['conflicts'];
 }): Promise<{ count: number; merged: number }> => {
   const catalog = getCatalog(); const client = await catalog.pool.connect(); let count = 0; let merged = 0;
+  const [localRows, mappedRows] = await Promise.all([
+    catalog.pool.query('SELECT id,title,issued,identifiers FROM catalog_references WHERE owner_key=$1', [input.ownerKey]),
+    catalog.pool.query(
+      `SELECT zi.zotero_key,r.id FROM catalog_zotero_items zi LEFT JOIN catalog_references r ON r.id=zi.reference_id
+       WHERE zi.owner_key=$1`, [input.ownerKey],
+    ),
+  ]);
+  const mappedReferences = new Map(mappedRows.rows.map((row: any) => [String(row.zotero_key), row.id as string | undefined]));
+  const doiIndex = new Map<string, Set<string>>(); const isbnIndex = new Map<string, Set<string>>(); const titleIndex = new Map<string, Set<string>>();
+  const addIndex = (map: Map<string, Set<string>>, key: string, id: string) => {
+    if (!key) return; const ids = map.get(key) || new Set<string>(); ids.add(id); map.set(key, ids);
+  };
+  const indexReference = (id: string, title: unknown, issued: any, identifiers: any) => {
+    addIndex(doiIndex, String(identifiers?.doi || '').toLowerCase(), id);
+    for (const value of identifiers?.isbn || []) addIndex(isbnIndex, String(value).replace(/[^0-9X]/gi, '').toUpperCase(), id);
+    addIndex(titleIndex, normalizedTitleYear(title, issued), id);
+  };
+  for (const row of localRows.rows) indexReference(row.id, row.title, row.issued, row.identifiers);
   try {
     await client.query('BEGIN');
     for (const item of input.items) {
       if (input.skip.has(item.key) || item.data.itemType === 'attachment' || item.data.itemType === 'note') continue;
       const mapped = mapZoteroItem({ item, libraryType: 'users', libraryId: input.libraryId, importedAt: new Date().toISOString() });
       const collectionKeys = [...new Set((item.data.collections || []).filter((key) => input.collectionMap.has(key)))];
-      const mappedRow = await client.query(
-        `SELECT zi.reference_id,r.id FROM catalog_zotero_items zi LEFT JOIN catalog_references r ON r.id=zi.reference_id
-         WHERE zi.owner_key=$1 AND zi.zotero_key=$2`, [input.ownerKey, item.key],
-      );
-      let referenceId = mappedRow.rows[0]?.id as string | undefined;
+      let referenceId = mappedReferences.get(item.key);
       let mergeCandidate = false;
-      if (!referenceId && mapped.identifiers.doi) {
-        const doi = await client.query(
-          `SELECT id FROM catalog_references WHERE owner_key=$1 AND lower(identifiers->>'doi')=lower($2) LIMIT 2`,
-          [input.ownerKey, mapped.identifiers.doi],
-        );
-        if (doi.rowCount === 1) { referenceId = doi.rows[0].id; mergeCandidate = true; }
-      }
-      if (!referenceId && mapped.identifiers.isbn?.length) {
-        const isbn = await client.query(
-          `SELECT id FROM catalog_references WHERE owner_key=$1
-             AND jsonb_typeof(identifiers->'isbn')='array' AND identifiers->'isbn' ?| $2::text[] LIMIT 2`,
-          [input.ownerKey, mapped.identifiers.isbn],
-        );
-        if (isbn.rowCount === 1) { referenceId = isbn.rows[0].id; mergeCandidate = true; }
+      if (!referenceId) {
+        const candidates = new Set<string>();
+        doiIndex.get(String(mapped.identifiers.doi || '').toLowerCase())?.forEach((id) => candidates.add(id));
+        for (const value of mapped.identifiers.isbn || []) isbnIndex.get(String(value).replace(/[^0-9X]/gi, '').toUpperCase())?.forEach((id) => candidates.add(id));
+        if (candidates.size === 1) { referenceId = [...candidates][0]; mergeCandidate = true; }
+        else if (candidates.size > 1) {
+          input.conflicts.push({ kind: 'item', key: item.key, label: mapped.title || item.key }); continue;
+        } else if (titleIndex.get(normalizedTitleYear(mapped.title, mapped.issued))?.size) {
+          input.conflicts.push({ kind: 'item', key: item.key, label: mapped.title || item.key }); continue;
+        }
       }
       const source = cleanObject({ ...mapped.source, zoteroData: item.data });
       const identifiers = cleanObject(mapped.identifiers);
@@ -264,6 +275,7 @@ const pullItems = async (input: {
         );
         referenceId = inserted.rows[0].id;
       }
+      if (!referenceId) throw new Error(`ZOTERO_REFERENCE_UPSERT_FAILED:${item.key}`);
       await client.query(
         `DELETE FROM catalog_library_items li USING catalog_libraries l
          WHERE li.library_id=l.id AND li.reference_id=$2 AND l.owner_key=$1
@@ -288,6 +300,8 @@ const pullItems = async (input: {
            reference_id=excluded.reference_id,version=excluded.version,synced_hash=excluded.synced_hash,synced_at=now()`,
         [input.ownerKey, item.key, referenceId, Number(item.version ?? item.data.version ?? 0), hash],
       );
+      mappedReferences.set(item.key, referenceId);
+      indexReference(referenceId, mapped.title, mapped.issued, identifiers);
       if (input.analyzeAutomatically) {
         const artifact = await client.query('SELECT 1 FROM catalog_artifacts WHERE reference_id=$1 LIMIT 1', [referenceId]);
         if (artifact.rows[0]) {
@@ -435,7 +449,7 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion: n
       const pulled = await pullItems({
         ownerKey, rootLibraryId, libraryId: connection.libraryId,
         items: [...remoteItems.values()], collectionMap: mirrored.byKey,
-        analyzeAutomatically: connection.analyzeAutomatically !== false, skip: skipPull,
+        analyzeAutomatically: connection.analyzeAutomatically !== false, skip: skipPull, conflicts,
       });
       result.pulled.items = pulled.count; result.pulled.merged = pulled.merged;
     }
