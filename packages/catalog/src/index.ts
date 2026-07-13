@@ -304,6 +304,14 @@ const schema = `
     PRIMARY KEY(owner_key,keyword)
   );
 
+  CREATE TABLE IF NOT EXISTS catalog_tts_usage (
+    provider text NOT NULL,
+    month text NOT NULL,
+    characters bigint NOT NULL DEFAULT 0 CHECK (characters >= 0),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(provider,month)
+  );
+
   CREATE TABLE IF NOT EXISTS catalog_chunks (
     id text PRIMARY KEY,
     reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
@@ -567,6 +575,35 @@ export class PostgresCatalog {
   ensureSchema(): Promise<void> {
     this.#ready ??= this.pool.query(schema).then(() => undefined);
     return this.#ready;
+  }
+
+  async getTtsUsage(provider: string, month: string): Promise<number> {
+    await this.ensureSchema();
+    const result = await this.pool.query('SELECT characters FROM catalog_tts_usage WHERE provider=$1 AND month=$2', [provider, month]);
+    return Number(result.rows[0]?.characters || 0);
+  }
+
+  async reserveTtsCharacters(provider: string, month: string, characters: number, limit: number): Promise<number | null> {
+    await this.ensureSchema();
+    const amount = Math.max(0, Math.floor(characters));
+    const ceiling = Math.max(0, Math.floor(limit));
+    if (amount > ceiling) return null;
+    const result = await this.pool.query(
+      `INSERT INTO catalog_tts_usage(provider,month,characters) VALUES($1,$2,$3)
+       ON CONFLICT(provider,month) DO UPDATE SET characters=catalog_tts_usage.characters+excluded.characters,updated_at=now()
+       WHERE catalog_tts_usage.characters+excluded.characters <= $4
+       RETURNING characters`,
+      [provider, month, amount, ceiling],
+    );
+    return result.rows[0] ? Number(result.rows[0].characters) : null;
+  }
+
+  async releaseTtsCharacters(provider: string, month: string, characters: number): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query(
+      'UPDATE catalog_tts_usage SET characters=GREATEST(0,characters-$3),updated_at=now() WHERE provider=$1 AND month=$2',
+      [provider, month, Math.max(0, Math.floor(characters))],
+    );
   }
 
   async findBySha256(ownerKey: string, sha256: string): Promise<CatalogReference | null> {

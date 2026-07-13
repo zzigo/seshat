@@ -10,7 +10,8 @@ import { referenceFileType } from '../lib/reference-file';
 import screenfull from 'screenfull';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
-import { KOKORO_VOICES, normalizeReaderLanguage, readAloud } from './read-aloud';
+import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAloud } from './read-aloud';
+import { CHIRP_VOICES } from '../lib/chirp';
 
 registerAllModules();
 
@@ -19,7 +20,7 @@ type ReferenceRow = {
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string;
   bibliographicFields: Record<string,string>;
-  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
+  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
 type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string> };
@@ -80,6 +81,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   hasStructure: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'structure'),
   hasText: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown'),
   hasKokoroNarration: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'kokoro-audio'),
+  hasChirpNarration: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'chirp-audio'),
   needsOcr: referenceFileType(reference) === 'pdf' && (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original')
     && (!(reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown') || Number(reference.wordCount || 0) < 20),
   access: reference.access || 'owner',
@@ -382,6 +384,24 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     for(const id of ids){const response=await fetch(`/api/library/${encodeURIComponent(id)}/narration`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok){setSaveState(result.error||'Narration could not be erased','error');continue;}const reference=references.get(id);if(reference)reference.hasKokoroNarration=false;erased+=1;}
     renderTree(search.value);setSaveState(`${erased} Kokoro ${erased===1?'narration':'narrations'} erased`);
   };
+  const openChirpNarration = (reference:ReferenceRow) => {
+    const dialog=dialogShell(`Google Chirp narration · ${reference.title}`),form=document.createElement('form');form.className='dialog-form';
+    const languageLabel=document.createElement('label');languageLabel.textContent='Language';const language=document.createElement('select');
+    [['es','Spanish'],['en','English']].forEach(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;option.selected=normalizeReaderLanguage(reference.language||navigator.language)===value;language.appendChild(option);});languageLabel.appendChild(language);
+    const voiceLabel=document.createElement('label');voiceLabel.textContent='Voice';const voice=document.createElement('select');voiceLabel.appendChild(voice);
+    const note=document.createElement('p');note.textContent='Checking the monthly Google Chirp balance…';
+    const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const submit=document.createElement('button');submit.type='submit';submit.className='primary';submit.textContent='Render narration';submit.disabled=true;footer.append(cancel,submit);form.append(languageLabel,voiceLabel,note,footer);dialog.appendChild(form);
+    let source='',status:any=null;
+    const renderVoices=()=>{voice.replaceChildren();CHIRP_VOICES.filter((item)=>item.language===language.value).forEach((item)=>{const option=document.createElement('option');option.value=item.id;option.textContent=item.label;voice.appendChild(option);});if(status&&source){const required=narrationCharacterCount(source,language.value),remaining=Number(status.remaining||0);note.textContent=`This render uses about ${required.toLocaleString()} characters · ${remaining.toLocaleString()} remain · renews ${new Date(status.renewsAt).toLocaleDateString()}.`;submit.disabled=!status.configured||required>remaining;}};
+    language.onchange=renderVoices;renderVoices();
+    void Promise.all([fetch(`/api/library/${encodeURIComponent(reference.id)}/artifact/markdown`,{cache:'no-store'}),fetch(`/api/library/${encodeURIComponent(reference.id)}/chirp`,{cache:'no-store'})]).then(async([textResponse,statusResponse])=>{if(!textResponse.ok)throw new Error('Extracted text is required before rendering narration.');source=await textResponse.text();status=await statusResponse.json();if(!statusResponse.ok||!status.configured)throw new Error(status.error||'Google Chirp is not configured.');renderVoices();}).catch((error)=>{note.textContent=error instanceof Error?error.message:'Google Chirp status is unavailable.';submit.disabled=true;});
+    form.onsubmit=(event)=>{event.preventDefault();const selectedLanguage=language.value,selectedVoice=voice.value;dialog.close();const activityId=`chirp-narration-${reference.id}`;updateActivity(activityId,{state:'working',referenceId:reference.id,message:`${reference.title} · preparing Google Chirp narration`});setSaveState('rendering Google Chirp narration…','saving');void readAloud.renderChirpNarration(reference.id,selectedLanguage,selectedVoice,(message)=>{updateActivity(activityId,{state:'working',referenceId:reference.id,message:`${reference.title} · ${message}`});setSaveState(message,'saving');}).then((segments)=>{reference.hasChirpNarration=true;renderTree(search.value);updateActivity(activityId,{state:'complete',referenceId:reference.id,message:`${reference.title} · ${segments} Chirp OGG ${segments===1?'segment':'segments'} ready`});setSaveState('Google Chirp narration ready');}).catch((error)=>{const message=error instanceof Error?error.message:'Chirp narration failed';updateActivity(activityId,{state:'error',referenceId:reference.id,message:`${reference.title} · ${message}`});setSaveState(message,'error');});};
+  };
+  const eraseChirpNarrations = async (ids:string[]) => {
+    setSaveState('erasing Google Chirp narration…','saving');let erased=0;
+    for(const id of ids){const response=await fetch(`/api/library/${encodeURIComponent(id)}/narration?provider=chirp`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok){setSaveState(result.error||'Chirp narration could not be erased','error');continue;}const reference=references.get(id);if(reference)reference.hasChirpNarration=false;erased+=1;}
+    renderTree(search.value);setSaveState(`${erased} Google Chirp ${erased===1?'narration':'narrations'} erased`);
+  };
   const searchForCandidate = async (referenceId: string) => {
     const reference = references.get(referenceId); if (!reference) return;
     const dialog = dialogShell(`Search candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
@@ -428,6 +448,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: 'Search for candidate in Wasabi…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => searchForCandidate(editableIds[0]) },
     { label: 'Render Kokoro narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openKokoroNarration(row); } },
     { label: `Erase Kokoro narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasKokoroNarration), danger: true, action: () => eraseKokoroNarrations(editableIds.filter((id)=>references.get(id)?.hasKokoroNarration)) },
+    { label: 'Render Google Chirp narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openChirpNarration(row); } },
+    { label: `Erase Google Chirp narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasChirpNarration), danger: true, action: () => eraseChirpNarrations(editableIds.filter((id)=>references.get(id)?.hasChirpNarration)) },
     { label: `Extract text & structure${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'extract') },
     { label: `Re-process metadata${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'reprocess-metadata') },
     { label: `Enrich papers with OpenAlex${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'scholarly') },
@@ -3081,7 +3103,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const kind = treeReferenceKind(reference);
         const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
         glyph.classList.toggle('needs-ocr', reference.needsOcr);
-        glyph.classList.toggle('has-narration', reference.hasKokoroNarration);
+        glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
         glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
         glyph.setAttribute('aria-label', glyph.title);
         const title = document.createElement('span'); title.textContent = reference.title; item.appendChild(glyph);

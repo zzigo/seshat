@@ -32,6 +32,10 @@ Never put literal credentials in Markdown, commits, logs or shell history.
 | `GOOGLE_BOOKS_API_KEY` | Recommended | fallback to `GOOGLE_API_KEY` | Server-side Google Books queries |
 | `GOOGLE_GENERATIVE_LANGUAGE_API_KEY` | Currently unused by worker | none | Reserved for Generative Language integration |
 | `GOOGLE_API_KEY` | Legacy fallback | none | Backward-compatible Google Books key fallback |
+| `GOOGLE_CLOUD_PROJECT` | Required for Chirp | none | Google Cloud project containing the enabled Text-to-Speech API |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Required for Chirp | none | Absolute server path to the service-account JSON; keep it outside the repository |
+| `GOOGLE_TTS_MONTHLY_CHARACTER_LIMIT` | No | `900000` | Hard application-wide Chirp character limit per UTC calendar month |
+| `GOOGLE_TTS_WARNING_CHARACTERS` | No | `700000` | Usage level at which Chirp responses expose a warning state |
 | `SESHAT_INTEGRATION_TOKEN` | Required for external consumers | none | Long random bearer secret for trusted server-to-server citation search; never expose it to browser code |
 | `SESHAT_INTEGRATION_OWNER_KEY` | Optional | owner derived from `X-Seshat-Owner` email | Fixed 32-character catalog owner key for a deployment exposing one curated bibliography to trusted consumers |
 | `MUSIKI_API_URL` | No | `https://musiki.org.ar` | Musiki server used to list registered users and course groups in Share Library |
@@ -78,6 +82,8 @@ Keep Books and Generative Language credentials separate:
 - `GOOGLE_GENERATIVE_LANGUAGE_API_KEY`: restrict separately to the Generative Language API.
 
 A browser-referrer-restricted Books key will fail from the worker with `API_KEY_HTTP_REFERRER_BLOCKED`; server workloads require an IP-compatible restriction.
+
+Google Chirp uses Application Default Credentials on the server. Its usage table is keyed by provider and UTC `YYYY-MM`, so the application allowance renews automatically at the start of every month. Both immediate reading and persistent OGG narration reserve from the same atomic 900,000-character allowance; failed synthesis requests release their reservation.
 
 ## PM2 configuration
 

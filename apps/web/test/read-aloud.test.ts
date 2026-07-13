@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeReaderLanguage, splitReadingSentences } from '../src/scripts/read-aloud';
+import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
+import { billableCharacterCount, chirpMonth, nextChirpRenewal } from '../src/lib/chirp';
 
 test('segments reading text while preserving annotation offsets', () => {
   const source = '# Uno\n\nPrimera frase. Segunda frase con [enlace](https://example.test).';
@@ -21,4 +22,11 @@ test('normalizes catalog and BCP-47 language values for voice selection', () => 
 
 test('phonemizes Spanish text for Kokoro', async () => {
   assert.match(await phonemizeSpanish('Hola mundo.'), /ˈola/);
+});
+
+test('counts Chirp usage by Unicode characters and renews on the next UTC month', () => {
+  assert.equal(billableCharacterCount('voz 🎼'), 5);
+  assert.equal(chirpMonth(new Date('2026-12-31T23:59:59Z')), '2026-12');
+  assert.equal(nextChirpRenewal(new Date('2026-12-31T23:59:59Z')), '2027-01-01T00:00:00.000Z');
+  assert.equal(narrationCharacterCount('Primera frase. Segunda frase.', 'es'), 29);
 });

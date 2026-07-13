@@ -64,6 +64,7 @@ const payload = {
     hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
     hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
     hasKokoroNarration: reference.artifacts.some((artifact) => artifact.kind === 'kokoro-audio'),
+    hasChirpNarration: reference.artifacts.some((artifact) => artifact.kind === 'chirp-audio'),
     needsOcr: referenceFileType(reference) === 'pdf' && reference.artifacts.some((artifact) => artifact.kind === 'original')
       && (!reference.artifacts.some((artifact) => artifact.kind === 'markdown') || reference.wordCount < 20),
     access: reference.access,
