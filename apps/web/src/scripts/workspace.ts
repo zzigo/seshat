@@ -1241,6 +1241,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const labels: Record<string, string> = {
         paragraph: 'paragraph', formula: 'formula', picture: 'image', table: 'table', list: 'list', caption: 'caption', code: 'code', form: 'form',
       };
+      const naturalStructureText=(value:string)=>{const letters=[...value].filter((character)=>/\p{L}/u.test(character));if(letters.length<2||letters.some((character)=>character!==character.toLocaleUpperCase()))return value;const connectors=new Set(['a','al','and','by','con','de','del','e','el','en','for','in','la','las','los','of','on','o','or','para','por','the','to','u','with','y']);let index=0;return value.toLocaleLowerCase().replace(/\p{L}[\p{L}\p{M}'’]*/gu,(word)=>{const first=index++===0;if(/^(?=[ivxlcdm]+$)m{0,4}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$/u.test(word)&&word.length<=8)return word.toLocaleUpperCase();if(!first&&connectors.has(word))return word;return word.replace(/\p{L}/u,(letter)=>letter.toLocaleUpperCase());});};
       const goToPage = (page: unknown) => {
         const target = Number(page); if (!Number.isFinite(target) || target < 1) return;
         const documentElement=[...root.querySelectorAll<HTMLElement>('.document-pod[data-reference-id]')].find((candidate)=>candidate.dataset.referenceId===referenceId);
@@ -1264,7 +1265,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         for (const block of blocks) {
           const kind = block.kind || 'paragraph'; const marker = document.createElement('button'); marker.type = 'button';
           marker.className = `structure-block structure-block-${kind}`; marker.textContent = icons[kind] || '□';
-          marker.title = `${labels[kind] || block.label || kind}${block.page ? ` · p. ${block.page}` : ''}${block.text ? ` · ${block.text.slice(0, 120)}` : ''}`;
+          marker.title = `${labels[kind] || block.label || kind}${block.page ? ` · p. ${block.page}` : ''}${block.text ? ` · ${naturalStructureText(block.text.slice(0, 120))}` : ''}`;
           marker.setAttribute('aria-label', marker.title); marker.disabled = !block.page; marker.addEventListener('click', (event) => { event.stopPropagation(); goToPage(block.page); }); rail.appendChild(marker);
         }
         return rail;
@@ -1276,7 +1277,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const row = document.createElement('button'); row.type = 'button'; row.className = 'structure-section-row'; row.disabled = !section.page; row.dataset.level = String(section.level || 1);
         const semantic = section.kind || 'section'; const glyph = document.createElement('i'); glyph.className = `structure-kind structure-kind-${semantic}`; glyph.textContent = icons[semantic] || '§';
         const copy = document.createElement('span'); copy.className = 'structure-section-copy';
-        const heading = document.createElement('span'); heading.className = 'structure-section-title'; heading.textContent = section.title || 'Untitled section'; copy.appendChild(heading);
+        const heading = document.createElement('span'); heading.className = 'structure-section-title'; heading.textContent = naturalStructureText(section.title || 'Untitled section'); copy.appendChild(heading);
         const rail = renderBlocks(blocksBySection.get(section.id) || []); if (rail) copy.appendChild(rail);
         const page = document.createElement('small'); page.textContent = section.page ? `p. ${section.page}` : `h${section.level || 1}`;
         row.append(glyph, copy, page); row.addEventListener('click', () => goToPage(section.page)); item.appendChild(row); list.appendChild(item);
