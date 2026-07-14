@@ -429,6 +429,26 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     for(const id of ids){const response=await fetch(`/api/library/${encodeURIComponent(id)}/narration?provider=chirp`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok){setSaveState(result.error||'Chirp narration could not be erased','error');continue;}const reference=references.get(id);if(reference)reference.hasChirpNarration=false;erased+=1;}
     renderTree(search.value);setSaveState(`${erased} Google Chirp ${erased===1?'narration':'narrations'} erased`);
   };
+  type WasabiCandidate = { key:string; filename:string; path:string; sizeBytes:number; score:number };
+  type WasabiCandidateSearch = { candidates:WasabiCandidate[]; expected?:string; scanned:number };
+  const findWasabiCandidates = async (referenceId:string):Promise<WasabiCandidateSearch> => {
+    const response = await fetch(`/api/library/${referenceId}/candidates`, { cache:'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Candidate search failed');
+    return { candidates:Array.isArray(result.candidates) ? result.candidates : [], expected:result.expected, scanned:Number(result.scanned || 0) };
+  };
+  const linkWasabiCandidate = async (referenceId:string,candidate:WasabiCandidate,options:{deferRender?:boolean;follow?:boolean}={}) => {
+    const linked = await fetch(`/api/library/${referenceId}/candidates`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ key:candidate.key }) });
+    const linkedResult = await linked.json().catch(() => ({}));
+    if (!linked.ok) throw new Error(linkedResult.error || 'Candidate could not be linked.');
+    const next = rowFromCatalogReference(linkedResult.reference);
+    if (options.deferRender) {
+      const current=references.get(next.id);if(current)Object.assign(current,next);else{payload.references.unshift(next);references.set(next.id,next);}committed.set(next.id,{...(references.get(next.id) as ReferenceRow)});
+    } else upsertRow(next);
+    updateActivity(`candidate-${referenceId}`, { state:options.follow===false?'complete':'working', referenceId, message:options.follow===false?`${candidate.filename} · linked; extraction queued`:`${candidate.filename} · linked; extracting text and structure` });
+    if(options.follow!==false)void followPipeline(referenceId, `candidate-${referenceId}`, candidate.filename);
+    return next;
+  };
   const searchForCandidate = async (referenceId: string) => {
     const reference = references.get(referenceId); if (!reference) return;
     const dialog = dialogShell(`Search candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
@@ -436,8 +456,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const status = document.createElement('p'); status.textContent = 'Searching your Wasabi root…'; body.appendChild(status); dialog.appendChild(body);
     setSaveState('searching Wasabi candidates…', 'saving');
     try {
-      const response = await fetch(`/api/library/${referenceId}/candidates`, { cache:'no-store' }); const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Candidate search failed');
+      const result = await findWasabiCandidates(referenceId);
       status.textContent = result.expected ? `Expected: ${result.expected} · ${result.scanned} objects inspected` : `${result.scanned} objects inspected`;
       const list = document.createElement('div'); list.className = 'candidate-list'; body.appendChild(list);
       if (!result.candidates?.length) { const empty = document.createElement('p'); empty.className = 'candidate-empty'; empty.textContent = 'No plausible PDF, EPUB, DOCX or TXT candidate was found.'; list.appendChild(empty); }
@@ -448,13 +467,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const path = document.createElement('small'); path.textContent = `${candidate.path} · ${Math.max(1, Math.round(candidate.sizeBytes / 1024))} KB`; copy.append(name,path); row.append(score,copy);
         row.addEventListener('click', async () => {
           row.disabled = true; status.textContent = `Linking ${candidate.filename}…`;
-          const linked = await fetch(`/api/library/${referenceId}/candidates`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ key:candidate.key }) });
-          const linkedResult = await linked.json().catch(() => ({}));
-          if (!linked.ok) { row.disabled = false; status.textContent = linkedResult.error || 'Candidate could not be linked.'; return; }
-          const next = rowFromCatalogReference(linkedResult.reference); upsertRow(next); dialog.close();
-          updateActivity(`candidate-${referenceId}`, { state:'working', referenceId, message:`${candidate.filename} · linked; extracting text and structure` });
-          void followPipeline(referenceId, `candidate-${referenceId}`, candidate.filename);
-          setSaveState('candidate linked; extraction queued');
+          try { await linkWasabiCandidate(referenceId,candidate);dialog.close();setSaveState('candidate linked; extraction queued'); }
+          catch(error){row.disabled=false;status.textContent=error instanceof Error?error.message:'Candidate could not be linked.';}
         });
         list.appendChild(row);
       }
@@ -462,6 +476,19 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : 'Candidate search failed'; setSaveState(status.textContent, 'error');
     }
+  };
+  const searchWasabiForSelection = async (ids:string[],autoSelectFirst:boolean) => {
+    const editableIds=[...new Set(ids)].filter((id)=>references.get(id)?.access!=='viewer');
+    if(!editableIds.length){setSaveState('select at least one editable item','error');return;}
+    if(!autoSelectFirst&&editableIds.length===1){await searchForCandidate(editableIds[0]);return;}
+    if(autoSelectFirst){
+      let linked=0,missing=0,failed=0;setSaveState(`searching Wasabi for ${editableIds.length} items…`,'saving');
+      for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index];const reference=references.get(id);setSaveState(`Wasabi ${index+1}/${editableIds.length} · ${reference?.title||id}`,'saving');try{const result=await findWasabiCandidates(id);const candidate=result.candidates[0];if(!candidate){missing+=1;continue;}await linkWasabiCandidate(id,candidate,{deferRender:true,follow:false});linked+=1;}catch{failed+=1;}}
+      refreshTable();renderTree(search.value);setSaveState(`${linked} linked automatically · ${missing} without match${failed?` · ${failed} failed`:''}`,failed?'error':'ready');return;
+    }
+    const dialog=dialogShell(`Wasabi candidates · ${editableIds.length} selected items`);dialog.classList.add('candidate-dialog');const body=document.createElement('div');body.className='candidate-search';const summary=document.createElement('p');summary.textContent='Searching selected items in Wasabi…';body.appendChild(summary);dialog.appendChild(body);let found=0;
+    for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');heading.textContent=reference?.title||id;const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{await linkWasabiCandidate(id,candidate);section.dataset.linked='true';heading.textContent=`${reference?.title||id} · linked`;setSaveState('candidate linked; extraction queued');}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
+    summary.textContent=`${found} candidates across ${editableIds.length} selected items`;setSaveState(`${found} candidates found`);
   };
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
@@ -3462,7 +3489,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
     addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','Rendered narrations have a blue ▶ in the collection sidebar and a ▶ OGG control in the document toolbar.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
-    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
+    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','W — search Wasabi candidates for selected items','Shift W — link the first Wasabi match automatically','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','z c / z o — fold / unfold current collection','z M / z R — fold / unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF g grid, b book']);
     const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
     const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Kokoro local TTS','beta','Local browser inference with Web Speech fallback'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];
@@ -3491,6 +3518,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (event.key === 'g' || event.key === 'z' || event.key === 'y') {
         event.preventDefault(); shortcutPrefix=event.key; window.clearTimeout(shortcutPrefixTimer); setSaveState(`${event.key} …`);
         shortcutPrefixTimer=window.setTimeout(() => { shortcutPrefix=''; setSaveState('ready'); },1000); return;
+      }
+      if (event.key.toLowerCase() === 'w') {
+        if(event.repeat)return;
+        event.preventDefault();
+        const ids=selectedReferences.size?[...selectedReferences]:activeReference?[activeReference]:[];
+        void searchWasabiForSelection(ids,event.shiftKey);
+        return;
       }
       if (event.key.toLowerCase() === 'r') {
         const activePanelId=api.activePanel?.id;
