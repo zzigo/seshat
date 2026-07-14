@@ -127,6 +127,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let api: DockviewApi;
   let catalogTable: Handsontable | null = null;
+  let syncCatalogContextColumns: (() => void) | null = null;
   let catalogQuery = '';
   let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
@@ -176,6 +177,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     groups.forEach(([fingerprint,rows]) => rows.forEach((row) => fingerprints.set(row.id,fingerprint)));
     return { groups, fingerprints, ids:new Set(fingerprints.keys()) };
   };
+  const libraryPath = (libraryId:string) => {
+    const parts:string[]=[];const visited=new Set<string>();let current=payload.libraries.find((library)=>library.id===libraryId);
+    while(current&&!visited.has(current.id)){visited.add(current.id);parts.unshift(current.name);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}
+    return parts.join(' › ');
+  };
+  const referenceLocations = (reference:ReferenceRow) => {
+    const filedIds=reference.libraryIds.filter((id)=>!isInboxLibraryId(id));
+    if(!filedIds.length)return ['Inbox'];
+    return [...new Set(filedIds.map((id)=>libraryPath(id)||`Unknown collection · ${id}`).filter(Boolean))];
+  };
+  const referenceLocationText = (reference:ReferenceRow) => referenceLocations(reference).join(' · ');
   const computeFilteredRows = () => {
     const query = normalize(catalogQuery);
     const smartFolder = activeSmartFolder ? payload.smartFolders.find((folder) => folder.id === activeSmartFolder) : undefined;
@@ -183,7 +195,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : reference.libraryIds.includes(activeLibrary)))
       && (!smartFolder || referenceMatchesSmartFolder(reference, smartFolder.filters))
       && (!activeKeyword || reference.keywords.includes(activeKeyword))
-      && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status]
+      && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status, referenceLocationText(reference)]
         .some((value) => normalize(value).includes(query))));
     if (activeVirtualFolder === 'duplicates') {
       const snapshot = duplicateSnapshot();
@@ -204,6 +216,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const refreshTable = () => {
     visibleCatalogRows = computeFilteredRows();
     catalogTable?.loadData(visibleCatalogRows);
+    syncCatalogContextColumns?.();
     if (catalogFilterStatus) {
       const groups=activeVirtualFolder==='duplicates'?duplicateSnapshot().groups.length:0;
       catalogFilterStatus.textContent = activeVirtualFolder==='duplicates'
@@ -560,8 +573,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const option=document.createElement('label');option.className='duplicate-merge-option';
       const input=document.createElement('input');input.type='radio';input.name='duplicate-survivor';input.value=reference.id;input.checked=reference.id===suggested.id;
       const copy=document.createElement('span');const title=document.createElement('strong');title.textContent=reference.title||'Untitled';
-      const details=document.createElement('small');details.textContent=[reference.contributorsDisplay,reference.year,reference.type,reference.hasOriginal?reference.filename:'no associated file',`${reference.libraryIds.length} collection${reference.libraryIds.length===1?'':'s'}`].filter(Boolean).join(' · ');
-      copy.append(title,details);option.append(input,copy);list.appendChild(option);
+      const details=document.createElement('small');details.textContent=[reference.contributorsDisplay,reference.year,reference.type,reference.hasOriginal?reference.filename:'no associated file'].filter(Boolean).join(' · ');
+      const location=document.createElement('small');location.className='duplicate-merge-location';location.textContent=`Filed in: ${referenceLocationText(reference)}`;location.title=referenceLocationText(reference);
+      copy.append(title,details,location);option.append(input,copy);list.appendChild(option);
     });
     const note=document.createElement('p');note.className='duplicate-merge-note';note.textContent='The other catalog entries disappear after the transaction. Alternate originals are preserved in Wasabi and will be deleted only if the surviving item is later deleted explicitly.';
     const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const submit=document.createElement('button');submit.type='submit';submit.className='primary';submit.textContent=`Merge ${group.length} items`;footer.append(cancel,submit);
@@ -897,10 +911,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
       td.dataset.state = String(value || '').replaceAll(' ', '-');
     };
+    const filedInRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      const physicalRow=instance.toPhysicalRow(row);const reference=physicalRow>=0?instance.getSourceDataAtRow(physicalRow) as ReferenceRow|undefined:undefined;const location=reference?referenceLocationText(reference):'';
+      td.textContent=location;td.title=location;td.classList.add('filed-in-cell');
+    };
     type CatalogColumn={key:string;group:string;column:Record<string,unknown>;defaultVisible:boolean};
     const coreColumns:CatalogColumn[]=[
       {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',width:300}},
       {key:'persons',group:'Persons',defaultVisible:true,column:{data:'contributorsDisplay',title:'Persons',readOnly:true,className:'contributors-cell',width:260}},
+      {key:'filedIn',group:'System',defaultVisible:false,column:{data:'libraryIds',title:'Filed in',readOnly:true,renderer:filedInRenderer,width:280}},
       {key:'year',group:'Date',defaultVisible:true,column:{data:'year',title:'Year',type:'numeric',width:72}},
       {key:'entryType',group:'Identity',defaultVisible:true,column:{data:'type',title:'Entry type',type:'dropdown',source:[...BIBLATEX_ENTRY_TYPE_VALUES],strict:true,allowInvalid:false,width:150}},
       {key:'publisher',group:'Publication',defaultVisible:true,column:{data:'publisher',title:'Publisher',width:210}},
@@ -923,7 +943,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const visibleColumns=storedVisible||new Set(catalogColumns.filter((item)=>item.defaultVisible).map((item)=>item.key));
     let stickyColumns=Math.max(0,Math.min(2,Number(window.localStorage.getItem(stickyStorageKey)??2)));
     const saveVisibleColumns=()=>window.localStorage.setItem(visibleStorageKey,JSON.stringify([...visibleColumns]));
-    const setColumnVisible=(key:string,visible:boolean)=>{const index=catalogColumns.findIndex((item)=>item.key===key);if(index<0||!catalogTable)return;if(visible){visibleColumns.add(key);catalogTable.getPlugin('hiddenColumns').showColumn(index);}else{visibleColumns.delete(key);catalogTable.getPlugin('hiddenColumns').hideColumn(index);}saveVisibleColumns();catalogTable.render();};
+    const setColumnVisible=(key:string,visible:boolean)=>{const index=catalogColumns.findIndex((item)=>item.key===key);if(index<0||!catalogTable)return;if(visible){visibleColumns.add(key);catalogTable.getPlugin('hiddenColumns').showColumn(index);}else{visibleColumns.delete(key);catalogTable.getPlugin('hiddenColumns').hideColumn(index);}saveVisibleColumns();syncCatalogContextColumns?.();catalogTable.render();};
     const setStickyColumns=(count:number)=>{stickyColumns=count;window.localStorage.setItem(stickyStorageKey,String(count));catalogTable?.updateSettings({fixedColumnsStart:count});setSaveState(count===2?'title and persons fixed':count===1?'title fixed':'fixed columns unlocked');};
     const openCatalogHeaderMenu=(event:MouseEvent)=>{const groups=new Map<string,CatalogColumn[]>();catalogColumns.forEach((item)=>groups.set(item.group,[...(groups.get(item.group)||[]),item]));const fieldGroups:ContextMenuItem[]=[...groups].map(([group,items])=>({label:group,children:items.map((item)=>({label:String(item.column.title||item.key),checked:visibleColumns.has(item.key),action:()=>setColumnVisible(item.key,!visibleColumns.has(item.key))}))}));openContextMenu(event,[{label:'Fields',children:fieldGroups},{label:'Sticky columns',children:[{label:'Title + Persons',checked:stickyColumns===2,action:()=>setStickyColumns(2)},{label:'Title only',checked:stickyColumns===1,action:()=>setStickyColumns(1)},{label:'Unlock both',checked:stickyColumns===0,action:()=>setStickyColumns(0)}]},{label:'Show all fields',action:()=>catalogColumns.forEach((item)=>setColumnVisible(item.key,true))},{label:'Restore default fields',action:()=>catalogColumns.forEach((item)=>setColumnVisible(item.key,item.defaultVisible))}]);};
     let tableHeight = Math.max(180, Math.floor(tableHost.getBoundingClientRect().height || element.getBoundingClientRect().height - filterBar.getBoundingClientRect().height));
@@ -1006,6 +1026,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         syncTreeSelection(); setSaveState(`${selectedReferences.size} selected`);
       },
     });
+    const filedInColumnIndex=catalogColumns.findIndex((item)=>item.key==='filedIn');
+    syncCatalogContextColumns=()=>{if(!catalogTable||filedInColumnIndex<0)return;const hidden=catalogTable.getPlugin('hiddenColumns');if(activeVirtualFolder==='duplicates'||visibleColumns.has('filedIn'))hidden.showColumn(filedInColumnIndex);else hidden.hideColumn(filedInColumnIndex);catalogTable.render();};
+    syncCatalogContextColumns();
     resizeObserver = new ResizeObserver(([entry]) => {
       const nextHeight = Math.floor(entry.contentRect.height);
       if (!catalogTable || nextHeight < 1 || nextHeight === tableHeight) return;
@@ -1013,7 +1036,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       catalogTable.updateSettings({ height: tableHeight });
     });
     resizeObserver.observe(tableHost);
-    if (catalogFilterStatus) catalogFilterStatus.textContent = `${visibleCatalogRows.length} / ${payload.references.length}`;
+    if (catalogFilterStatus) {const groups=activeVirtualFolder==='duplicates'?duplicateSnapshot().groups.length:0;catalogFilterStatus.textContent=activeVirtualFolder==='duplicates'?`${visibleCatalogRows.length} duplicate items · ${groups} groups`:`${visibleCatalogRows.length} / ${payload.references.length}`;}
   };
 
   const panel = (className: string): HTMLElement => {
