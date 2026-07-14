@@ -9,6 +9,8 @@ import {
   isValidIsbn,
   normalizeDoi,
   normalizeBibliographicType,
+  formatPublicationYear,
+  parsePublicationYear,
   type BibliographicItem,
 } from '../src/index.js';
 
@@ -69,6 +71,16 @@ test('prefers stable identifiers for fingerprints', () => {
 
 test('generates portable citekeys', () => {
   assert.equal(generateCiteKey(completeItem), 'clarke2005ways');
+});
+
+test('parses and validates BCE publication years without a year zero', () => {
+  assert.equal(parsePublicationYear('-0350'), -350);
+  assert.equal(parsePublicationYear('350 BCE'), -350);
+  assert.equal(parsePublicationYear('-350'), -350);
+  assert.equal(parsePublicationYear('0'), undefined);
+  assert.equal(formatPublicationYear(-350), '350 BCE');
+  const report = evaluateReferenceHealth({ ...completeItem, issued: { year: -350 } }, '2026-06-30T00:00:00.000Z');
+  assert.equal(report.issues.some((issue) => issue.code === 'implausible-year'), false);
 });
 
 test('reports a complete linked record as healthy', () => {

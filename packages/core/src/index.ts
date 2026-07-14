@@ -6,3 +6,4 @@ export * from './contributors.js';
 export * from './attachment-filename.js';
 export * from './scholarly.js';
 export * from './openalex.js';
+export * from './publication-year.js';

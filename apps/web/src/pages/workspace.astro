@@ -5,6 +5,7 @@ import DropLayer from '../components/DropLayer.astro';
 import { getCatalog, ownerKeyFor } from '../lib/catalog';
 import { referenceFileType } from '../lib/reference-file';
 import { chirpAccessAllowed } from '../lib/chirp-access';
+import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 import '../styles/global.css';
 import 'dockview-core/dist/styles/dockview.css';
 import 'handsontable/styles/handsontable.css';
@@ -18,9 +19,10 @@ const ownerKey = ownerKeyFor(email);
 const chirpEnabled = chirpAccessAllowed(email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
-const [references, libraries, keywordStyleRows] = await Promise.all([
+const [references, libraries, keywordStyleRows, zoteroStatus] = await Promise.all([
   catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey),
   catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
+  getZoteroConnectionStatus(ownerKey),
 ]);
 const keywordList = (source: any): string[] => {
   const raw = source?.keywords ?? source?.bibtex?.keywords ?? [];
@@ -102,6 +104,7 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
           <button type="button" data-open-tool="agent">AI agent</button>
           <button type="button" data-open-tool="graph">Knowledge Graph</button>
           <button type="button" data-open-tool="search">Corpus Search</button>
+          {zoteroStatus.connected && <button type="button" data-zotero-sync title="Pull and push changes through the Zotero Web API">Sync Zotero</button>}
         </nav>
         <div class="workspace-session">
           <button type="button" data-toggle-theme title="Toggle dark/light theme" style="border:0; background:transparent; font-size:13px; color:var(--muted); cursor:pointer; padding:0 8px;">☼</button>

@@ -34,6 +34,12 @@ test('maps Zotero data without leaking its schema into the core model', () => {
   assert.equal(item.source.version, 7);
 });
 
+test('preserves signed and BCE dates from Zotero', () => {
+  const signed = structuredClone(rawBook); signed.data.date = '-0350'; signed.data.title = 'Physics';
+  const item = mapZoteroItem({ item: signed, libraryType: 'users', libraryId: '42', importedAt: '2026-06-30T00:00:00Z' });
+  assert.equal(item.issued?.year, -350);
+});
+
 test('paginates a selected Zotero collection', async () => {
   const calls: string[] = [];
   const fetcher: typeof fetch = async (input) => {

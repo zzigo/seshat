@@ -1,5 +1,6 @@
 import { bibliographicFingerprint, isValidDoi, isValidIsbn } from './identifiers.js';
 import type { BibliographicItem, HealthIssue, HealthReport } from './types.js';
+import { isValidPublicationYear } from './publication-year.js';
 
 const COST = {
   error: 30,
@@ -33,7 +34,7 @@ export function evaluateReferenceHealth(
 
   if (!item.issued?.year) {
     issues.push(issue('missing-year', 'warning', 'No publication year is recorded.', 'issued.year'));
-  } else if (item.issued.year < 1000 || item.issued.year > new Date().getUTCFullYear() + 1) {
+  } else if (!isValidPublicationYear(item.issued.year)) {
     issues.push(issue('implausible-year', 'error', `Publication year ${item.issued.year} is implausible.`, 'issued.year'));
   }
 

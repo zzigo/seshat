@@ -1,4 +1,4 @@
-import { BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, isValidIsbn, normalizeContributors, normalizeIsbn } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, isValidIsbn, isValidPublicationYear, normalizeContributors, normalizeIsbn, parsePublicationYear } from '@seshat/core';
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { zoteroStyleAttachmentName } from '../../../../lib/attachment-filename';
@@ -31,9 +31,9 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const contributors = normalizeContributors(contributorInput);
 
   const yearText = text(form.get('year'));
-  const year = yearText ? Number(yearText) : null;
-  if (year !== null && (!Number.isInteger(year) || year < 1 || year > 2100)) {
-    return Response.json({ error: 'Year must be between 1 and 2100.' }, { status: 400 });
+  const year = yearText ? parsePublicationYear(yearText) : null;
+  if (yearText && (year === undefined || !isValidPublicationYear(year, 2100))) {
+    return Response.json({ error: 'Use a year from -9999 to 2100; negative years are BCE and year 0 is not used.' }, { status: 400 });
   }
 
   const rawIsbns = text(form.get('isbns')).split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean);
@@ -85,7 +85,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   markChanged('citeKey', current.citeKey || '', citeKey);
   markChanged('type', current.type || '', type);
   markChanged('contributors', JSON.stringify(current.contributors || []), JSON.stringify(contributors));
-  markChanged('issued', currentYear, year === null ? '' : String(year));
+  markChanged('issued', currentYear, year == null ? '' : String(year));
   markChanged('identifiers', currentIsbns, isbns.join('\n'));
   markChanged('tags', (current.tags || []).join('\n'), tags.join('\n'));
   markChanged('abstract', current.abstract || '', abstract);
@@ -99,7 +99,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
     citeKey,
     type,
     contributors,
-    issued: year === null ? undefined : { year },
+    issued: year == null ? undefined : { year },
     identifiers: { ...current.identifiers, isbn: isbns },
     tags,
     abstract: abstract || undefined,

@@ -793,7 +793,7 @@ export class PostgresCatalog {
       ),
       this.pool.query(
         `SELECT (issued->>'year')::int AS year,count(*)::int AS count FROM catalog_references
-         WHERE owner_key=$1 AND (issued->>'year') ~ '^[0-9]{4}$'
+         WHERE owner_key=$1 AND (issued->>'year') ~ '^-?[0-9]{1,4}$' AND (issued->>'year')::int <> 0
          GROUP BY year ORDER BY year`, [ownerKey],
       ),
       this.pool.query(

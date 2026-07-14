@@ -2,7 +2,7 @@ import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
-import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, type Contributor } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, parsePublicationYear, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -610,7 +610,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     filter.addEventListener('input', () => {
       catalogQuery = filter.value;
       window.clearTimeout(filterTimer);
-      filterTimer = window.setTimeout(refreshTable, 160);
+      const selectionStart=filter.selectionStart;const selectionEnd=filter.selectionEnd;
+      filterTimer = window.setTimeout(()=>{refreshTable();window.requestAnimationFrame(()=>{if(!filter.isConnected)return;filter.focus({preventScroll:true});if(selectionStart!==null&&selectionEnd!==null)filter.setSelectionRange(selectionStart,selectionEnd);});},160);
     });
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     element.classList.toggle('ht-theme-main-dark-mode', isDark);
@@ -2728,7 +2729,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const field = (labelText: string, key: keyof Pick<ReferenceRow,'title'|'citeKey'|'year'|'language'|'publisher'|'publisherPlace'|'url'|'abstract'|'isbn'>) => {
       const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = labelText;
       const input = key==='abstract'?document.createElement('textarea'):document.createElement('input'); input.value = String(row[key] || ''); input.disabled = row.access === 'viewer';
-      input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (Number(input.value) || input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
+      if(key==='year'){input.inputMode='text';input.placeholder='e.g. 2024 or -350';input.title='Negative years represent BCE; year 0 is not used.';}
+      input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (parsePublicationYear(input.value) ?? input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
       label.append(caption,input); form.appendChild(label);
     };
     const biblatexField=(definition:(typeof BIBLATEX_FIELD_OPTIONS)[number])=>{const coreKey=definition.key==='location'?'publisherPlace':definition.key;const core=new Set(['title','year','language','publisher','publisherPlace','url','abstract','isbn']);if(core.has(coreKey)){field(definition.label,coreKey as any);return;}const label=document.createElement('label');label.className='property-field';const caption=document.createElement('span');caption.textContent=definition.label;const input=['note','annotation'].includes(definition.key)?document.createElement('textarea'):document.createElement('input');input.value=row.bibliographicFields[definition.key]||'';input.disabled=row.access==='viewer';input.addEventListener('change',()=>{const value=input.value.trim();if(value)row.bibliographicFields[definition.key]=value;else delete row.bibliographicFields[definition.key];refreshTable();scheduleSave(row);});label.append(caption,input);form.appendChild(label);};
@@ -3640,5 +3642,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const kind = button.dataset.openTool as ToolKind;
     controller.openTool(kind, kind === 'graph' ? null : undefined);
   }));
+  root.querySelector<HTMLButtonElement>('[data-zotero-sync]')?.addEventListener('click',async(event)=>{
+    const button=event.currentTarget as HTMLButtonElement;const original=button.textContent||'Sync Zotero';button.disabled=true;button.textContent='Syncing…';setSaveState('synchronizing Zotero…','saving');
+    try{
+      const response=await fetch('/api/zotero/sync-now',{method:'POST'});const result=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(result.error==='ZOTERO_SYNC_IN_PROGRESS'?'Zotero sync is already running':result.error||'Zotero sync failed');
+      const processed=Number(result.pulled?.items||0)+Number(result.pushed?.items||0);setSaveState(`Zotero synchronized · ${processed} item${processed===1?'':'s'} processed`);button.textContent='Synced';window.setTimeout(()=>window.location.reload(),900);
+    }catch(error){button.disabled=false;button.textContent=original;setSaveState(error instanceof Error?error.message:'Zotero sync failed','error');}
+  });
   renderTree(); renderKeywordCloud(); renderProperties(activeReference);
 }

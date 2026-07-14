@@ -6,6 +6,7 @@ import {
   type ZoteroItemData,
   type ZoteroProvider,
 } from '@seshat/zotero';
+import { parsePublicationYear } from '@seshat/core';
 import { getCatalog } from './catalog';
 import { getZoteroConnection, updateZoteroSyncState, zoteroProviderFor } from './zotero-connection';
 
@@ -89,7 +90,7 @@ const fetchAll = async <T>(page: (start: number) => Promise<{ objects: T[]; tota
 
 const normalizedTitleYear = (title: unknown, issued: any): string => {
   const normalized = String(title || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const year = Number(issued?.year || String(issued?.literal || '').match(/\d{4}/)?.[0]) || 0;
+  const year = parsePublicationYear(issued?.year ?? issued?.literal) || 0;
   return normalized && year ? `${normalized}\0${year}` : '';
 };
 

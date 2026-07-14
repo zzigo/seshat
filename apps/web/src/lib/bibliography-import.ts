@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { HeadObjectCommand, type HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import type { CatalogBibliographyInput } from '@seshat/catalog';
-import { BIBLATEX_FIELD_KEYS, normalizeBibliographicType, type Contributor } from '@seshat/core';
+import { BIBLATEX_FIELD_KEYS, normalizeBibliographicType, parsePublicationYear, type Contributor } from '@seshat/core';
 import { mapBibAttachment, type BibliographyAttachmentPath, type SeshatUserIdentity } from './bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from './wasabi';
 
@@ -80,7 +80,7 @@ export const catalogInputForBibEntry = (
     ...people('commentator','commentator'),...people('annotator','annotator'),...people('introduction','introduction'),
     ...people('foreword','foreword'),...people('afterword','afterword'),
   ];
-  const year = Number(String(fields.year || fields.date || '').match(/\d{4}/)?.[0]) || undefined;
+  const year = parsePublicationYear(fields.year || fields.date);
   const isbn = literal(fields.isbn).split(/[;,\s]+/).filter(Boolean);
   const doi = literal(fields.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
   const input = String(entry.input || JSON.stringify(entry));

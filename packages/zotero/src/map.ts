@@ -2,6 +2,7 @@ import {
   generateCiteKey,
   normalizeDoi,
   normalizeIsbn,
+  parsePublicationYear,
   type BibliographicItem,
   type BibliographicType,
   type Contributor,
@@ -61,10 +62,7 @@ function mapCreator(creator: ZoteroCreator): Contributor {
 }
 
 function yearFromDate(value?: string): number | undefined {
-  const match = value?.match(/(?:^|\D)(-?\d{4})(?:\D|$)/);
-  if (!match) return undefined;
-  const year = Number(match[1]);
-  return Number.isFinite(year) ? year : undefined;
+  return parsePublicationYear(value);
 }
 
 function splitIdentifiers(value?: string): string[] | undefined {
