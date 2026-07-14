@@ -1,17 +1,6 @@
-import { potentialDuplicateFingerprint, type BibliographicItem } from '@seshat/core';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
-
-const fingerprintFor = (reference: any): string | undefined => {
-  const identifiers = reference.identifiers && typeof reference.identifiers === 'object' ? { ...reference.identifiers } : {};
-  identifiers.doi ||= reference.source?.biblatexFields?.doi || reference.source?.bibtex?.doi;
-  return potentialDuplicateFingerprint({
-    title: String(reference.title || ''),
-    issued: reference.issued && typeof reference.issued === 'object' ? reference.issued : undefined,
-    contributors: Array.isArray(reference.contributors) ? reference.contributors : [],
-    identifiers,
-  } as Pick<BibliographicItem, 'title' | 'issued' | 'contributors' | 'identifiers'>);
-};
+import { referencesShareDuplicateEvidence } from '../../../lib/duplicate-match';
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
@@ -26,11 +15,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const catalog = getCatalog();
   const ownerKey = ownerKeyFor(email);
   const references = await Promise.all([keepId, ...duplicateIds].map((id) => catalog.get(ownerKey, id)));
-  if (references.some((reference) => !reference || reference.access !== 'owner')) {
+  const ownedReferences = references.filter((reference): reference is NonNullable<typeof reference> => Boolean(reference && reference.access === 'owner'));
+  if (ownedReferences.length !== references.length) {
     return Response.json({ error: 'reference_not_found' }, { status: 404 });
   }
-  const fingerprints = references.map(fingerprintFor);
-  if (!fingerprints[0] || fingerprints.some((fingerprint) => fingerprint !== fingerprints[0])) {
+  if (!referencesShareDuplicateEvidence(ownedReferences)) {
     return Response.json({ error: 'items_are_not_one_duplicate_group' }, { status: 409 });
   }
 
