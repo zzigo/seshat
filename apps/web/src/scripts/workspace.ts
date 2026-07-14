@@ -1243,7 +1243,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       };
       const goToPage = (page: unknown) => {
         const target = Number(page); if (!Number.isFinite(target) || target < 1) return;
-        controller.openDocument(referenceId); navigatePdfToPage(referenceId, target);
+        const documentElement=[...root.querySelectorAll<HTMLElement>('.document-pod[data-reference-id]')].find((candidate)=>candidate.dataset.referenceId===referenceId);
+        const documentPanel=documentElement?.dataset.panelId?api.getPanel(documentElement.dataset.panelId):undefined;
+        if(documentPanel){documentPanel.api.setActive();if(isPhoneLayout()){closePhoneAuxiliaryPanels(documentPanel.id);maximizePhonePanel(documentPanel.id);}window.setTimeout(()=>navigatePdfToPage(referenceId,target),0);}
+        else{controller.openDocument(referenceId);navigatePdfToPage(referenceId,target);}
       };
       const legend = document.createElement('div'); legend.className = 'structure-legend';
       for (const kind of ['paragraph', 'formula', 'picture', 'table']) {
@@ -1262,7 +1265,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const kind = block.kind || 'paragraph'; const marker = document.createElement('button'); marker.type = 'button';
           marker.className = `structure-block structure-block-${kind}`; marker.textContent = icons[kind] || '□';
           marker.title = `${labels[kind] || block.label || kind}${block.page ? ` · p. ${block.page}` : ''}${block.text ? ` · ${block.text.slice(0, 120)}` : ''}`;
-          marker.setAttribute('aria-label', marker.title); marker.disabled = !block.page; marker.addEventListener('click', () => goToPage(block.page)); rail.appendChild(marker);
+          marker.setAttribute('aria-label', marker.title); marker.disabled = !block.page; marker.addEventListener('click', (event) => { event.stopPropagation(); goToPage(block.page); }); rail.appendChild(marker);
         }
         return rail;
       };
@@ -1403,7 +1406,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const derivativeRenderer = (referenceId: string, kind: 'text' | 'structure', panelId?:string): IContentRenderer => {
     const element = panel(`${kind}-pod`);
-    return { element, init() { const header=document.createElement('header');header.className='pod-heading';header.innerHTML=`<div><div class="eyebrow">Document</div><h2>${kind==='text'?'Text':'Structure'}</h2></div>`;addMobileCloseButton(header,panelId);element.appendChild(header);void mountText(element, referenceId, kind === 'text' ? 'markdown' : 'structure'); } };
+    return { element, init() { if(kind==='structure'){const mobileActions=document.createElement('div');mobileActions.className='structure-mobile-actions';addMobileCloseButton(mobileActions,panelId);element.appendChild(mobileActions);}else{const header=document.createElement('header');header.className='pod-heading';header.innerHTML='<div><div class="eyebrow">Document</div><h2>Text</h2></div>';addMobileCloseButton(header,panelId);element.appendChild(header);}void mountText(element, referenceId, kind === 'text' ? 'markdown' : 'structure'); } };
   };
 
   const maximizePhonePanel=(panelId:string)=>{if(!isPhoneLayout())return;root.classList.remove('properties-open');root.classList.add('mobile-focus-mode');window.setTimeout(()=>{const target=api.getPanel(panelId);if(!target)return;if(api.hasMaximizedGroup())api.exitMaximizedGroup();target.api.setActive();api.maximizeGroup(target);window.dispatchEvent(new Event('resize'));},0);};
