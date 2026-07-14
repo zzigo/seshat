@@ -35,7 +35,7 @@ test('maps Zotero data without leaking its schema into the core model', () => {
 });
 
 test('preserves signed and BCE dates from Zotero', () => {
-  const signed = structuredClone(rawBook); signed.data.date = '-0350'; signed.data.title = 'Physics';
+  const signed = structuredClone(rawBook); signed.data.date = '0350-00-00 -350'; signed.data.title = 'Physics';
   const item = mapZoteroItem({ item: signed, libraryType: 'users', libraryId: '42', importedAt: '2026-06-30T00:00:00Z' });
   assert.equal(item.issued?.year, -350);
 });

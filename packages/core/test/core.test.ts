@@ -75,6 +75,7 @@ test('generates portable citekeys', () => {
 
 test('parses and validates BCE publication years without a year zero', () => {
   assert.equal(parsePublicationYear('-0350'), -350);
+  assert.equal(parsePublicationYear('0350-00-00 -350'), -350);
   assert.equal(parsePublicationYear('350 BCE'), -350);
   assert.equal(parsePublicationYear('-350'), -350);
   assert.equal(parsePublicationYear('0'), undefined);
