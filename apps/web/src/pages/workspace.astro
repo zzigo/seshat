@@ -19,7 +19,7 @@ const chirpEnabled = chirpAccessAllowed(email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
 const [references, libraries, keywordStyleRows] = await Promise.all([
-  catalog.list(ownerKey, 200), catalog.listLibraries(ownerKey),
+  catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey),
   catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
 ]);
 const keywordList = (source: any): string[] => {

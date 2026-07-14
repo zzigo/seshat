@@ -596,6 +596,29 @@ const mapReference = (row: any, artifacts: CatalogArtifact[] = [], jobs: Catalog
   access: row.access === 'viewer' ? 'viewer' : 'owner',
 });
 
+const mapArtifact = (artifact: any): CatalogArtifact => ({
+  id: artifact.id,
+  kind: artifact.kind,
+  provider: artifact.provider,
+  objectKey: artifact.object_key,
+  bucket: artifact.bucket ?? undefined,
+  mimeType: artifact.mime_type ?? undefined,
+  sizeBytes: Number(artifact.size_bytes),
+  sha256: artifact.sha256,
+  etag: artifact.etag ?? undefined,
+  createdAt: new Date(artifact.created_at).toISOString(),
+});
+
+const mapJob = (job: any): CatalogJob => ({
+  id: job.id,
+  stage: job.stage,
+  status: job.status,
+  attempts: job.attempts,
+  error: job.error ?? undefined,
+  createdAt: new Date(job.created_at).toISOString(),
+  updatedAt: new Date(job.updated_at).toISOString(),
+});
+
 const mapPaper=(row:any):CatalogPaperRecord => ({referenceId:row.reference_id,ownerKey:row.owner_key,documentId:row.document_id,fileHash:row.file_hash,title:row.title||'',normalizedTitle:row.normalized_title||'',extractedMetadata:row.extracted_metadata||{},extractedReferences:row.extracted_references||[],doi:row.doi||undefined,openAlexId:row.openalex_id||undefined,resolutionStatus:row.resolution_status||'unresolved',resolutionMethod:row.resolution_method||'none',resolutionConfidence:Number(row.resolution_confidence||0),candidates:row.candidates||[],openAlexWork:row.openalex_work||undefined,expansion:row.expansion||{},provenance:row.provenance||{},createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()});
 
 export class PostgresCatalog {
@@ -890,9 +913,25 @@ export class PostgresCatalog {
          WHERE visible.reference_id=r.id
        )
        GROUP BY r.id ORDER BY r.updated_at DESC LIMIT $2`,
-      [ownerKey, Math.max(1, Math.min(200, limit))],
+      [ownerKey, Math.max(1, Math.min(10_000, limit))],
     );
-    return Promise.all(result.rows.map((row) => this.hydrate(row, ownerKey)));
+    if (!result.rows.length) return [];
+    const ids = result.rows.map((row) => row.id);
+    const [artifactRows, jobRows] = await Promise.all([
+      this.pool.query('SELECT * FROM catalog_artifacts WHERE reference_id=ANY($1::uuid[]) ORDER BY created_at', [ids]),
+      this.pool.query('SELECT * FROM catalog_jobs WHERE reference_id=ANY($1::uuid[]) ORDER BY created_at', [ids]),
+    ]);
+    const artifactsByReference = new Map<string, CatalogArtifact[]>();
+    for (const row of artifactRows.rows) {
+      const values = artifactsByReference.get(row.reference_id) || [];
+      values.push(mapArtifact(row)); artifactsByReference.set(row.reference_id, values);
+    }
+    const jobsByReference = new Map<string, CatalogJob[]>();
+    for (const row of jobRows.rows) {
+      const values = jobsByReference.get(row.reference_id) || [];
+      values.push(mapJob(row)); jobsByReference.set(row.reference_id, values);
+    }
+    return result.rows.map((row) => mapReference(row, artifactsByReference.get(row.id) || [], jobsByReference.get(row.id) || []));
   }
 
   async replaceChunks(referenceId: string, ownerKey: string, chunks: CatalogChunkInput[]): Promise<void> {
@@ -1757,27 +1796,8 @@ export class PostgresCatalog {
         [row.id, viewerOwnerKey],
       ) : this.pool.query('SELECT library_id FROM catalog_library_items WHERE reference_id = $1 ORDER BY added_at', [row.id]),
     ]);
-    const artifacts = artifactRows.rows.map((artifact): CatalogArtifact => ({
-      id: artifact.id,
-      kind: artifact.kind,
-      provider: artifact.provider,
-      objectKey: artifact.object_key,
-      bucket: artifact.bucket ?? undefined,
-      mimeType: artifact.mime_type ?? undefined,
-      sizeBytes: Number(artifact.size_bytes),
-      sha256: artifact.sha256,
-      etag: artifact.etag ?? undefined,
-      createdAt: new Date(artifact.created_at).toISOString(),
-    }));
-    const jobs = jobRows.rows.map((job): CatalogJob => ({
-      id: job.id,
-      stage: job.stage,
-      status: job.status,
-      attempts: job.attempts,
-      error: job.error ?? undefined,
-      createdAt: new Date(job.created_at).toISOString(),
-      updatedAt: new Date(job.updated_at).toISOString(),
-    }));
+    const artifacts = artifactRows.rows.map(mapArtifact);
+    const jobs = jobRows.rows.map(mapJob);
     return mapReference({ ...row, library_ids: libraryRows.rows.map((item) => item.library_id) }, artifacts, jobs);
   }
 }
