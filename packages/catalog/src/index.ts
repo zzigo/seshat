@@ -918,8 +918,8 @@ export class PostgresCatalog {
     if (!result.rows.length) return [];
     const ids = result.rows.map((row) => row.id);
     const [artifactRows, jobRows] = await Promise.all([
-      this.pool.query('SELECT * FROM catalog_artifacts WHERE reference_id=ANY($1::uuid[]) ORDER BY created_at', [ids]),
-      this.pool.query('SELECT * FROM catalog_jobs WHERE reference_id=ANY($1::uuid[]) ORDER BY created_at', [ids]),
+      this.pool.query('SELECT * FROM catalog_artifacts WHERE reference_id=ANY($1::text[]) ORDER BY created_at', [ids]),
+      this.pool.query('SELECT * FROM catalog_jobs WHERE reference_id=ANY($1::text[]) ORDER BY created_at', [ids]),
     ]);
     const artifactsByReference = new Map<string, CatalogArtifact[]>();
     for (const row of artifactRows.rows) {
