@@ -430,18 +430,21 @@ const pushItems = async (input: {
   return pushed;
 };
 
-export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion: number): Promise<ZoteroSyncResult> => {
-  const connection = await getZoteroConnection(ownerKey);
-  if (!connection?.libraryId || !connection.syncMode) throw new Error('ZOTERO_NOT_CONNECTED');
-  const provider = await zoteroProviderFor(ownerKey);
+export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: number): Promise<ZoteroSyncResult> => {
+  const catalog = getCatalog(); const lockClient = await catalog.pool.connect(); const lockName = `seshat:zotero:${ownerKey}`;
+  const locked = await lockClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [lockName]);
+  if (!locked.rows[0]?.locked) { lockClient.release(); throw new Error('ZOTERO_SYNC_IN_PROGRESS'); }
   try {
+    const connection = await getZoteroConnection(ownerKey);
+    if (!connection?.libraryId || !connection.syncMode) throw new Error('ZOTERO_NOT_CONNECTED');
+    const provider = await zoteroProviderFor(ownerKey);
     const [collectionSnapshot, itemSnapshot] = await Promise.all([
       fetchAll((start) => provider.collectionPage(start, 100)),
       fetchAll((start) => provider.itemPage(start, 100, true)),
     ]);
     const bibliographicItems = itemSnapshot.objects.filter((item) => item.data.itemType !== 'attachment' && item.data.itemType !== 'note');
     const libraryVersion = Math.max(collectionSnapshot.libraryVersion, itemSnapshot.libraryVersion);
-    if (!Number.isFinite(confirmedLibraryVersion) || confirmedLibraryVersion !== libraryVersion) {
+    if (confirmedLibraryVersion !== undefined && (!Number.isFinite(confirmedLibraryVersion) || confirmedLibraryVersion !== libraryVersion)) {
       throw new Error(`ZOTERO_PREVIEW_STALE:${libraryVersion}`);
     }
     const rootLibraryId = await ensureZoteroRoot(ownerKey);
@@ -477,5 +480,8 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion: n
     const message = error instanceof Error ? error.message : 'ZOTERO_SYNC_FAILED';
     await updateZoteroSyncState(ownerKey, { error: message }).catch(() => undefined);
     throw error;
+  } finally {
+    await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]).catch(() => undefined);
+    lockClient.release();
   }
 };

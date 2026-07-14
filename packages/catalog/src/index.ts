@@ -487,6 +487,10 @@ const schema = `
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   );
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS continuous_sync boolean NOT NULL DEFAULT true;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS sync_interval_minutes integer NOT NULL DEFAULT 15;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS last_checked_at timestamptz;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS sync_started_at timestamptz;
   CREATE TABLE IF NOT EXISTS catalog_zotero_collections (
     owner_key text NOT NULL,
     zotero_key text NOT NULL,

@@ -94,6 +94,7 @@ Google Chirp uses Application Default Credentials on the server. Its usage table
 |---|---|---:|---|
 | `seshat-web` | `apps/web/dist/server/entry.mjs` | 500 MiB | `HOST=127.0.0.1`, `PORT=4331`, production `AUTH_URL` |
 | `seshat-worker` | `apps/worker/dist/index.js` | 2 GiB | production Python path and `qwen3:1.7b` |
+| `seshat-zotero-sync` | `scripts/zotero-sync-daemon.ts` via `tsx` | 500 MiB | encrypted Zotero credentials and version-aware continuous sync |
 
 Important: use `pm2 startOrReload ecosystem.config.cjs --only ... --update-env` after changing `.env`. A plain `pm2 restart --update-env` does not necessarily re-evaluate the JavaScript config and reload newly added keys.
 

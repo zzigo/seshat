@@ -77,16 +77,22 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
     <section class="dashboard-panel zotero-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)}>
       <header>
         <div><span>Bibliography bridge</span><h2>Zotero synchronization</h2></div>
-        <small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · connected` : 'not connected'}</small>
+        <small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · ${zoteroStatus.continuousSync === false ? 'connected' : 'continuous sync'}` : 'not connected'}</small>
       </header>
       <form data-zotero-form>
-        <label class="zotero-key-field"><span>Zotero API key</span><input type="password" name="apiKey" autocomplete="off" placeholder={zoteroStatus.connected ? 'Stored securely — leave blank to keep it' : 'Paste a library API key'} /></label>
+        <label class="zotero-key-field"><span>Zotero API key</span><input type="password" name="apiKey" autocomplete="off" placeholder={zoteroStatus.connected ? 'Leave blank to keep the stored key' : 'Paste a library API key'} /><small class="zotero-credential-state" data-zotero-credential data-stored={String(zoteroStatus.apiKeyStored)}>{zoteroStatus.apiKeyStored ? '● key stored encrypted on the server' : 'No key stored'}</small></label>
         <label><span>Direction</span><select name="syncMode">
           <option value="bidirectional" selected={zoteroStatus.syncMode === 'bidirectional' || !zoteroStatus.syncMode}>Bidirectional · read + write</option>
           <option value="pull" selected={zoteroStatus.syncMode === 'pull'}>Pull from Zotero</option>
           <option value="push" selected={zoteroStatus.syncMode === 'push'}>Push to Zotero</option>
         </select></label>
         <label class="zotero-analysis-check"><input type="checkbox" name="analyzeAutomatically" checked={zoteroStatus.analyzeAutomatically !== false} /><span><b>Analyze linked files automatically</b><small>Turn off before a massive first synchronization.</small></span></label>
+        <div class="zotero-sync-schedule">
+          <label class="zotero-continuous-check"><input type="checkbox" name="continuousSync" checked={zoteroStatus.continuousSync !== false} /><span><b>Continuous synchronization</b><small>The key remains encrypted on the server; this page does not need to stay open.</small></span></label>
+          <label><span>Check Zotero every</span><select name="syncIntervalMinutes">
+            {[5, 15, 30, 60].map((minutes) => <option value={minutes} selected={(zoteroStatus.syncIntervalMinutes || 15) === minutes}>{minutes} minutes</option>)}
+          </select></label>
+        </div>
         <div class="zotero-actions">
           <button class="button primary" type="submit">Test & save</button>
           <button class="button quiet" type="button" data-zotero-preview disabled={!zoteroStatus.connected}>Preview sync</button>
@@ -99,7 +105,7 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
         <div><span>Local scope</span><strong>Zotero/</strong><small>Only this metafolder participates in remote writes.</small></div>
         <div><span>Binary originals</span><strong>Wasabi</strong><small>Zotero sync changes metadata, collections and membership.</small></div>
         <div><span>Deletion policy</span><strong>Non-destructive</strong><small>No automatic remote or local deletions.</small></div>
-        <div><span>Last synchronization</span><strong>{zoteroStatus.lastSyncedAt ? new Date(zoteroStatus.lastSyncedAt).toLocaleString() : 'Never'}</strong><small>{zoteroStatus.libraryVersion ? `library version ${zoteroStatus.libraryVersion}` : 'Preview required before first sync'}</small></div>
+        <div><span>Last synchronization</span><strong>{zoteroStatus.lastSyncedAt ? new Date(zoteroStatus.lastSyncedAt).toLocaleString() : 'Never'}</strong><small>{zoteroStatus.libraryVersion ? `library version ${zoteroStatus.libraryVersion}${zoteroStatus.lastCheckedAt ? ` · checked ${new Date(zoteroStatus.lastCheckedAt).toLocaleString()}` : ''}` : 'Preview required before first sync'}</small></div>
       </div>
       <div class="zotero-preview" data-zotero-preview-result hidden></div>
     </section>
@@ -190,14 +196,15 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       const previewButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-preview]')!;
       const syncButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-sync]')!;
       const disconnectButton=zoteroRoot.querySelector<HTMLButtonElement>('[data-zotero-disconnect]')!;
+      const credentialState=zoteroRoot.querySelector<HTMLElement>('[data-zotero-credential]')!;
       const previewResult=zoteroRoot.querySelector<HTMLElement>('[data-zotero-preview-result]')!;
       let previewVersion=0;
       const busy=(value:boolean)=>{[...form.querySelectorAll<HTMLButtonElement>('button')].forEach((button)=>button.disabled=value);if(!value){previewButton.disabled=zoteroRoot.dataset.connected!=='true';syncButton.disabled=!previewVersion;}};
       form.addEventListener('submit',async(event)=>{
         event.preventDefault();busy(true);output.value='Verifying Zotero permissions…';
-        const data=new FormData(form);const body={apiKey:String(data.get('apiKey')||''),syncMode:String(data.get('syncMode')||'bidirectional'),analyzeAutomatically:data.get('analyzeAutomatically')==='on'};
+        const data=new FormData(form);const body={apiKey:String(data.get('apiKey')||''),syncMode:String(data.get('syncMode')||'bidirectional'),analyzeAutomatically:data.get('analyzeAutomatically')==='on',continuousSync:data.get('continuousSync')==='on',syncIntervalMinutes:Number(data.get('syncIntervalMinutes')||15)};
         const response=await fetch('/api/zotero/connection',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));
-        if(response.ok){zoteroRoot.dataset.connected='true';state.textContent=`${result.username} · connected`;previewButton.disabled=false;disconnectButton.hidden=false;form.querySelector<HTMLInputElement>('[name=apiKey]')!.value='';output.value='Connection saved. Run Preview before synchronizing.';}
+        if(response.ok){zoteroRoot.dataset.connected='true';state.textContent=`${result.username} · ${result.continuousSync?'continuous sync':'connected'}`;previewButton.disabled=false;disconnectButton.hidden=false;form.querySelector<HTMLInputElement>('[name=apiKey]')!.value='';credentialState.textContent='● key stored encrypted on the server';credentialState.dataset.stored='true';output.value=result.continuousSync?'Connection saved. Continuous synchronization is active.':'Connection saved. Run Preview before synchronizing.';}
         else output.value=result.error||'Zotero connection failed.';busy(false);
       });
       previewButton.addEventListener('click',async()=>{
@@ -217,7 +224,7 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
       });
       disconnectButton.addEventListener('click',async()=>{
         if(!confirm('Disconnect Zotero? Mirrored Seshat items and folders will remain.'))return;busy(true);
-        const response=await fetch('/api/zotero/connection',{method:'DELETE'});if(response.ok){zoteroRoot.dataset.connected='false';state.textContent='not connected';disconnectButton.hidden=true;previewVersion=0;output.value='Zotero disconnected. Mirrored data was preserved.';}else output.value='Could not disconnect Zotero.';busy(false);
+        const response=await fetch('/api/zotero/connection',{method:'DELETE'});if(response.ok){zoteroRoot.dataset.connected='false';state.textContent='not connected';credentialState.textContent='No key stored';credentialState.dataset.stored='false';disconnectButton.hidden=true;previewVersion=0;output.value='Zotero disconnected. Mirrored data was preserved.';}else output.value='Could not disconnect Zotero.';busy(false);
       });
     }
 
@@ -254,7 +261,7 @@ const number = (value: number) => new Intl.NumberFormat('en').format(value);
 </style>
 
 <style>
-  .zotero-panel{margin:22px 0}.zotero-panel form{display:grid;grid-template-columns:minmax(280px,1.4fr) minmax(190px,.6fr);gap:12px;padding:16px}.zotero-panel form>label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.zotero-panel input[type=password],.zotero-panel select{width:100%;height:38px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:10px monospace}.zotero-analysis-check{grid-column:1/-1!important;grid-template-columns:auto 1fr!important;align-items:start;padding:9px;border:1px solid var(--line);text-transform:none!important}.zotero-analysis-check input{margin-top:3px;accent-color:var(--green)}.zotero-analysis-check b,.zotero-analysis-check small{display:block}.zotero-analysis-check b{color:var(--ink);font-size:9px}.zotero-analysis-check small{margin-top:3px;font-size:8px}.zotero-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.zotero-panel output{grid-column:1/-1;min-height:16px;color:var(--green);font:9px/1.4 monospace}.zotero-contract,.zotero-preview{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--ink)}.zotero-contract>div,.zotero-preview>article{min-height:92px;padding:12px;border-right:1px solid var(--line)}.zotero-contract span,.zotero-preview span{display:block;color:var(--muted);font:7px monospace;text-transform:uppercase}.zotero-contract strong,.zotero-preview strong{display:block;margin:8px 0 5px;font:15px monospace}.zotero-preview strong{font:27px Georgia,serif}.zotero-contract small,.zotero-preview small{display:block;color:var(--muted);font:8px/1.4 monospace}.zotero-preview{grid-template-columns:repeat(5,1fr);border-top:1px dashed var(--ink)}@media(max-width:760px){.zotero-panel form{grid-template-columns:1fr}.zotero-contract,.zotero-preview{grid-template-columns:1fr 1fr}.zotero-contract>div,.zotero-preview>article{border-bottom:1px solid var(--line)}}
+  .zotero-panel{margin:22px 0}.zotero-panel form{display:grid;grid-template-columns:minmax(280px,1.4fr) minmax(190px,.6fr);gap:12px;padding:16px}.zotero-panel form>label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.zotero-panel input[type=password],.zotero-panel select{width:100%;height:38px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:10px monospace}.zotero-credential-state{color:var(--muted);font:8px/1.2 monospace;text-transform:none}.zotero-credential-state[data-stored=true]{color:var(--green)}.zotero-analysis-check,.zotero-continuous-check{grid-column:1/-1!important;grid-template-columns:auto 1fr!important;align-items:start;padding:9px;border:1px solid var(--line);text-transform:none!important}.zotero-analysis-check input,.zotero-continuous-check input{margin-top:3px;accent-color:var(--green)}.zotero-analysis-check b,.zotero-analysis-check small,.zotero-continuous-check b,.zotero-continuous-check small{display:block}.zotero-analysis-check b,.zotero-continuous-check b{color:var(--ink);font-size:9px}.zotero-analysis-check small,.zotero-continuous-check small{margin-top:3px;font-size:8px}.zotero-sync-schedule{grid-column:1/-1;display:grid;grid-template-columns:minmax(260px,1fr) 170px;gap:12px}.zotero-sync-schedule>label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.zotero-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.zotero-panel output{grid-column:1/-1;min-height:16px;color:var(--green);font:9px/1.4 monospace}.zotero-contract,.zotero-preview{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--ink)}.zotero-contract>div,.zotero-preview>article{min-height:92px;padding:12px;border-right:1px solid var(--line)}.zotero-contract span,.zotero-preview span{display:block;color:var(--muted);font:7px monospace;text-transform:uppercase}.zotero-contract strong,.zotero-preview strong{display:block;margin:8px 0 5px;font:15px monospace}.zotero-preview strong{font:27px Georgia,serif}.zotero-contract small,.zotero-preview small{display:block;color:var(--muted);font:8px/1.4 monospace}.zotero-preview{grid-template-columns:repeat(5,1fr);border-top:1px dashed var(--ink)}@media(max-width:760px){.zotero-panel form,.zotero-sync-schedule{grid-template-columns:1fr}.zotero-contract,.zotero-preview{grid-template-columns:1fr 1fr}.zotero-contract>div,.zotero-preview>article{border-bottom:1px solid var(--line)}}
 </style>
 
 <style>

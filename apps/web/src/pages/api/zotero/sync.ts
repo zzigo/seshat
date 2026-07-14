@@ -13,6 +13,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'ZOTERO_SYNC_FAILED';
     console.error('[seshat:zotero:sync]', message);
-    return Response.json({ error: message }, { status: message.startsWith('ZOTERO_PREVIEW_STALE') ? 409 : 502 });
+    return Response.json({ error: message }, { status: message === 'ZOTERO_SYNC_IN_PROGRESS' || message.startsWith('ZOTERO_PREVIEW_STALE') ? 409 : 502 });
   }
 };

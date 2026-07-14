@@ -13,7 +13,12 @@ export interface ZoteroConnectionStatus {
   analyzeAutomatically?: boolean;
   libraryVersion?: number;
   lastSyncedAt?: string;
+  lastCheckedAt?: string;
   lastError?: string;
+  apiKeyStored?: boolean;
+  continuousSync?: boolean;
+  syncIntervalMinutes?: number;
+  syncing?: boolean;
 }
 
 interface ZoteroConnectionSecret extends ZoteroConnectionStatus {
@@ -50,7 +55,12 @@ const statusFromRow = (row: any): ZoteroConnectionStatus => row ? ({
   analyzeAutomatically: Boolean(row.analyze_automatically),
   libraryVersion: row.library_version == null ? undefined : Number(row.library_version),
   lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at).toISOString() : undefined,
+  lastCheckedAt: row.last_checked_at ? new Date(row.last_checked_at).toISOString() : undefined,
   lastError: row.last_error || undefined,
+  apiKeyStored: Boolean(row.api_key_ciphertext),
+  continuousSync: row.continuous_sync !== false,
+  syncIntervalMinutes: Math.max(5, Number(row.sync_interval_minutes || 15)),
+  syncing: Boolean(row.sync_started_at),
 }) : { connected: false };
 
 export const getZoteroConnectionStatus = async (ownerKey: string): Promise<ZoteroConnectionStatus> => {
@@ -81,19 +91,23 @@ export const saveZoteroConnection = async (input: {
   apiKey: string;
   syncMode: ZoteroSyncMode;
   analyzeAutomatically: boolean;
+  continuousSync: boolean;
+  syncIntervalMinutes: number;
 }): Promise<ZoteroConnectionStatus> => {
   const info = await verifyZoteroKey(input.apiKey);
   if (input.syncMode !== 'pull' && !info.access?.user?.write) throw new Error('ZOTERO_WRITE_ACCESS_REQUIRED');
   const catalog = getCatalog(); await catalog.ensureSchema();
   await catalog.pool.query(
     `INSERT INTO catalog_zotero_connections
-      (owner_key,library_type,library_id,username,api_key_ciphertext,sync_mode,analyze_automatically)
-     VALUES($1,'users',$2,$3,$4,$5,$6)
+      (owner_key,library_type,library_id,username,api_key_ciphertext,sync_mode,analyze_automatically,continuous_sync,sync_interval_minutes)
+     VALUES($1,'users',$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT(owner_key) DO UPDATE SET
        library_type=excluded.library_type,library_id=excluded.library_id,username=excluded.username,
        api_key_ciphertext=excluded.api_key_ciphertext,sync_mode=excluded.sync_mode,
-       analyze_automatically=excluded.analyze_automatically,last_error=NULL,updated_at=now()`,
-    [input.ownerKey, String(info.userID), info.username, encryptApiKey(input.apiKey.trim()), input.syncMode, input.analyzeAutomatically],
+       analyze_automatically=excluded.analyze_automatically,continuous_sync=excluded.continuous_sync,
+       sync_interval_minutes=excluded.sync_interval_minutes,last_error=NULL,updated_at=now()`,
+    [input.ownerKey, String(info.userID), info.username, encryptApiKey(input.apiKey.trim()), input.syncMode, input.analyzeAutomatically,
+      input.continuousSync, Math.max(5, Math.min(1440, Math.floor(input.syncIntervalMinutes || 15)))],
   );
   return getZoteroConnectionStatus(input.ownerKey);
 };
@@ -107,12 +121,15 @@ export const updateZoteroConnectionSettings = async (
   ownerKey: string,
   syncMode: ZoteroSyncMode,
   analyzeAutomatically: boolean,
+  continuousSync: boolean,
+  syncIntervalMinutes: number,
 ): Promise<ZoteroConnectionStatus> => {
   const catalog = getCatalog(); await catalog.ensureSchema();
   const result = await catalog.pool.query(
-    `UPDATE catalog_zotero_connections SET sync_mode=$2,analyze_automatically=$3,updated_at=now()
+    `UPDATE catalog_zotero_connections SET sync_mode=$2,analyze_automatically=$3,continuous_sync=$4,
+       sync_interval_minutes=$5,updated_at=now()
      WHERE owner_key=$1 RETURNING owner_key`,
-    [ownerKey, syncMode, analyzeAutomatically],
+    [ownerKey, syncMode, analyzeAutomatically, continuousSync, Math.max(5, Math.min(1440, Math.floor(syncIntervalMinutes || 15)))],
   );
   if (!result.rows[0]) throw new Error('ZOTERO_NOT_CONNECTED');
   return getZoteroConnectionStatus(ownerKey);

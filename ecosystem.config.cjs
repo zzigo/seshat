@@ -31,5 +31,13 @@ module.exports = {
     env: { ...fileEnv, NODE_ENV: 'production', SESHAT_PYTHON: '/opt/packages/seshat/.venv/bin/python', OLLAMA_MODEL: 'qwen3:1.7b' },
     max_memory_restart: '2G',
     time: true,
+  }, {
+    name: 'seshat-zotero-sync',
+    cwd: '/opt/packages/seshat',
+    script: 'node_modules/tsx/dist/cli.mjs',
+    args: 'scripts/zotero-sync-daemon.ts',
+    env: { ...fileEnv, NODE_ENV: 'production', ZOTERO_SYNC_POLL_MS: fileEnv.ZOTERO_SYNC_POLL_MS || '60000' },
+    max_memory_restart: '500M',
+    time: true,
   }],
 };

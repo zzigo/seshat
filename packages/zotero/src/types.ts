@@ -79,6 +79,11 @@ export interface ZoteroObjectPage<T> {
   libraryVersion?: number;
 }
 
+export interface ZoteroLibraryChange {
+  changed: boolean;
+  libraryVersion: number;
+}
+
 export interface ZoteroProviderOptions {
   libraryType: 'users' | 'groups';
   libraryId: string;

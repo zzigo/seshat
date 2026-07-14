@@ -136,3 +136,18 @@ test('uses version guards for remote item updates', async () => {
   assert.equal(headers.get('If-Unmodified-Since-Version'), '7');
   assert.deepEqual(JSON.parse(body), { title: 'Revised' });
 });
+
+test('checks library versions without downloading the library', async () => {
+  let headers = new Headers(); let requestUrl = '';
+  const provider = new ZoteroProvider({
+    libraryType: 'users', libraryId: '42',
+    fetch: async (input, init) => {
+      requestUrl = String(input); headers = new Headers(init?.headers);
+      return new Response(null, { status: 304 });
+    },
+  });
+  const result = await provider.libraryChangedSince(97074);
+  assert.deepEqual(result, { changed: false, libraryVersion: 97074 });
+  assert.match(requestUrl, /items\/top\?format=json&limit=1$/);
+  assert.equal(headers.get('If-Modified-Since-Version'), '97074');
+});

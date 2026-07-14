@@ -9,6 +9,7 @@ import type {
   ZoteroApiCollection,
   ZoteroApiItem,
   ZoteroKeyInfo,
+  ZoteroLibraryChange,
   ZoteroObjectPage,
   ZoteroProviderOptions,
 } from './types.js';
@@ -103,6 +104,22 @@ export class ZoteroProvider implements BibliographyProvider {
 
   itemPage(start = 0, limit = 100, topOnly = true): Promise<ZoteroObjectPage<ZoteroApiItem>> {
     return this.objectPage(topOnly ? '/items/top' : '/items', start, limit);
+  }
+
+  async libraryChangedSince(libraryVersion: number): Promise<ZoteroLibraryChange> {
+    const version = Math.max(0, Math.floor(libraryVersion || 0));
+    const response = await this.fetcher(`${this.libraryPath()}/items/top?format=json&limit=1`, {
+      headers: { ...this.headers(), 'If-Modified-Since-Version': String(version) },
+    });
+    if (response.status === 304) return { changed: false, libraryVersion: version };
+    if (!response.ok) {
+      const body = await response.text();
+      throw new ZoteroApiError(`Zotero version check failed with ${response.status}.`, response.status, body.slice(0, 500));
+    }
+    return {
+      changed: true,
+      libraryVersion: Number(response.headers.get('Last-Modified-Version')) || version,
+    };
   }
 
   async createCollection(data: { name: string; parentCollection?: string | false }): Promise<ZoteroApiCollection> {

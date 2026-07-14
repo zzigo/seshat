@@ -25,11 +25,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!validMode(syncMode)) return Response.json({ error: 'invalid_sync_mode' }, { status: 400 });
   const apiKey = String(body?.apiKey || '').trim();
   const analyzeAutomatically = body?.analyzeAutomatically !== false;
+  const continuousSync = body?.continuousSync !== false;
+  const syncIntervalMinutes = Math.max(5, Math.min(1440, Number(body?.syncIntervalMinutes || 15)));
   const ownerKey = ownerKeyFor(identity.email);
   try {
     const status = apiKey
-      ? await saveZoteroConnection({ ownerKey, apiKey, syncMode, analyzeAutomatically })
-      : await updateZoteroConnectionSettings(ownerKey, syncMode, analyzeAutomatically);
+      ? await saveZoteroConnection({ ownerKey, apiKey, syncMode, analyzeAutomatically, continuousSync, syncIntervalMinutes })
+      : await updateZoteroConnectionSettings(ownerKey, syncMode, analyzeAutomatically, continuousSync, syncIntervalMinutes);
     return Response.json(status);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'ZOTERO_CONNECTION_FAILED';
