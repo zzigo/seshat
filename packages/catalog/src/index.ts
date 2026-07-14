@@ -668,17 +668,23 @@ export class PostgresCatalog {
   }
 
   private async ensureSchemaLocked(): Promise<void> {
-    const client = await this.pool.connect();
     const advisoryLock = 'seshat:catalog:schema:v1';
-    try {
-      // The web server, worker, and background sync process may boot together.
-      // Serialize the DDL across processes because several schema statements
-      // require exclusive relation locks and can otherwise deadlock PostgreSQL.
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [advisoryLock]);
-      await client.query(schema);
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [advisoryLock]).catch(() => undefined);
-      client.release();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const client = await this.pool.connect();
+      try {
+        // The web server, worker, and background sync process may boot together.
+        // Serialize our DDL, then retry if an unrelated write transaction forms
+        // a transient relation-lock cycle while the schema is being checked.
+        await client.query('SELECT pg_advisory_lock(hashtext($1))', [advisoryLock]);
+        await client.query(schema);
+        return;
+      } catch (error: any) {
+        if (String(error?.code || '') !== '40P01' || attempt === 3) throw error;
+      } finally {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [advisoryLock]).catch(() => undefined);
+        client.release();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
     }
   }
 
