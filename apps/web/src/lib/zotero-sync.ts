@@ -115,16 +115,22 @@ const inboxZoteroDuplicateCandidates = async (ownerKey: string) => {
 };
 
 export const reconcileInboxZoteroDuplicates = async (ownerKey: string): Promise<number> => {
-  const catalog = getCatalog();
-  const plan = planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey));
-  let merged = 0;
-  for (const candidate of plan) {
-    try {
-      const reference = await catalog.mergeReferences(ownerKey, candidate.keepId, [candidate.duplicateId]);
-      if (reference) merged += 1;
-    } catch (error) {
-      console.error('[seshat:zotero:auto-merge]', candidate, error);
+  const catalog = getCatalog(); let merged = 0; const failed = new Set<string>();
+  for (let round = 0; round < 10; round += 1) {
+    const plan = planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey))
+      .filter((candidate) => !failed.has(candidate.duplicateId));
+    if (!plan.length) break;
+    let completed = 0;
+    for (const candidate of plan) {
+      try {
+        const reference = await catalog.mergeReferences(ownerKey, candidate.keepId, [candidate.duplicateId]);
+        if (reference) { merged += 1; completed += 1; }
+      } catch (error) {
+        failed.add(candidate.duplicateId);
+        console.error('[seshat:zotero:auto-merge]', candidate, error);
+      }
     }
+    if (!completed) break;
   }
   return merged;
 };
