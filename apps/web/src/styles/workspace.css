@@ -527,6 +527,11 @@ html { max-width: 100%; overflow: hidden; }
   background: var(--paper);
 }
 .seshat-dockview .dv-tab {
+  flex: 1 1 180px;
+  min-width: 52px;
+  max-width: 240px;
+  overflow: hidden;
+  padding: 0 7px;
   font: 10px monospace;
   text-transform: uppercase;
   background: var(--chrome-deep) !important;
@@ -550,15 +555,79 @@ html { max-width: 100%; overflow: hidden; }
 .seshat-dockview .dv-tab:hover:not(.dv-active-tab) {
   background: rgba(23, 35, 29, 0.05) !important;
 }
-.seshat-dockview .dv-tab-close-button {
+.seshat-dockview .dv-default-tab-action {
   color: var(--muted) !important;
 }
-.seshat-dockview .dv-tab-close-button:hover {
+.seshat-dockview .dv-default-tab-action:hover {
   color: var(--ink) !important;
 }
-.seshat-dockview .dv-tab-content { padding: 0 10px; }
-.seshat-dockview .dv-tabs-and-actions-container { border-bottom: 1px solid var(--ink); background: var(--chrome-deep); }
-.seshat-dockview .dv-tabs-container, .seshat-dockview .dv-groupview, .seshat-dockview .dv-content-container { background: var(--paper); }
+.seshat-dockview .dv-default-tab { min-width: 0; overflow: hidden; }
+.seshat-dockview .dv-default-tab-content {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.seshat-dockview .dv-tabs-and-actions-container {
+  min-width: 0;
+  border-bottom: 1px solid var(--ink);
+  background: var(--chrome-deep);
+}
+.seshat-dockview .dv-tabs-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+.seshat-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-default-tab-action,
+.seshat-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-tabs-overflow-dropdown-root {
+  display: none !important;
+}
+.seshat-dockview .dv-right-actions-container { flex: 0 0 auto; }
+.dockview-single-tab-close {
+  width: 30px;
+  height: 29px;
+  display: grid;
+  flex: 0 0 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.dockview-single-tab-close[hidden] { display: none; }
+.dockview-single-tab-close:hover,
+.dockview-single-tab-close:focus-visible {
+  color: var(--ink);
+  background: var(--dv-icon-hover-background-color);
+  outline: none;
+}
+.dockview-single-tab-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.seshat-dockview .dv-groupview, .seshat-dockview .dv-content-container { background: var(--paper); }
+
+.dv-tabs-overflow-container .dv-tab {
+  width: min(320px, 72vw);
+  min-width: 0;
+  max-width: min(320px, 72vw);
+  overflow: hidden;
+}
+.dv-tabs-overflow-container .dv-default-tab,
+.dv-tabs-overflow-container .dv-default-tab-content {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 .catalog-pod.ht-theme-main { --ht-cell-background-color: var(--paper); --ht-cell-foreground-color: var(--ink); --ht-accent-color: var(--green); --ht-border-color: var(--hairline); --ht-wrapper-border-color: transparent; --ht-row-header-background-color: var(--chrome-deep); --ht-column-header-background-color: var(--chrome-deep); display: grid; grid-template-rows: 35px minmax(0,1fr); min-height: 0; font: 11px monospace; }
 .catalog-filter-bar { display: grid; grid-template-columns: minmax(140px,340px) auto; align-items: center; gap: 10px; padding: 4px 7px; border-bottom: 1px solid var(--hairline); background: var(--chrome-deep); }

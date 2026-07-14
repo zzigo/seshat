@@ -1,7 +1,7 @@
 import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
-import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
+import { createDockview, type DockviewApi, type IContentRenderer, type IHeaderActionsRenderer } from 'dockview-core';
 import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, parsePublicationYear, type Contributor } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
@@ -2681,8 +2681,53 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     } };
   };
 
+  const createSingleTabCloseAction = (): IHeaderActionsRenderer => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.className = 'dockview-single-tab-close';
+    element.hidden = true;
+    element.title = 'Close tab';
+    element.setAttribute('aria-label', 'Close tab');
+    element.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+    let closeActivePanel = () => {};
+    let subscriptions: Array<{ dispose(): void }> = [];
+    return {
+      element,
+      init(params) {
+        const update = () => {
+          const panel = params.group.activePanel || params.group.panels[0];
+          element.hidden = params.group.size !== 1;
+          const label = panel?.api.title ? `Close ${panel.api.title}` : 'Close tab';
+          element.title = label;
+          element.setAttribute('aria-label', label);
+        };
+        closeActivePanel = () => {
+          if (params.group.size !== 1) return;
+          (params.group.activePanel || params.group.panels[0])?.api.close();
+        };
+        element.onpointerdown = (event) => event.preventDefault();
+        element.onclick = (event) => { event.preventDefault(); closeActivePanel(); };
+        subscriptions = [
+          params.group.model.onDidAddPanel(update),
+          params.group.model.onDidRemovePanel(update),
+          params.group.model.onDidActivePanelChange(update),
+        ];
+        update();
+      },
+      dispose() {
+        subscriptions.forEach((subscription) => subscription.dispose());
+        subscriptions = [];
+        element.onpointerdown = null;
+        element.onclick = null;
+      },
+    };
+  };
+
   api = createDockview(host, {
     className: 'seshat-dockview',
+    scrollbars: 'native',
+    singleTabMode: 'default',
+    createRightHeaderActionComponent: createSingleTabCloseAction,
     createComponent: (options) => {
       const name = options.name;
       if (name === 'catalog') {
