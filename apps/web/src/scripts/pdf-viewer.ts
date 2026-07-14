@@ -270,11 +270,39 @@ export async function mountPdfViewer(
   const parent = element.parentElement || element;
 
   const handleZoomReset = () => {
-    currentZoom = 1.0;
-    pages.style.zoom = '1.0';
+    pages.style.zoom = '1';
     pages.style.transform = '';
-    viewer.scrollTop = 0;
-    viewer.scrollLeft = (viewer.scrollWidth - viewer.clientWidth) / 2;
+    // Measure at the rendered base scale, then fit the active page or its
+    // complete facing-page spread into the pod's current reading width.
+    void pages.offsetWidth;
+    const doublePage = pages.classList.contains('double-page-view');
+    const spreadStart = doublePage && currentPage > 1
+      ? (currentPage % 2 === 0 ? currentPage : currentPage - 1)
+      : currentPage;
+    const spreadPages = doublePage
+      ? (spreadStart === 1 ? [1] : [spreadStart, Math.min(total, spreadStart + 1)])
+      : [currentPage];
+    const targets = spreadPages
+      .map((page) => pages.querySelector<HTMLElement>(`[data-page="${page}"]`))
+      .filter((page): page is HTMLElement => Boolean(page));
+    if (!targets.length) return;
+    const left = Math.min(...targets.map((page) => page.offsetLeft));
+    const right = Math.max(...targets.map((page) => page.offsetLeft + page.offsetWidth));
+    const top = Math.min(...targets.map((page) => page.offsetTop));
+    const width = Math.max(1, right - left);
+    currentZoom = Math.max(.25, Math.min(3, (viewer.clientWidth - 32) / width));
+    pages.style.zoom = String(currentZoom);
+    if (!('zoom' in document.documentElement.style)) {
+      pages.style.transform = `scale(${currentZoom})`;
+      pages.style.transformOrigin = 'top left';
+    }
+    void pages.offsetWidth;
+    const centerX = ((left + right) / 2) * currentZoom;
+    viewer.scrollTo({
+      left: Math.max(0, centerX - viewer.clientWidth / 2),
+      top: Math.max(0, top * currentZoom - 16),
+      behavior: 'auto',
+    });
   };
 
   const handleGotoPage = (e: any) => {
@@ -334,6 +362,7 @@ export async function mountPdfViewer(
     else if (event.key === 'ArrowRight') page = currentPage + 1;
     else if (event.key === '0') page = 1;
     else if (event.key === 'G') page = total;
+    else if (event.key === '1' && !pending) { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')); return; }
     else if (event.key === 'g') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'grid' } })); return; }
     else if (event.key === 'b') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'book' } })); return; }
     if (page === null) return;
