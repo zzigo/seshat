@@ -1,6 +1,6 @@
 import { getCatalog } from '../apps/web/src/lib/catalog.ts';
 import { getZoteroConnectionStatus, zoteroProviderFor } from '../apps/web/src/lib/zotero-connection.ts';
-import { runZoteroSync } from '../apps/web/src/lib/zotero-sync.ts';
+import { pendingInboxZoteroDuplicateMergeCount, runZoteroSync } from '../apps/web/src/lib/zotero-sync.ts';
 
 const catalog = getCatalog();
 const pollMs = Math.max(15_000, Number(process.env.ZOTERO_SYNC_POLL_MS || 60_000));
@@ -58,11 +58,12 @@ const tick = async (): Promise<void> => {
   try {
     const status = await getZoteroConnectionStatus(connection.owner_key);
     const provider = await zoteroProviderFor(connection.owner_key);
-    const [remote, localChanged] = await Promise.all([
+    const [remote, localChanged, pendingMerges] = await Promise.all([
       provider.libraryChangedSince(Number(status.libraryVersion || 0)),
       hasLocalChanges(connection),
+      pendingInboxZoteroDuplicateMergeCount(connection.owner_key),
     ]);
-    if (!remote.changed && !localChanged) {
+    if (!remote.changed && !localChanged && pendingMerges === 0) {
       await catalog.pool.query(
         'UPDATE catalog_zotero_connections SET sync_started_at=NULL,last_error=NULL,updated_at=now() WHERE owner_key=$1',
         [connection.owner_key],
@@ -72,7 +73,7 @@ const tick = async (): Promise<void> => {
     }
     const result = await runZoteroSync(connection.owner_key);
     await finishCheck(connection.owner_key);
-    console.log(`[seshat:zotero-daemon] synced ${status.username || connection.owner_key} · pulled=${result.pulled.items} pushed=${result.pushed.items} conflicts=${result.conflicts.length}`);
+    console.log(`[seshat:zotero-daemon] synced ${status.username || connection.owner_key} · pulled=${result.pulled.items} merged=${result.pulled.merged} pushed=${result.pushed.items} conflicts=${result.conflicts.length}`);
   } catch (error) {
     await finishCheck(connection.owner_key, error).catch(() => undefined);
     console.error('[seshat:zotero-daemon]', connection.owner_key, String((error as Error)?.message || error));

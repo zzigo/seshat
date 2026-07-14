@@ -8,7 +8,7 @@ import {
   potentialDuplicateFingerprint,
 } from '@seshat/core';
 
-type DuplicateReference = {
+export type DuplicateReference = {
   title?: unknown;
   issued?: unknown;
   contributors?: unknown;
@@ -56,6 +56,13 @@ const metadataEvidence = (reference: DuplicateReference): string | undefined => 
   });
 };
 
+export const duplicateEvidenceKeys = (reference: DuplicateReference): Set<string> => {
+  const result = stableEvidence(reference);
+  const metadata = metadataEvidence(reference);
+  if (metadata) result.add(metadata);
+  return result;
+};
+
 /**
  * Merge validation accepts a stable identifier found in any trustworthy
  * metadata representation. If only one side has a stable identifier, the
@@ -72,4 +79,35 @@ export const referencesShareDuplicateEvidence = (references: DuplicateReference[
   if (distinctStable.size > 1) return false;
   const metadata = references.map(metadataEvidence);
   return Boolean(metadata[0] && metadata.every((key) => key === metadata[0]));
+};
+
+export type InboxZoteroDuplicateCandidate = DuplicateReference & {
+  id: string;
+  isInbox: boolean;
+  isZotero: boolean;
+};
+
+export type InboxZoteroDuplicateMerge = { keepId: string; duplicateId: string };
+
+/** Plans only unambiguous Inbox -> Zotero merges. An Inbox record that can
+ * match more than one Zotero record stays in Duplicated for manual review. */
+export const planInboxZoteroDuplicateMerges = (
+  references: InboxZoteroDuplicateCandidate[],
+): InboxZoteroDuplicateMerge[] => {
+  const zotero = references.filter((reference) => reference.isZotero);
+  const zoteroByKey = new Map<string, InboxZoteroDuplicateCandidate[]>();
+  for (const reference of zotero) for (const key of duplicateEvidenceKeys(reference)) {
+    zoteroByKey.set(key, [...(zoteroByKey.get(key) || []), reference]);
+  }
+
+  const result: InboxZoteroDuplicateMerge[] = [];
+  for (const inbox of references.filter((reference) => reference.isInbox)) {
+    const candidates = new Map<string, InboxZoteroDuplicateCandidate>();
+    for (const key of duplicateEvidenceKeys(inbox)) {
+      for (const reference of zoteroByKey.get(key) || []) candidates.set(reference.id, reference);
+    }
+    const confirmed = [...candidates.values()].filter((reference) => referencesShareDuplicateEvidence([reference, inbox]));
+    if (confirmed.length === 1) result.push({ keepId: confirmed[0].id, duplicateId: inbox.id });
+  }
+  return result;
 };

@@ -8,6 +8,7 @@ import {
 } from '@seshat/zotero';
 import { parsePublicationYear } from '@seshat/core';
 import { getCatalog } from './catalog';
+import { planInboxZoteroDuplicateMerges } from './duplicate-match';
 import { getZoteroConnection, updateZoteroSyncState, zoteroProviderFor } from './zotero-connection';
 
 export interface ZoteroSyncResult {
@@ -94,6 +95,43 @@ const normalizedTitleYear = (title: unknown, issued: any): string => {
   return normalized && year ? `${normalized}\0${year}` : '';
 };
 
+const inboxZoteroDuplicateCandidates = async (ownerKey: string) => {
+  const result = await getCatalog().pool.query(
+    `SELECT r.id,r.title,r.issued,r.contributors,r.identifiers,r.source,
+       NOT EXISTS(SELECT 1 FROM catalog_library_items li
+         WHERE li.reference_id=r.id AND li.library_id<>('inbox:' || $1))
+         AND NOT EXISTS(SELECT 1 FROM catalog_zotero_items zi WHERE zi.owner_key=$1 AND zi.reference_id=r.id) AS is_inbox,
+       EXISTS(SELECT 1 FROM catalog_zotero_items zi WHERE zi.owner_key=$1 AND zi.reference_id=r.id)
+         AND EXISTS(SELECT 1 FROM catalog_library_items li
+           WHERE li.reference_id=r.id AND li.library_id<>('inbox:' || $1)) AS is_zotero
+     FROM catalog_references r WHERE r.owner_key=$1`,
+    [ownerKey],
+  );
+  return result.rows.map((row: any) => ({
+    id: String(row.id), title: row.title, issued: row.issued, contributors: row.contributors,
+    identifiers: row.identifiers, source: row.source,
+    isInbox: Boolean(row.is_inbox), isZotero: Boolean(row.is_zotero),
+  }));
+};
+
+const autoMergeInboxZoteroDuplicates = async (ownerKey: string): Promise<number> => {
+  const catalog = getCatalog();
+  const plan = planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey));
+  let merged = 0;
+  for (const candidate of plan) {
+    try {
+      const reference = await catalog.mergeReferences(ownerKey, candidate.keepId, [candidate.duplicateId]);
+      if (reference) merged += 1;
+    } catch (error) {
+      console.error('[seshat:zotero:auto-merge]', candidate, error);
+    }
+  }
+  return merged;
+};
+
+export const pendingInboxZoteroDuplicateMergeCount = async (ownerKey: string): Promise<number> =>
+  planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey)).length;
+
 export const previewZoteroSync = async (ownerKey: string) => {
   const connection = await getZoteroConnection(ownerKey);
   if (!connection?.libraryId || !connection.syncMode) throw new Error('ZOTERO_NOT_CONNECTED');
@@ -136,6 +174,7 @@ export const previewZoteroSync = async (ownerKey: string) => {
     if (candidates.size > 1 || titleCandidates?.size) possibleDuplicates += 1;
     else newItems += 1;
   }
+  automaticMerges += planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey)).length;
   return {
     remote: {
       collections: collectionSnapshot.objects.length, items: bibliographicItems,
@@ -476,6 +515,7 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
       });
       result.pulled.items = pulled.count; result.pulled.merged = pulled.merged;
     }
+    result.pulled.merged += await autoMergeInboxZoteroDuplicates(ownerKey);
     const finalVersion = Math.max(libraryVersion,
       ...[...remoteCollections.values()].map((item) => Number(item.version ?? item.data.version ?? 0)),
       ...[...remoteItems.values()].map((item) => Number(item.version ?? item.data.version ?? 0)));

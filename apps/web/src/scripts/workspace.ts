@@ -3659,6 +3659,30 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const locateSelectedReference = () => locateReference([...selectedReferences][0]||activeReference);
 
+  const navigateTreeReference = (direction: -1 | 1, origin: HTMLElement | null) => {
+    const visible = [...tree.querySelectorAll<HTMLElement>('.tree-reference[data-reference-id]')]
+      .filter((item) => item.getClientRects().length > 0);
+    if (!visible.length) return;
+    const focused = origin?.closest<HTMLElement>('.tree-reference[data-reference-id]');
+    let index = focused ? visible.indexOf(focused) : -1;
+    if (index < 0 && activeReference) index = visible.findIndex((item) => item.dataset.referenceId === activeReference);
+    const nextIndex = index < 0
+      ? (direction > 0 ? 0 : visible.length - 1)
+      : Math.max(0, Math.min(visible.length - 1, index + direction));
+    const next = visible[nextIndex]; const referenceId = next.dataset.referenceId;
+    if (!referenceId) return;
+    activeReference=referenceId;selectedReferences.clear();selectedReferences.add(referenceId);treeSelectionAnchor=referenceId;
+    syncTreeSelection();renderProperties(referenceId);next.focus({preventScroll:true});next.scrollIntoView({block:'nearest'});
+    setSaveState(`${nextIndex + 1} / ${visible.length} · ${references.get(referenceId)?.title || 'selected'}`);
+  };
+
+  tree.addEventListener('keydown',(event)=>{
+    if(event.defaultPrevented||event.metaKey||event.ctrlKey||event.altKey||event.shiftKey)return;
+    if(event.key!=='ArrowUp'&&event.key!=='ArrowDown')return;
+    event.preventDefault();event.stopPropagation();
+    navigateTreeReference(event.key==='ArrowDown'?1:-1,event.target as HTMLElement|null);
+  });
+
   const upsertRow = (next: ReferenceRow) => {
     const current = references.get(next.id);
     if (current) Object.assign(current, next);
@@ -3817,7 +3841,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
     addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','Rendered narrations have a blue ▶ in the collection sidebar and a ▶ OGG control in the document toolbar.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
-    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','W — search Wasabi candidates for selected items','Shift W — link the first Wasabi match automatically','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt — reveal the open item in sidebar and Catalog','Alt L — locate selected item in its collection','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','Ctrl ↑ — unfold current collection','Ctrl ↓ — fold current collection','Ctrl Shift ↑ — fold all collections','Ctrl Shift ↓ — unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF 1 fit page/spread, g grid, b book']);
+    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','W — search Wasabi candidates for selected items','Shift W — link the first Wasabi match automatically','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt — reveal the open item in sidebar and Catalog','Alt L — locate selected item in its collection','Sidebar ↑ / ↓ — previous / next visible item','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','Ctrl ↑ — unfold current collection','Ctrl ↓ — fold current collection','Ctrl Shift ↑ — fold all collections','Ctrl Shift ↓ — unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF 1 fit page/spread, g grid, b book']);
     const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
     const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Kokoro local TTS','beta','Local browser inference with Web Speech fallback'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];

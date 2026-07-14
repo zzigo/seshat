@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { referencesShareDuplicateEvidence } from '../src/lib/duplicate-match.js';
+import { planInboxZoteroDuplicateMerges, referencesShareDuplicateEvidence } from '../src/lib/duplicate-match.js';
 
 const base = {
   title: 'Peer and AI Review + Reflection (PAIRR): A human-centered approach to formative assessment',
@@ -36,4 +36,19 @@ test('does not bridge conflicting stable identifiers using metadata alone', () =
     { ...base, identifiers: { doi: '10.1000/example.one' } },
     { ...base, identifiers: { doi: '10.1000/example.two' } },
   ]), false);
+});
+
+test('plans an automatic merge from Inbox into one unambiguous Zotero record', () => {
+  assert.deepEqual(planInboxZoteroDuplicateMerges([
+    { ...base, id: 'zotero', isInbox: false, isZotero: true },
+    { ...base, id: 'inbox', isInbox: true, isZotero: false, identifiers: { doi: '10.1016/j.compcom.2025.102921' } },
+  ]), [{ keepId: 'zotero', duplicateId: 'inbox' }]);
+});
+
+test('leaves an Inbox item alone when more than one Zotero record matches', () => {
+  assert.deepEqual(planInboxZoteroDuplicateMerges([
+    { ...base, id: 'zotero-a', isInbox: false, isZotero: true },
+    { ...base, id: 'zotero-b', isInbox: false, isZotero: true },
+    { ...base, id: 'inbox', isInbox: true, isZotero: false },
+  ]), []);
 });

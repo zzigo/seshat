@@ -1866,6 +1866,13 @@ export class PostgresCatalog {
         [keepId, mergedIds],
       );
       await client.query(
+        `DELETE FROM catalog_library_items inbox_item
+         WHERE inbox_item.reference_id=$1 AND inbox_item.library_id='inbox:' || $2
+           AND EXISTS(SELECT 1 FROM catalog_library_items filed_item
+             WHERE filed_item.reference_id=$1 AND filed_item.library_id<>inbox_item.library_id)`,
+        [keepId, ownerKey],
+      );
+      await client.query(
         `UPDATE catalog_annotations SET reference_id=$1,
            source_kind=CASE WHEN source_kind LIKE 'merged-%' THEN source_kind ELSE 'merged-' || source_kind END,
            review_status='merged',updated_at=now()
