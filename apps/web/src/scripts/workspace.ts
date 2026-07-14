@@ -506,10 +506,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       ? editableIds.filter((id) => references.get(id)?.libraryIds.includes(requestedCollectionId)) : [];
     return [
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
-    { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}  Alt+Shift+A`, action: () => copyReferences(ids, 'apa') },
-    { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}  Alt+Shift+B`, action: () => copyReferences(ids, 'bibtex') },
+    { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}`, shortcut:'A', action: () => copyReferences(ids, 'apa') },
+    { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}`, shortcut:'B', action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
-    { label: 'Search for candidate in Wasabi…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => searchForCandidate(editableIds[0]) },
+    { label: `Search for candidates in Wasabi${editableIds.length > 1 ? ` (${editableIds.length})` : ''}…`, shortcut:'W', disabled: !editableIds.length, action: () => searchWasabiForSelection(editableIds,false) },
+    { label: `Link first Wasabi match${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, shortcut:'⇧W', disabled: !editableIds.length, action: () => searchWasabiForSelection(editableIds,true) },
     { label: 'Render Kokoro narration…', disabled: editableIds.length !== 1 || ids.length !== 1 || !references.get(editableIds[0])?.hasText, action: () => { const row=references.get(editableIds[0]);if(row)openKokoroNarration(row); } },
     { label: `Erase Kokoro narration${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.some((id)=>references.get(id)?.hasKokoroNarration), danger: true, action: () => eraseKokoroNarrations(editableIds.filter((id)=>references.get(id)?.hasKokoroNarration)) },
     ...(payload.chirpEnabled ? [
@@ -2954,14 +2955,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let contextMenu: HTMLElement | null = null;
   const closeContextMenu = () => { contextMenu?.remove(); contextMenu = null; };
-  type ContextMenuItem={label:string;danger?:boolean;disabled?:boolean;swatch?:string;checked?:boolean;children?:ContextMenuItem[];action?:()=>void|Promise<void>};
+  type ContextMenuItem={label:string;shortcut?:string;danger?:boolean;disabled?:boolean;swatch?:string;checked?:boolean;children?:ContextMenuItem[];action?:()=>void|Promise<void>};
   const openContextMenu = (event: MouseEvent, items: ContextMenuItem[]) => {
     event.preventDefault(); event.stopPropagation(); closeContextMenu();
     const buildMenu=(entries:ContextMenuItem[],nested=false)=>{const menu = document.createElement('div'); menu.className = nested?'seshat-context-menu context-submenu':'seshat-context-menu'; menu.setAttribute('role', 'menu');
     entries.forEach((item) => {
       const wrap=document.createElement('div');wrap.className='context-menu-item';const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem');
       if (item.swatch) { const swatch = document.createElement('i'); swatch.className = 'context-swatch'; swatch.style.background = item.swatch; button.appendChild(swatch); }
-      if(item.checked!==undefined){const check=document.createElement('i');check.className='context-check';check.textContent=item.checked?'✓':'';button.appendChild(check);}button.append(item.label);if(item.children?.length){const arrow=document.createElement('span');arrow.className='context-arrow';arrow.textContent='›';button.appendChild(arrow);wrap.append(button,buildMenu(item.children,true));}else wrap.appendChild(button);
+      if(item.checked!==undefined){const check=document.createElement('i');check.className='context-check';check.textContent=item.checked?'✓':'';button.appendChild(check);}button.append(item.label);if(item.shortcut){const shortcut=document.createElement('kbd');shortcut.className='context-shortcut';shortcut.textContent=item.shortcut;button.appendChild(shortcut);}if(item.children?.length){const arrow=document.createElement('span');arrow.className='context-arrow';arrow.textContent='›';button.appendChild(arrow);wrap.append(button,buildMenu(item.children,true));}else wrap.appendChild(button);
       button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
       if(item.action)button.addEventListener('click', () => { closeContextMenu(); void item.action?.(); }); menu.appendChild(wrap);
     });return menu;};
@@ -3733,6 +3734,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries])); renderTree(search.value); setSaveState(collapse ? 'collections folded' : 'collections unfolded'); return;
         }
         if (chord === 'ya' || chord === 'yb') { event.preventDefault(); const ids=selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : []; copyReferences(ids,chord === 'ya' ? 'apa' : 'bibtex'); return; }
+        return;
+      }
+      if (event.key.toLowerCase() === 'a' || event.key.toLowerCase() === 'b') {
+        event.preventDefault(); const ids=selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : [];
+        copyReferences(ids,event.key.toLowerCase()==='a'?'apa':'bibtex'); return;
       }
       if (event.key === 'g' || event.key === 'z' || event.key === 'y') {
         event.preventDefault(); shortcutPrefix=event.key; window.clearTimeout(shortcutPrefixTimer); setSaveState(`${event.key} …`);

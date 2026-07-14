@@ -31,10 +31,10 @@ const session = Astro.locals.session as any;
     <title>{title}</title>
     <script is:inline>
       const theme = localStorage.getItem('seshat-theme') || 'light';
-      if (theme === 'dark') {
-        document.documentElement.setAttribute('data-theme', 'dark');
-        document.documentElement.classList.add('dark-theme');
-      }
+      const preset = localStorage.getItem('seshat-theme-preset') || localStorage.getItem(`seshat-theme-${theme}-preset`) || (theme === 'dark' ? 'ink' : 'papyrus');
+      document.documentElement.setAttribute('data-theme', theme);
+      document.documentElement.setAttribute('data-theme-preset', preset);
+      document.documentElement.classList.toggle('dark-theme', theme === 'dark');
     </script>
   </head>
   <body>
@@ -67,13 +67,13 @@ const session = Astro.locals.session as any;
       themeBtn?.addEventListener('click', () => {
         const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
         const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        const nextPreset = localStorage.getItem(`seshat-theme-${nextTheme}-preset`) || (nextTheme === 'dark' ? 'ink' : 'papyrus');
         document.documentElement.setAttribute('data-theme', nextTheme);
-        if (nextTheme === 'dark') {
-          document.documentElement.classList.add('dark-theme');
-        } else {
-          document.documentElement.classList.remove('dark-theme');
-        }
+        document.documentElement.setAttribute('data-theme-preset', nextPreset);
+        document.documentElement.classList.toggle('dark-theme', nextTheme === 'dark');
         localStorage.setItem('seshat-theme', nextTheme);
+        localStorage.setItem('seshat-theme-preset', nextPreset);
+        window.dispatchEvent(new CustomEvent('seshat:theme-changed', { detail: { theme: nextTheme, preset: nextPreset } }));
       });
     </script>
   </body>

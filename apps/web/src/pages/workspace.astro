@@ -162,7 +162,9 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
       import { mountSeshatWorkspace } from '../scripts/workspace';
       import screenfull from 'screenfull';
       const initialTheme = localStorage.getItem('seshat-theme') || 'light';
+      const initialPreset = localStorage.getItem('seshat-theme-preset') || localStorage.getItem(`seshat-theme-${initialTheme}-preset`) || (initialTheme === 'dark' ? 'ink' : 'papyrus');
       document.documentElement.setAttribute('data-theme', initialTheme);
+      document.documentElement.setAttribute('data-theme-preset', initialPreset);
       document.documentElement.classList.toggle('dark-theme', initialTheme === 'dark');
       const root = document.querySelector<HTMLElement>('[data-seshat-workspace]');
       if (root) mountSeshatWorkspace(root);
@@ -292,7 +294,8 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
       const themeBtn = document.querySelector('[data-toggle-theme]');
       const stage = document.querySelector('[data-dockview-host]');
 
-      const updateThemeState = (theme: string) => {
+      const updateThemeState = (theme: string, preset = localStorage.getItem(`seshat-theme-${theme}-preset`) || (theme === 'dark' ? 'ink' : 'papyrus')) => {
+        document.documentElement.setAttribute('data-theme-preset', preset);
         if (theme === 'dark') {
           document.documentElement.setAttribute('data-theme', 'dark');
           document.documentElement.classList.add('dark-theme');
@@ -302,17 +305,20 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
           document.documentElement.classList.remove('dark-theme');
           stage?.classList.replace('dockview-theme-dark', 'dockview-theme-light');
         }
-        window.dispatchEvent(new CustomEvent('seshat:theme-changed', { detail: { theme } }));
+        window.dispatchEvent(new CustomEvent('seshat:theme-changed', { detail: { theme, preset } }));
       };
 
       const savedTheme = localStorage.getItem('seshat-theme') || 'light';
-      updateThemeState(savedTheme);
+      const savedPreset = localStorage.getItem('seshat-theme-preset') || localStorage.getItem(`seshat-theme-${savedTheme}-preset`) || (savedTheme === 'dark' ? 'ink' : 'papyrus');
+      updateThemeState(savedTheme, savedPreset);
 
       themeBtn?.addEventListener('click', () => {
         const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
         const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        updateThemeState(nextTheme);
+        const nextPreset = localStorage.getItem(`seshat-theme-${nextTheme}-preset`) || (nextTheme === 'dark' ? 'ink' : 'papyrus');
+        updateThemeState(nextTheme, nextPreset);
         localStorage.setItem('seshat-theme', nextTheme);
+        localStorage.setItem('seshat-theme-preset', nextPreset);
       });
     </script>
   </body>
