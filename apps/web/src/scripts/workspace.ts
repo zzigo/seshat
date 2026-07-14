@@ -1463,8 +1463,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const inspector=document.createElement('div'); inspector.className='graph-inspector'; inspector.innerHTML='<p>Select a paper or association to inspect its evidence.</p>'; selectionSection.content.appendChild(inspector);
         const stageActions=document.createElement('div'); stageActions.className='graph-stage-actions';
         const sidebarOpen=document.createElement('button'); sidebarOpen.type='button'; sidebarOpen.className='graph-sidebar-open'; sidebarOpen.title='Show graph sidebar'; sidebarOpen.setAttribute('aria-label','Show graph sidebar'); sidebarOpen.setAttribute('aria-expanded','false'); sidebarOpen.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3 5.5 8l5 5"/></svg>';
-        stageActions.appendChild(sidebarOpen); addMobileCloseButton(stageActions,panelId); stage.appendChild(stageActions);
-        body.append(stage,sidebar); element.appendChild(body);
+        stageActions.appendChild(sidebarOpen); addMobileCloseButton(stageActions,panelId);
+        body.append(stage,sidebar,stageActions); element.appendChild(body);
         const setSidebarOpen=(open:boolean)=>{body.classList.toggle('graph-sidebar-hidden',!open);sidebarOpen.hidden=open;sidebarOpen.setAttribute('aria-expanded',String(open));sidebar.setAttribute('aria-hidden',String(!open));window.localStorage.setItem(GRAPH_SIDEBAR_KEY,open?'open':'closed');};
         sidebarOpen.addEventListener('click',()=>setSidebarOpen(true)); sidebarClose.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();setSidebarOpen(false);});
         setSidebarOpen(window.localStorage.getItem(GRAPH_SIDEBAR_KEY)!=='closed');

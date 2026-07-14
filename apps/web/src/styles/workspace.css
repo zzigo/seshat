@@ -603,11 +603,14 @@ html { max-width: 100%; overflow: hidden; }
 }
 .seshat-dockview .dv-tab .dv-default-tab-action {
   position: absolute;
-  top: 2px;
-  right: 1px;
+  top: 50%;
+  right: 2px;
   width: 13px;
   height: 13px;
-  padding: 2px !important;
+  display: grid !important;
+  place-items: center;
+  padding: 0 !important;
+  transform: translateY(-50%);
   visibility: visible !important;
   color: var(--muted) !important;
   background: transparent !important;
@@ -620,7 +623,7 @@ html { max-width: 100%; overflow: hidden; }
   opacity: 1;
   outline: none;
 }
-.seshat-dockview .dv-tab .dv-default-tab-action svg { width: 9px; height: 9px; }
+.seshat-dockview .dv-tab .dv-default-tab-action svg { width: 9px; height: 9px; display: block; margin: 0; }
 .seshat-dockview .dv-tabs-and-actions-container {
   min-width: 0;
   border-bottom: 1px solid var(--ink);
