@@ -114,7 +114,7 @@ const inboxZoteroDuplicateCandidates = async (ownerKey: string) => {
   }));
 };
 
-const autoMergeInboxZoteroDuplicates = async (ownerKey: string): Promise<number> => {
+export const reconcileInboxZoteroDuplicates = async (ownerKey: string): Promise<number> => {
   const catalog = getCatalog();
   const plan = planInboxZoteroDuplicateMerges(await inboxZoteroDuplicateCandidates(ownerKey));
   let merged = 0;
@@ -515,7 +515,7 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
       });
       result.pulled.items = pulled.count; result.pulled.merged = pulled.merged;
     }
-    result.pulled.merged += await autoMergeInboxZoteroDuplicates(ownerKey);
+    result.pulled.merged += await reconcileInboxZoteroDuplicates(ownerKey);
     const finalVersion = Math.max(libraryVersion,
       ...[...remoteCollections.values()].map((item) => Number(item.version ?? item.data.version ?? 0)),
       ...[...remoteItems.values()].map((item) => Number(item.version ?? item.data.version ?? 0)));

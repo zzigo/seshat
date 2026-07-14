@@ -1,6 +1,6 @@
 import { getCatalog } from '../apps/web/src/lib/catalog.ts';
 import { getZoteroConnectionStatus, zoteroProviderFor } from '../apps/web/src/lib/zotero-connection.ts';
-import { pendingInboxZoteroDuplicateMergeCount, runZoteroSync } from '../apps/web/src/lib/zotero-sync.ts';
+import { pendingInboxZoteroDuplicateMergeCount, reconcileInboxZoteroDuplicates, runZoteroSync } from '../apps/web/src/lib/zotero-sync.ts';
 
 const catalog = getCatalog();
 const pollMs = Math.max(15_000, Number(process.env.ZOTERO_SYNC_POLL_MS || 60_000));
@@ -63,12 +63,13 @@ const tick = async (): Promise<void> => {
       hasLocalChanges(connection),
       pendingInboxZoteroDuplicateMergeCount(connection.owner_key),
     ]);
-    if (!remote.changed && !localChanged && pendingMerges === 0) {
+    if (!remote.changed && !localChanged) {
+      const merged = pendingMerges ? await reconcileInboxZoteroDuplicates(connection.owner_key) : 0;
       await catalog.pool.query(
         'UPDATE catalog_zotero_connections SET sync_started_at=NULL,last_error=NULL,updated_at=now() WHERE owner_key=$1',
         [connection.owner_key],
       );
-      console.log(`[seshat:zotero-daemon] checked ${status.username || connection.owner_key} · no changes`);
+      console.log(`[seshat:zotero-daemon] checked ${status.username || connection.owner_key} · no remote changes · merged=${merged}`);
       return;
     }
     const result = await runZoteroSync(connection.owner_key);
