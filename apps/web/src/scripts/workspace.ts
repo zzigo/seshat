@@ -1448,12 +1448,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const body = document.createElement('div'); body.className = 'graph-body';
         const stage = document.createElement('div'); stage.className = 'force-graph-stage';
         const sidebar = document.createElement('aside'); sidebar.className = 'graph-sidebar'; sidebar.setAttribute('aria-label','Graph sidebar');
-        const sidebarBar = document.createElement('div'); sidebarBar.className = 'graph-sidebar-bar';
-        const sidebarLabel = document.createElement('span'); sidebarLabel.textContent = 'Graph';
         const sidebarClose = document.createElement('button'); sidebarClose.type = 'button'; sidebarClose.className = 'graph-sidebar-close'; sidebarClose.title = 'Hide graph sidebar'; sidebarClose.setAttribute('aria-label','Hide graph sidebar'); sidebarClose.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3 5.5 8l5 5"/><path d="M13 2v12"/></svg>';
-        sidebarBar.append(sidebarLabel,sidebarClose); sidebar.appendChild(sidebarBar);
-        const section=(label:string,open:boolean)=>{const details=document.createElement('details');details.className='graph-sidebar-section';details.open=open;const summary=document.createElement('summary');const text=document.createElement('span');text.textContent=label;const badge=document.createElement('b');summary.append(text,badge);const content=document.createElement('div');content.className='graph-sidebar-content';details.append(summary,content);sidebar.appendChild(details);return{details,content,badge};};
-        const infoSection=section('Graph info',true); infoSection.badge.remove();
+        const section=(label:string,open:boolean)=>{const details=document.createElement('details');details.className='graph-sidebar-section';details.open=open;const summary=document.createElement('summary');const text=document.createElement('span');text.textContent=label;const badge=document.createElement('b');summary.append(text,badge);const content=document.createElement('div');content.className='graph-sidebar-content';details.append(summary,content);sidebar.appendChild(details);return{details,summary,content,badge};};
+        const infoSection=section('Graph info',true); infoSection.badge.replaceWith(sidebarClose);
         const graphKind=document.createElement('span'); graphKind.className='graph-info-kind'; graphKind.textContent=reference?'Document graph':'Knowledge graph';
         const graphScope=document.createElement('strong'); graphScope.className='graph-info-scope'; graphScope.textContent=reference?.title||'All references';
         const count=document.createElement('span'); count.className='graph-info-count'; count.textContent='Loading…';
@@ -1469,7 +1466,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         stageActions.appendChild(sidebarOpen); addMobileCloseButton(stageActions,panelId); stage.appendChild(stageActions);
         body.append(stage,sidebar); element.appendChild(body);
         const setSidebarOpen=(open:boolean)=>{body.classList.toggle('graph-sidebar-hidden',!open);sidebarOpen.hidden=open;sidebar.setAttribute('aria-hidden',String(!open));window.localStorage.setItem(GRAPH_SIDEBAR_KEY,open?'open':'closed');};
-        sidebarOpen.addEventListener('click',()=>setSidebarOpen(true)); sidebarClose.addEventListener('click',()=>setSidebarOpen(false));
+        sidebarOpen.addEventListener('click',()=>setSidebarOpen(true)); sidebarClose.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();setSidebarOpen(false);});
         setSidebarOpen(window.localStorage.getItem(GRAPH_SIDEBAR_KEY)!=='closed');
         let graph: any = null; let resizeGraph: ResizeObserver | null = null; let graphDocumentChange: EventListener | null = null; let currentGraphReferenceId = referenceId || null; const collapsed = new Set<string>(); let focusId: string | null = null;
         disposeAnnotation = () => { if (graphDocumentChange) window.removeEventListener('seshat:active-reference-changed', graphDocumentChange); resizeGraph?.disconnect(); graph?._destructor?.(); graph = null; };
