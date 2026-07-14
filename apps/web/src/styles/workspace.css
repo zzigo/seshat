@@ -107,8 +107,10 @@ html { max-width: 100%; overflow: hidden; }
   .expand-sidebar-handle { left: 5px !important; }
 }
 
-.tree-toolbar { display: grid; grid-template-columns: minmax(90px,1fr) 29px 24px; gap: 5px; align-items: center; padding: 8px; border-bottom: 1px solid var(--hairline); }
+.tree-toolbar { display: grid; grid-template-columns: minmax(72px,1fr) 54px 29px 24px; gap: 4px; align-items: center; padding: 8px; border-bottom: 1px solid var(--hairline); }
 .tree-toolbar input { min-width: 0; height: 29px; padding: 0 8px; border: 1px solid var(--hairline); border-radius: 0; color: var(--ink); background: rgba(255,255,255,.22); font: 11px monospace; }
+.tree-toolbar select { min-width: 0; width: 54px; height: 29px; padding: 0 3px; border: 0; color: var(--muted); background: transparent; font: 9px monospace; cursor: pointer; }
+.tree-toolbar select:hover, .tree-toolbar select:focus-visible { color: var(--green); outline: 1px solid var(--hairline); }
 .tree-toolbar button:not(.tree-collapse-btn) { border: 0; color: var(--green); background: transparent; cursor: pointer; }
 .tree-toolbar .sidebar-collapse-button { width: 24px; height: 29px; padding: 0; border: 0; color: var(--muted); background: transparent; font: 13px/1 monospace; }
 .tree-toolbar .sidebar-collapse-button:hover { color: var(--green-bright); }

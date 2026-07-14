@@ -60,6 +60,7 @@ const payload = {
     fileType: referenceFileType(reference).toUpperCase() || '—',
     filename: String((reference.source as any).originalFilename || reference.title),
     dateAdded: reference.createdAt,
+    sizeBytes: reference.artifacts.find((artifact) => artifact.kind === 'original')?.sizeBytes || 0,
     libraryIds: reference.libraryIds,
     status: referenceState(reference),
     hasOriginal: reference.artifacts.some((artifact) => artifact.kind === 'original'),
@@ -117,6 +118,12 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
         <aside class="workspace-sidebar">
           <div class="tree-toolbar">
             <input type="search" placeholder="Search catalog…" data-tree-search aria-label="Search catalog" />
+            <select data-tree-order aria-label="Order collections and references" title="Order collections and references">
+              <option value="az">A–Z</option>
+              <option value="za">Z–A</option>
+              <option value="recent">Last reads</option>
+              <option value="size">Size</option>
+            </select>
             <button type="button" data-new-library title="New library or folder">＋</button>
             <button type="button" data-collapse-sidebar class="sidebar-collapse-button" title="Collapse sidebar" aria-label="Collapse sidebar">&lt;</button>
           </div>

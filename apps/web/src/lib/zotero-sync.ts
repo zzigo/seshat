@@ -101,7 +101,7 @@ export const previewZoteroSync = async (ownerKey: string) => {
     fetchAll((start) => provider.collectionPage(start, 100)),
     fetchAll((start) => provider.itemPage(start, 100, true)),
     getCatalog().pool.query('SELECT id,title,issued,identifiers FROM catalog_references WHERE owner_key=$1', [ownerKey]),
-    getCatalog().pool.query('SELECT zotero_key FROM catalog_zotero_items WHERE owner_key=$1', [ownerKey]),
+    getCatalog().pool.query('SELECT zotero_key,reference_id FROM catalog_zotero_items WHERE owner_key=$1', [ownerKey]),
   ]);
   const doi = new Map<string, Set<string>>(); const isbn = new Map<string, Set<string>>(); const titleYear = new Map<string, Set<string>>();
   const add = (map: Map<string, Set<string>>, key: string, id: string) => { if (!key) return; const ids = map.get(key) || new Set<string>(); ids.add(id); map.set(key, ids); };
@@ -111,6 +111,7 @@ export const previewZoteroSync = async (ownerKey: string) => {
     add(titleYear, normalizedTitleYear(row.title, row.issued), row.id);
   }
   const mappedKeys = new Set(mapped.rows.map((row: any) => String(row.zotero_key)));
+  const claimedReferences = new Set(mapped.rows.map((row: any) => String(row.reference_id)).filter(Boolean));
   let alreadyMapped = 0; let automaticMerges = 0; let possibleDuplicates = 0; let newItems = 0;
   let bibliographicItems = 0;
   for (const item of itemSnapshot.objects) {
@@ -121,7 +122,12 @@ export const previewZoteroSync = async (ownerKey: string) => {
     const candidates = new Set<string>();
     const doiIds = doi.get(String(core.identifiers.doi || '').toLowerCase()); if (doiIds) doiIds.forEach((id) => candidates.add(id));
     for (const value of core.identifiers.isbn || []) isbn.get(String(value).replace(/[^0-9X]/gi, '').toUpperCase())?.forEach((id) => candidates.add(id));
-    if (candidates.size === 1) { automaticMerges += 1; continue; }
+    if (candidates.size === 1) {
+      const candidate = [...candidates][0];
+      if (claimedReferences.has(candidate)) possibleDuplicates += 1;
+      else { claimedReferences.add(candidate); automaticMerges += 1; }
+      continue;
+    }
     const titleCandidates = titleYear.get(normalizedTitleYear(core.title, core.issued));
     if (candidates.size > 1 || titleCandidates?.size) possibleDuplicates += 1;
     else newItems += 1;
@@ -220,6 +226,9 @@ const pullItems = async (input: {
     ),
   ]);
   const mappedReferences = new Map(mappedRows.rows.map((row: any) => [String(row.zotero_key), row.id as string | undefined]));
+  const zoteroKeyByReference = new Map(mappedRows.rows
+    .filter((row: any) => row.id)
+    .map((row: any) => [String(row.id), String(row.zotero_key)]));
   const doiIndex = new Map<string, Set<string>>(); const isbnIndex = new Map<string, Set<string>>(); const titleIndex = new Map<string, Set<string>>();
   const addIndex = (map: Map<string, Set<string>>, key: string, id: string) => {
     if (!key) return; const ids = map.get(key) || new Set<string>(); ids.add(id); map.set(key, ids);
@@ -248,6 +257,11 @@ const pullItems = async (input: {
         } else if (titleIndex.get(normalizedTitleYear(mapped.title, mapped.issued))?.size) {
           input.conflicts.push({ kind: 'item', key: item.key, label: mapped.title || item.key }); continue;
         }
+      }
+      const claimedBy = referenceId ? zoteroKeyByReference.get(referenceId) : undefined;
+      if (claimedBy && claimedBy !== item.key) {
+        input.conflicts.push({ kind: 'item', key: item.key, label: mapped.title || item.key });
+        continue;
       }
       const source = cleanObject({ ...mapped.source, zoteroData: item.data });
       const identifiers = cleanObject(mapped.identifiers);
@@ -301,6 +315,7 @@ const pullItems = async (input: {
         [input.ownerKey, item.key, referenceId, Number(item.version ?? item.data.version ?? 0), hash],
       );
       mappedReferences.set(item.key, referenceId);
+      zoteroKeyByReference.set(referenceId, item.key);
       indexReference(referenceId, mapped.title, mapped.issued, identifiers);
       if (input.analyzeAutomatically) {
         const artifact = await client.query('SELECT 1 FROM catalog_artifacts WHERE reference_id=$1 LIMIT 1', [referenceId]);

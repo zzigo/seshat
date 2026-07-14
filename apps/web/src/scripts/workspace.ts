@@ -20,6 +20,7 @@ type ReferenceRow = {
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string;
   bibliographicFields: Record<string,string>;
+  sizeBytes: number;
   libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
@@ -31,6 +32,8 @@ const PERSON_ROLE_LABELS:Partial<Record<Contributor['role'],string>>={author:'au
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
 const TREE_STATE_KEY = 'seshat.workspace.tree.v1';
+const TREE_ORDER_KEY = 'seshat.workspace.tree-order.v1';
+const TREE_LAST_READ_KEY = 'seshat.workspace.last-read.v1';
 const readPayload = (): WorkspacePayload => JSON.parse(document.getElementById('seshat-workspace-data')?.textContent || '{"references":[],"libraries":[]}');
 const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
 const isInboxLibraryId = (id: string) => id.startsWith('inbox:');
@@ -75,6 +78,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
   dateAdded: reference.createdAt || '',
+  sizeBytes: Number((reference.artifacts || []).find((artifact:any) => artifact.kind === 'original')?.sizeBytes || 0),
   libraryIds: reference.libraryIds || [],
   status: referenceState(reference),
   hasOriginal: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original'),
@@ -96,7 +100,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const host = root.querySelector<HTMLElement>('[data-dockview-host]');
   const tree = root.querySelector<HTMLElement>('[data-library-tree]');
   const search = root.querySelector<HTMLInputElement>('[data-tree-search]');
+  const treeOrderControl = root.querySelector<HTMLSelectElement>('[data-tree-order]');
   const saveState = root.querySelector<HTMLElement>('[data-save-state]');
+  type TreeOrder = 'az' | 'za' | 'recent' | 'size';
+  const storedTreeOrder = window.localStorage.getItem(TREE_ORDER_KEY);
+  let treeOrder: TreeOrder = storedTreeOrder === 'za' || storedTreeOrder === 'recent' || storedTreeOrder === 'size' ? storedTreeOrder : 'az';
+  let lastRead: Record<string, number> = {};
+  try { lastRead = JSON.parse(window.localStorage.getItem(TREE_LAST_READ_KEY) || '{}'); } catch { lastRead = {}; }
+  if (treeOrderControl) treeOrderControl.value = treeOrder;
   const isPhoneLayout=()=>window.matchMedia('(max-width: 1000px) and (pointer: coarse)').matches;
   const consoleRoot = root.querySelector<HTMLElement>('[data-workspace-console]');
   const consoleCurrent = root.querySelector<HTMLElement>('[data-console-current]');
@@ -2670,6 +2681,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     openDocument(referenceId: string, split = false) {
       const phone=isPhoneLayout();if(phone){window.dispatchEvent(new CustomEvent('seshat:set-sidebar',{detail:{collapsed:true}}));root.classList.remove('properties-open');closePhoneAuxiliaryPanels();}
       activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return; renderProperties(referenceId); if(!phone)root.classList.add('properties-open');
+      lastRead[referenceId] = Date.now();
+      window.localStorage.setItem(TREE_LAST_READ_KEY, JSON.stringify(lastRead));
+      if (treeOrder === 'recent') renderTree(search.value);
       if (split&&!phone) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
       const existing = api.getPanel('document-preview');
       if (existing) { previewRender?.(referenceId); existing.api.setTitle(ref.title); existing.api.setActive(); }
@@ -2805,6 +2819,34 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let lastTreeTap:{referenceId:string;time:number;x:number;y:number}|null=null;
   const renderTree = (query = '') => {
     tree.replaceChildren();
+    const alphabetical = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+    const libraryLastRead = new Map<string, number>();
+    payload.references.forEach((reference) => {
+      const readAt = Number(lastRead[reference.id] || 0);
+      if (!readAt) return;
+      reference.libraryIds.forEach((libraryId) => libraryLastRead.set(libraryId, Math.max(readAt, libraryLastRead.get(libraryId) || 0)));
+    });
+    for (let pass = 0; pass < payload.libraries.length; pass += 1) {
+      let changed = false;
+      payload.libraries.forEach((library) => {
+        if (!library.parentId) return;
+        const readAt = libraryLastRead.get(library.id) || 0;
+        if (readAt > (libraryLastRead.get(library.parentId) || 0)) { libraryLastRead.set(library.parentId, readAt); changed = true; }
+      });
+      if (!changed) break;
+    }
+    const sortLibraries = (left: LibraryNode, right: LibraryNode) => {
+      if (treeOrder === 'za') return alphabetical(right.name, left.name);
+      if (treeOrder === 'recent') return (libraryLastRead.get(right.id) || 0) - (libraryLastRead.get(left.id) || 0) || alphabetical(left.name, right.name);
+      if (treeOrder === 'size') return right.itemCount - left.itemCount || alphabetical(left.name, right.name);
+      return alphabetical(left.name, right.name);
+    };
+    const sortReferences = (left: ReferenceRow, right: ReferenceRow) => {
+      if (treeOrder === 'za') return alphabetical(right.title, left.title);
+      if (treeOrder === 'recent') return (lastRead[right.id] || 0) - (lastRead[left.id] || 0) || alphabetical(left.title, right.title);
+      if (treeOrder === 'size') return right.sizeBytes - left.sizeBytes || alphabetical(left.title, right.title);
+      return alphabetical(left.title, right.title);
+    };
     const makeButton = (label: string, directCount: number, libraryId: string | null, recursiveCount = directCount, hideEmptyDirect = false) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'tree-node';
       button.classList.toggle('active', activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
@@ -2866,7 +2908,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       } catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
     });
     tree.appendChild(allButton);
-    const children = (parentId?: string) => payload.libraries.filter((library) => (library.parentId || undefined) === parentId);
+    const children = (parentId?: string) => payload.libraries.filter((library) => (library.parentId || undefined) === parentId).sort(sortLibraries);
     const createFolder = async (library: LibraryNode) => {
       const name = await requestText('Create folder', `Name inside “${library.name}”`, '', 'Create'); if (!name) return;
       const response = await fetch('/api/libraries', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ name, parentId: library.id }) });
@@ -3109,7 +3151,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       });
       const nested = document.createElement('div'); nested.className = 'tree-children';
       children(library.id).forEach((child) => appendLibrary(child, nested));
-      const visibleReferences = own.slice(0, 100);
+      const visibleReferences = own.sort(sortReferences).slice(0, 100);
       visibleReferences.forEach((reference) => {
         const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title; item.dataset.referenceId = reference.id;
         item.classList.toggle('selected', selectedReferences.has(reference.id));
@@ -3443,6 +3485,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   });
 
   search.addEventListener('input', () => renderTree(search.value));
+  treeOrderControl?.addEventListener('change', () => {
+    treeOrder = (treeOrderControl.value || 'az') as TreeOrder;
+    window.localStorage.setItem(TREE_ORDER_KEY, treeOrder);
+    renderTree(search.value);
+  });
   keywordFilter?.addEventListener('input', renderKeywordCloud);
   root.querySelector<HTMLButtonElement>('[data-workspace-help]')?.addEventListener('click',openHelp);
   root.querySelector<HTMLButtonElement>('[data-close-properties]')?.addEventListener('click',() => root.classList.remove('properties-open'));
