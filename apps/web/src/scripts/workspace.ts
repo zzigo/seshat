@@ -2,7 +2,7 @@ import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer, type IHeaderActionsRenderer } from 'dockview-core';
-import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, parsePublicationYear, type Contributor } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -24,7 +24,8 @@ type ReferenceRow = {
   libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
-type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; keywordStyles: Record<string,string>; chirpEnabled:boolean };
+type SmartFolderNode = { id: string; name: string; filters: SmartFolderFilters; createdAt: string; updatedAt: string };
+type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; smartFolders: SmartFolderNode[]; keywordStyles: Record<string,string>; chirpEnabled:boolean };
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
@@ -94,6 +95,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
 export function mountSeshatWorkspace(root: HTMLElement): void {
   const payload = readPayload();
   payload.keywordStyles ||= {};
+  payload.smartFolders ||= [];
   payload.chirpEnabled = Boolean(payload.chirpEnabled);
   payload.references.forEach((reference) => { reference.type = normalizeBibliographicType(reference.type); });
   const references = new Map(payload.references.map((reference) => [reference.id, reference]));
@@ -127,6 +129,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let catalogQuery = '';
   let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
+  let activeSmartFolder: string | null = null;
   let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
@@ -152,8 +155,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const computeFilteredRows = () => {
     const query = normalize(catalogQuery);
+    const smartFolder = activeSmartFolder ? payload.smartFolders.find((folder) => folder.id === activeSmartFolder) : undefined;
     return payload.references.filter((reference) => (!activeLibrary
       || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : reference.libraryIds.includes(activeLibrary)))
+      && (!smartFolder || referenceMatchesSmartFolder(reference, smartFolder.filters))
       && (!activeKeyword || reference.keywords.includes(activeKeyword))
       && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status]
         .some((value) => normalize(value).includes(query))));
@@ -274,6 +279,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const response = await fetch(`/api/library/${row.id}/metadata`, { method: 'POST', body: form });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Save failed');
+    invalidateMetadataSuggestions();
     committed.set(row.id, { ...row });
     if (result.storageRename?.ok === false) {
       setSaveState(result.storageRename.warning || 'saved; Wasabi filename unchanged', 'error');
@@ -520,6 +526,84 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     ];
   };
 
+  type MetadataSuggestion<T> = { label: string; detail?: string; value: T };
+  let metadataSuggestionSequence = 0;
+  const valueSuggestionCache = new Map<string,MetadataSuggestion<string>[]>();
+  let contributorSuggestionCache:MetadataSuggestion<Contributor>[]|null=null;
+  const invalidateMetadataSuggestions=()=>{valueSuggestionCache.clear();contributorSuggestionCache=null;};
+  const attachMetadataSuggestions = <T>(input: HTMLInputElement, host: HTMLElement, getSuggestions: () => MetadataSuggestion<T>[], onSelect: (value: T) => void) => {
+    const list = document.createElement('div'); list.className = 'metadata-suggestions'; list.hidden = true; list.id = `metadata-suggestions-${++metadataSuggestionSequence}`; list.setAttribute('role', 'listbox');
+    host.classList.add('metadata-autocomplete'); host.appendChild(list);
+    input.autocomplete = 'off'; input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-controls', list.id); input.setAttribute('aria-expanded', 'false');
+    let activeIndex = -1;
+    let visible: MetadataSuggestion<T>[] = [];
+    const close = () => { visible = []; activeIndex = -1; list.hidden = true; list.replaceChildren(); input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
+    const choose = (index: number) => {
+      const suggestion = visible[index]; if (!suggestion) return;
+      onSelect(suggestion.value); close(); input.focus();
+    };
+    const paintActive = () => {
+      [...list.children].forEach((child, index) => child.classList.toggle('active', index === activeIndex));
+      const active = activeIndex >= 0 ? list.children[activeIndex] as HTMLElement | undefined : undefined;
+      if (active) input.setAttribute('aria-activedescendant', active.id); else input.removeAttribute('aria-activedescendant');
+    };
+    const render = () => {
+      const query = normalize(input.value); if (!query) { close(); return; }
+      visible = getSuggestions().filter((suggestion) => normalize(`${suggestion.label} ${suggestion.detail || ''}`).includes(query))
+        .sort((left, right) => Number(normalize(right.label).startsWith(query)) - Number(normalize(left.label).startsWith(query)) || left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+        .slice(0, 8);
+      list.replaceChildren(); activeIndex = visible.length ? 0 : -1;
+      visible.forEach((suggestion, index) => {
+        const option = document.createElement('button'); option.type = 'button'; option.id = `${list.id}-${index}`; option.setAttribute('role', 'option'); option.className = 'metadata-suggestion';
+        const label = document.createElement('span'); label.textContent = suggestion.label; option.appendChild(label);
+        if (suggestion.detail) { const detail = document.createElement('small'); detail.textContent = suggestion.detail; option.appendChild(detail); }
+        option.addEventListener('pointerdown', (event) => { event.preventDefault(); choose(index); }); list.appendChild(option);
+      });
+      list.hidden = !visible.length; input.setAttribute('aria-expanded', String(Boolean(visible.length))); paintActive();
+    };
+    input.addEventListener('input', render);
+    input.addEventListener('focus', render);
+    input.addEventListener('keydown', (event) => {
+      if (list.hidden || !visible.length) { if (event.key === 'Escape') close(); return; }
+      if (event.key === 'ArrowDown') { event.preventDefault(); activeIndex = (activeIndex + 1) % visible.length; paintActive(); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); activeIndex = (activeIndex - 1 + visible.length) % visible.length; paintActive(); }
+      else if (event.key === 'Enter') { event.preventDefault(); choose(Math.max(0, activeIndex)); }
+      else if (event.key === 'Escape') { event.preventDefault(); close(); }
+    });
+    input.addEventListener('blur', () => window.setTimeout(close, 90));
+  };
+
+  const valueSuggestions = (key: string): MetadataSuggestion<string>[] => {
+    const cached=valueSuggestionCache.get(key);if(cached)return cached;
+    const values: string[] = [];
+    payload.references.forEach((reference) => {
+      if (key === 'publisher') values.push(reference.publisher);
+      else if (key === 'publisherPlace' || key === 'place') values.push(reference.publisherPlace, reference.bibliographicFields.location, reference.bibliographicFields.venue);
+      else if (key === 'language') values.push(reference.language, reference.bibliographicFields.language);
+      else if (key === 'publication') values.push(reference.bibliographicFields.journaltitle, reference.bibliographicFields.booktitle, reference.bibliographicFields.maintitle, reference.bibliographicFields.eventtitle);
+      else values.push(reference.bibliographicFields[key]);
+    });
+    const counts = new Map<string, { label: string; count: number }>();
+    values.filter(Boolean).forEach((value) => { const id = normalize(value); const current = counts.get(id); if (current) current.count += 1; else counts.set(id, { label: String(value).trim(), count: 1 }); });
+    const suggestions=[...counts.values()].sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+      .map(({ label, count }) => ({ label, detail: count > 1 ? `${count} items` : undefined, value: label }));
+    valueSuggestionCache.set(key,suggestions);return suggestions;
+  };
+
+  const contributorSuggestions = (): MetadataSuggestion<Contributor>[] => {
+    if(contributorSuggestionCache)return contributorSuggestionCache;
+    const people = new Map<string, { person: Contributor; count: number; roles: Set<string> }>();
+    payload.references.flatMap((reference) => reference.contributors).forEach((person) => {
+      const label = person.literal || [person.family, person.given].filter(Boolean).join(', '); const id = normalize(label); if (!id) return;
+      const current = people.get(id); if (current) { current.count += 1; current.roles.add(person.role); }
+      else people.set(id, { person: { ...person }, count: 1, roles: new Set([person.role]) });
+    });
+    contributorSuggestionCache=[...people.values()].sort((left, right) => right.count - left.count).map(({ person, count, roles }) => ({
+      label: person.literal || [person.family, person.given].filter(Boolean).join(', '),
+      detail: `${[...roles].join(' · ')}${count > 1 ? ` · ${count} items` : ''}`, value: person,
+    }));return contributorSuggestionCache;
+  };
+
   const openContributorEditor = (row: ReferenceRow) => {
     type DraftContributor = { role: Contributor['role']; family: string; given: string; literal: string };
     let draft: DraftContributor[] = row.contributors.map((person) => ({
@@ -550,12 +634,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const family = document.createElement('input'); family.placeholder = 'Family'; family.value = person.family; family.setAttribute('aria-label', `Family name ${index + 1}`);
         const given = document.createElement('input'); given.placeholder = 'Given'; given.value = person.given; given.setAttribute('aria-label', `Given name ${index + 1}`);
         const literal = document.createElement('input'); literal.placeholder = 'Institution / literal'; literal.value = person.literal; literal.setAttribute('aria-label', `Literal name ${index + 1}`);
+        const familyHost = document.createElement('div'); const givenHost = document.createElement('div'); const literalHost = document.createElement('div'); familyHost.appendChild(family); givenHost.appendChild(given); literalHost.appendChild(literal);
         const syncMode = () => { item.classList.toggle('is-literal', Boolean(literal.value.trim())); };
         family.addEventListener('input', () => { person.family = family.value; }); given.addEventListener('input', () => { person.given = given.value; });
         literal.addEventListener('input', () => { person.literal = literal.value; syncMode(); }); syncMode();
+        const selectPerson = (selected: Contributor) => {
+          person.family = selected.literal ? '' : selected.family || ''; person.given = selected.literal ? '' : selected.given || ''; person.literal = selected.literal || '';
+          family.value = person.family; given.value = person.given; literal.value = person.literal; syncMode();
+        };
+        attachMetadataSuggestions(family, familyHost, contributorSuggestions, selectPerson);
+        attachMetadataSuggestions(given, givenHost, contributorSuggestions, selectPerson);
+        attachMetadataSuggestions(literal, literalHost, contributorSuggestions, selectPerson);
         const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'contributor-remove'; remove.textContent = '×'; remove.title = 'Remove contributor';
         remove.addEventListener('click', () => { draft.splice(index, 1); render(); });
-        item.append(handle, role, family, given, literal, remove); list.appendChild(item);
+        item.append(handle, role, familyHost, givenHost, literalHost, remove); list.appendChild(item);
       });
     };
     render();
@@ -2776,9 +2868,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const input = key==='abstract'?document.createElement('textarea'):document.createElement('input'); input.value = String(row[key] || ''); input.disabled = row.access === 'viewer';
       if(key==='year'){input.inputMode='text';input.placeholder='e.g. 2024 or -350';input.title='Negative years represent BCE; year 0 is not used.';}
       input.addEventListener('change',() => { (row as any)[key] = key === 'year' ? (parsePublicationYear(input.value) ?? input.value) : input.value; refreshTable(); renderTree(search?.value || ''); scheduleSave(row); });
-      label.append(caption,input); form.appendChild(label);
+      label.append(caption,input);
+      if (input instanceof HTMLInputElement && ['publisher','publisherPlace','language'].includes(key)) {
+        const suggestionKey = key === 'publisherPlace' ? 'place' : key;
+        attachMetadataSuggestions(input,label,() => valueSuggestions(suggestionKey),(value) => { input.value = value; input.dispatchEvent(new Event('change',{ bubbles:true })); });
+      }
+      form.appendChild(label);
     };
-    const biblatexField=(definition:(typeof BIBLATEX_FIELD_OPTIONS)[number])=>{const coreKey=definition.key==='location'?'publisherPlace':definition.key;const core=new Set(['title','year','language','publisher','publisherPlace','url','abstract','isbn']);if(core.has(coreKey)){field(definition.label,coreKey as any);return;}const label=document.createElement('label');label.className='property-field';const caption=document.createElement('span');caption.textContent=definition.label;const input=['note','annotation'].includes(definition.key)?document.createElement('textarea'):document.createElement('input');input.value=row.bibliographicFields[definition.key]||'';input.disabled=row.access==='viewer';input.addEventListener('change',()=>{const value=input.value.trim();if(value)row.bibliographicFields[definition.key]=value;else delete row.bibliographicFields[definition.key];refreshTable();scheduleSave(row);});label.append(caption,input);form.appendChild(label);};
+    const biblatexField=(definition:(typeof BIBLATEX_FIELD_OPTIONS)[number])=>{const coreKey=definition.key==='location'?'publisherPlace':definition.key;const core=new Set(['title','year','language','publisher','publisherPlace','url','abstract','isbn']);if(core.has(coreKey)){field(definition.label,coreKey as any);return;}const label=document.createElement('label');label.className='property-field';const caption=document.createElement('span');caption.textContent=definition.label;const input=['note','annotation'].includes(definition.key)?document.createElement('textarea'):document.createElement('input');input.value=row.bibliographicFields[definition.key]||'';input.disabled=row.access==='viewer';input.addEventListener('change',()=>{const value=input.value.trim();if(value)row.bibliographicFields[definition.key]=value;else delete row.bibliographicFields[definition.key];refreshTable();scheduleSave(row);});label.append(caption,input);if(input instanceof HTMLInputElement&&['journaltitle','booktitle','maintitle','eventtitle','venue','institution','organization','school','series'].includes(definition.key)){attachMetadataSuggestions(input,label,()=>valueSuggestions(definition.key),(value)=>{input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));});}form.appendChild(label);};
     const typeField = () => {
       const label = document.createElement('label'); label.className = 'property-field'; const caption = document.createElement('span'); caption.textContent = 'Type';
       const select = document.createElement('select'); select.disabled = row.access === 'viewer';
@@ -2939,6 +3036,59 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
   }
 
+  const openSmartFolderEditor = (existing?: SmartFolderNode) => {
+    const dialog = dialogShell(existing ? `Edit smart folder · ${existing.name}` : 'New smart folder'); dialog.classList.add('smart-folder-dialog');
+    const form = document.createElement('form'); form.className = 'smart-folder-editor';
+    const intro = document.createElement('p'); intro.textContent = 'All filled criteria are combined. Results update automatically whenever item metadata changes.';
+    const fields = document.createElement('div'); fields.className = 'smart-folder-fields';
+    const inputs = new Map<string, HTMLInputElement>();
+    const addField = (key: string, labelText: string, value = '', options: { placeholder?: string; type?: string; step?: string; min?: string; suggestions?: () => MetadataSuggestion<string>[] } = {}) => {
+      const label = document.createElement('label'); const caption = document.createElement('span'); caption.textContent = labelText;
+      const input = document.createElement('input'); input.type = options.type || 'text'; input.value = value; input.placeholder = options.placeholder || ''; input.autocomplete = 'off';
+      if (options.step) input.step = options.step; if (options.min) input.min = options.min;
+      label.append(caption,input); if (options.suggestions) attachMetadataSuggestions(input,label,options.suggestions,(selected) => { input.value = selected; });
+      fields.appendChild(label); inputs.set(key,input); return input;
+    };
+    const filters = existing?.filters || {};
+    const name = addField('name','Folder name',existing?.name || '',{ placeholder:'e.g. Oxford · Ancient philosophy' }); name.required = true; name.maxLength = 160;
+    addField('author','Author / person',filters.author || '',{ placeholder:'Name contains…', suggestions:() => contributorSuggestions().map((suggestion) => ({ label:suggestion.label,detail:suggestion.detail,value:suggestion.label })) });
+    addField('publisher','Publisher',filters.publisher || '',{ placeholder:'Publisher contains…', suggestions:() => valueSuggestions('publisher') });
+    addField('publication','Journal / publication',filters.publication || '',{ placeholder:'Journal, book or proceedings…', suggestions:() => valueSuggestions('publication') });
+    addField('place','Place / venue',filters.place || '',{ placeholder:'Place contains…', suggestions:() => valueSuggestions('place') });
+    addField('series','Series',filters.series || '',{ placeholder:'Series contains…', suggestions:() => valueSuggestions('series') });
+    addField('language','Language',filters.language || '',{ placeholder:'e.g. es, en, de…', suggestions:() => valueSuggestions('language') });
+    addField('yearFrom','Year from',filters.yearFrom === undefined ? '' : String(filters.yearFrom),{ type:'number', step:'1', placeholder:'Including BCE: -350' });
+    addField('yearTo','Year up to',filters.yearTo === undefined ? '' : String(filters.yearTo),{ type:'number', step:'1', placeholder:'Inclusive' });
+    addField('sizeMinMb','Minimum size (MB)',filters.sizeMinBytes === undefined ? '' : String(Math.round(filters.sizeMinBytes / 104857.6) / 10),{ type:'number', step:'0.1', min:'0' });
+    addField('sizeMaxMb','Maximum size (MB)',filters.sizeMaxBytes === undefined ? '' : String(Math.round(filters.sizeMaxBytes / 104857.6) / 10),{ type:'number', step:'0.1', min:'0' });
+    const status = document.createElement('p'); status.className = 'smart-folder-status'; status.setAttribute('aria-live','polite');
+    const footer = document.createElement('footer'); const cancel = document.createElement('button'); cancel.type='button';cancel.textContent='Cancel';cancel.addEventListener('click',()=>dialog.close());
+    const save = document.createElement('button'); save.type='submit';save.className='primary';save.textContent=existing?'Save smart folder':'Create smart folder';footer.append(cancel,save);
+    form.append(intro,fields,status,footer); dialog.appendChild(form);
+    form.addEventListener('submit',async(event)=>{
+      event.preventDefault();
+      const raw:Record<string,unknown>={};
+      for(const key of ['author','publisher','publication','place','series','language','yearFrom','yearTo']){const value=inputs.get(key)?.value.trim();if(value)raw[key]=value;}
+      for(const [inputKey,filterKey] of [['sizeMinMb','sizeMinBytes'],['sizeMaxMb','sizeMaxBytes']] as const){const value=Number(inputs.get(inputKey)?.value);if(Number.isFinite(value)&&value>=0&&inputs.get(inputKey)?.value!=='')raw[filterKey]=Math.round(value*1024*1024);}
+      const normalizedFilters=normalizeSmartFolderFilters(raw);if(!smartFolderHasFilters(normalizedFilters)){status.textContent='Add at least one filter.';status.dataset.tone='error';return;}
+      save.disabled=true;status.textContent='Saving…';status.dataset.tone='';
+      try{
+        const response=await fetch(existing?`/api/smart-folders/${existing.id}`:'/api/smart-folders',{method:existing?'PATCH':'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:name.value.trim(),filters:normalizedFilters})});
+        const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not save smart folder.');
+        const saved=result.smartFolder as SmartFolderNode;if(existing)Object.assign(existing,saved);else payload.smartFolders.push(saved);
+        activeLibrary=null;activeSmartFolder=saved.id;refreshTable();renderTree(search.value);controller.openCatalog();setSaveState(existing?'smart folder updated':'smart folder created');dialog.close();
+      }catch(error){save.disabled=false;status.textContent=error instanceof Error?error.message:'Could not save smart folder.';status.dataset.tone='error';}
+    });
+    window.requestAnimationFrame(()=>name.focus());
+  };
+
+  const deleteSmartFolder = async (folder: SmartFolderNode) => {
+    if(!await confirmAction('Delete smart folder',`Delete “${folder.name}”? No references will be deleted.`,'Delete smart folder'))return;
+    try{const response=await fetch(`/api/smart-folders/${folder.id}`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not delete smart folder.');
+      payload.smartFolders=payload.smartFolders.filter((item)=>item.id!==folder.id);if(activeSmartFolder===folder.id)activeSmartFolder=null;refreshTable();renderTree(search.value);setSaveState('smart folder deleted');
+    }catch(error){setSaveState(error instanceof Error?error.message:'Could not delete smart folder.','error');}
+  };
+
   let lastTreeTap:{referenceId:string;time:number;x:number;y:number}|null=null;
   const renderTree = (query = '') => {
     tree.replaceChildren();
@@ -2972,14 +3122,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     const makeButton = (label: string, directCount: number, libraryId: string | null, recursiveCount = directCount, hideEmptyDirect = false) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'tree-node';
-      button.classList.toggle('active', activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
+      button.classList.toggle('active', !activeSmartFolder && activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
       const text = document.createElement('span'); text.textContent = label;
       const counts = document.createElement('span'); counts.className = 'tree-counts';
       if (!(hideEmptyDirect && directCount === 0)) {
         const direct = document.createElement('b'); direct.className = 'tree-count-direct'; direct.textContent = String(directCount); direct.title = 'Items directly in this collection'; counts.appendChild(direct);
       }
       const recursive = document.createElement('b'); recursive.className = 'tree-count-recursive'; recursive.textContent = String(recursiveCount); recursive.title = 'Items in this collection and all nested folders'; counts.appendChild(recursive);
-      button.append(text, counts); button.addEventListener('click', () => { activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
+      button.append(text, counts); button.addEventListener('click', () => { activeSmartFolder = null; activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
       return button;
     };
     const matched = payload.references.filter((reference) => !query || [reference.title, reference.contributorsDisplay, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
@@ -3377,6 +3527,19 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       details.appendChild(nested); container.appendChild(details);
     };
     children().forEach((library) => appendLibrary(library, tree));
+    const smartSection=document.createElement('section');smartSection.className='smart-folder-section';
+    const smartHeader=document.createElement('header');const smartTitle=document.createElement('span');smartTitle.textContent='Smart folders';
+    const addSmart=document.createElement('button');addSmart.type='button';addSmart.textContent='＋';addSmart.title='New smart folder';addSmart.setAttribute('aria-label','New smart folder');addSmart.addEventListener('click',()=>openSmartFolderEditor());smartHeader.append(smartTitle,addSmart);smartSection.appendChild(smartHeader);
+    [...payload.smartFolders].sort((left,right)=>alphabetical(left.name,right.name)).forEach((folder)=>{
+      const count=matched.filter((reference)=>referenceMatchesSmartFolder(reference,folder.filters)).length;
+      const button=document.createElement('button');button.type='button';button.className='smart-folder-node';button.classList.toggle('active',activeSmartFolder===folder.id);button.title=`${folder.name} · ${count} matching item${count===1?'':'s'}`;
+      const icon=document.createElement('span');icon.className='smart-folder-icon';icon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><path d="M5 7h8M5 9.5h5"/></svg>';
+      const label=document.createElement('span');label.textContent=folder.name;const total=document.createElement('b');total.textContent=String(count);button.append(icon,label,total);
+      button.addEventListener('click',()=>{activeLibrary=null;activeSmartFolder=folder.id;refreshTable();renderTree(search.value);controller.openCatalog();});
+      button.addEventListener('contextmenu',(event)=>openContextMenu(event,[{label:'Edit smart folder…',action:()=>openSmartFolderEditor(folder)},{label:'Delete smart folder…',danger:true,action:()=>deleteSmartFolder(folder)}]));
+      smartSection.appendChild(button);
+    });
+    tree.appendChild(smartSection);
     treeRevealReferenceId = null;
   };
 
@@ -3384,7 +3547,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if(!referenceId)return;
     const reference=references.get(referenceId);if(!reference)return;
     const targetId=(activeLibrary&&reference.libraryIds.includes(activeLibrary)?activeLibrary:undefined)||reference.libraryIds.find((id)=>payload.libraries.some((library)=>library.id===id))||(isUnfiledReference(reference)?payload.libraries.find((library)=>isInboxLibraryId(library.id))?.id:undefined);
-    activeLibrary=targetId||null;
+    activeSmartFolder=null;activeLibrary=targetId||null;
     if(targetId){let current=payload.libraries.find((library)=>library.id===targetId);while(current){collapsedLibraries.delete(current.id);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries]));}
     activeReference=referenceId;selectedReferences.clear();selectedReferences.add(referenceId);treeSelectionAnchor=referenceId;
     search.value='';catalogQuery='';
@@ -3413,6 +3576,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const current = references.get(next.id);
     if (current) Object.assign(current, next);
     else { payload.references.unshift(next); references.set(next.id, next); }
+    invalidateMetadataSuggestions();
     committed.set(next.id, { ...(references.get(next.id) as ReferenceRow) });
     refreshTable();
     renderTree(search.value);

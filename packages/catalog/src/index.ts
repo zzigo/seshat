@@ -72,6 +72,28 @@ export interface CatalogLibraryShare {
   createdAt: string;
 }
 
+export interface CatalogSmartFolderFilters {
+  author?: string;
+  publisher?: string;
+  publication?: string;
+  place?: string;
+  series?: string;
+  language?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  sizeMinBytes?: number;
+  sizeMaxBytes?: number;
+}
+
+export interface CatalogSmartFolder {
+  id: string;
+  ownerKey: string;
+  name: string;
+  filters: CatalogSmartFolderFilters;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CatalogAnnotation {
   id: string;
   referenceId: string;
@@ -463,6 +485,17 @@ const schema = `
   ALTER TABLE catalog_libraries DROP CONSTRAINT IF EXISTS catalog_libraries_owner_key_name_key;
   CREATE UNIQUE INDEX IF NOT EXISTS catalog_libraries_owner_parent_name_unique_idx
     ON catalog_libraries (owner_key, COALESCE(parent_id, ''), name);
+  CREATE TABLE IF NOT EXISTS catalog_smart_folders (
+    id text PRIMARY KEY,
+    owner_key text NOT NULL,
+    name text NOT NULL,
+    filters jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(owner_key,name)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS catalog_smart_folders_owner_name_idx
+    ON catalog_smart_folders(owner_key,lower(name));
   CREATE TABLE IF NOT EXISTS catalog_library_shares (
     library_id text NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
     grantee_owner_key text NOT NULL,
@@ -1336,6 +1369,48 @@ export class PostgresCatalog {
     if (!row) throw new Error('PARENT_LIBRARY_NOT_FOUND');
     return { id: row.id, ownerKey: row.owner_key, name: row.name,
       parentId: row.parent_id ?? undefined, itemCount: 0, createdAt: new Date(row.created_at).toISOString(), access: 'owner' };
+  }
+
+  async listSmartFolders(ownerKey: string): Promise<CatalogSmartFolder[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'SELECT * FROM catalog_smart_folders WHERE owner_key=$1 ORDER BY lower(name),created_at', [ownerKey],
+    );
+    return result.rows.map((row) => ({
+      id: row.id, ownerKey: row.owner_key, name: row.name, filters: row.filters || {},
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
+
+  async createSmartFolder(ownerKey: string, name: string, filters: CatalogSmartFolderFilters): Promise<CatalogSmartFolder> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `INSERT INTO catalog_smart_folders(id,owner_key,name,filters)
+       VALUES($1,$2,$3,$4::jsonb) RETURNING *`,
+      [crypto.randomUUID(), ownerKey, name, JSON.stringify(filters)],
+    );
+    const row = result.rows[0];
+    return { id: row.id, ownerKey: row.owner_key, name: row.name, filters: row.filters || {},
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+  }
+
+  async updateSmartFolder(ownerKey: string, id: string, input: { name?: string; filters?: CatalogSmartFolderFilters }): Promise<CatalogSmartFolder | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE catalog_smart_folders SET
+         name=COALESCE($3,name), filters=COALESCE($4::jsonb,filters), updated_at=now()
+       WHERE id=$1 AND owner_key=$2 RETURNING *`,
+      [id, ownerKey, input.name ?? null, input.filters === undefined ? null : JSON.stringify(input.filters)],
+    );
+    const row = result.rows[0];
+    return row ? { id: row.id, ownerKey: row.owner_key, name: row.name, filters: row.filters || {},
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() } : null;
+  }
+
+  async deleteSmartFolder(ownerKey: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query('DELETE FROM catalog_smart_folders WHERE id=$1 AND owner_key=$2', [id, ownerKey]);
+    return result.rowCount === 1;
   }
 
   async ensureLibraryPath(ownerKey: string, names: string[]): Promise<CatalogLibrary | null> {

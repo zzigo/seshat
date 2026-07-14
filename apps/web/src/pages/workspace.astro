@@ -19,8 +19,8 @@ const ownerKey = ownerKeyFor(email);
 const chirpEnabled = chirpAccessAllowed(email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
-const [references, libraries, keywordStyleRows, zoteroStatus] = await Promise.all([
-  catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey),
+const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus] = await Promise.all([
+  catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey), catalog.listSmartFolders(ownerKey),
   catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
   getZoteroConnectionStatus(ownerKey),
 ]);
@@ -75,6 +75,7 @@ const payload = {
     access: reference.access,
   })),
   libraries,
+  smartFolders,
   chirpEnabled,
   keywordStyles: Object.fromEntries(keywordStyleRows.rows.map((row:any) => [row.keyword,row.color])),
 };

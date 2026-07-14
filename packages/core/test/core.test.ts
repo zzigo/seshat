@@ -11,6 +11,8 @@ import {
   normalizeBibliographicType,
   formatPublicationYear,
   parsePublicationYear,
+  normalizeSmartFolderFilters,
+  referenceMatchesSmartFolder,
   type BibliographicItem,
 } from '../src/index.js';
 
@@ -107,4 +109,25 @@ test('reports malformed and incomplete metadata deterministically', () => {
     report.issues.map((current) => current.code),
     ['missing-title', 'missing-primary-contributor', 'implausible-year', 'invalid-doi', 'invalid-isbn', 'missing-original'],
   );
+});
+
+test('matches saved smart-folder criteria as an AND query', () => {
+  const reference = {
+    contributors: [{ family: 'Aristotle', given: '', role: 'author' as const }],
+    publisher: 'Oxford University Press', publisherPlace: 'Oxford', language: 'grc',
+    year: -350, sizeBytes: 12 * 1024 * 1024,
+    bibliographicFields: { booktitle: 'Complete Works', series: 'Classical Library' },
+  };
+  assert.equal(referenceMatchesSmartFolder(reference, {
+    author: 'arist', publisher: 'oxford', publication: 'complete', place: 'oxf', series: 'classical',
+    language: 'grc', yearFrom: -400, yearTo: -300, sizeMinBytes: 10 * 1024 * 1024,
+  }), true);
+  assert.equal(referenceMatchesSmartFolder(reference, { author: 'Plato' }), false);
+  assert.equal(referenceMatchesSmartFolder(reference, { yearFrom: -349 }), false);
+});
+
+test('normalizes reversed smart-folder ranges', () => {
+  assert.deepEqual(normalizeSmartFolderFilters({ yearFrom: 2020, yearTo: 1900, sizeMinBytes: 9, sizeMaxBytes: 2 }), {
+    yearFrom: 1900, yearTo: 2020, sizeMinBytes: 2, sizeMaxBytes: 9,
+  });
 });
