@@ -3322,41 +3322,49 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     relate: 'Relating document to the corpus',
   };
 
-  const followPipeline = async (referenceId: string, activityId: string, filename: string) => {
+  const pipelineFollowers = new Map<string, Promise<void>>();
+  const MAX_PIPELINE_FOLLOWERS = 3;
+  const runPipelineFollower = async (referenceId: string, activityId: string, filename: string) => {
     setProcessing(referenceId, true);
+    let previousReference = '';
     try {
-    for (let attempt = 0; attempt < 180; attempt += 1) {
-      const response = await fetch(`/api/library/${referenceId}/status`, { cache: 'no-store' });
-      if (!response.ok) throw new Error('Could not read processing state.');
-      const status = await response.json();
-      upsertRow(status.reference as ReferenceRow);
-      if (status.failed) {
-        updateActivity(activityId, { state: 'error', message: `${filename} · ${status.failed}` });
-        return;
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        const response = await fetch(`/api/library/${referenceId}/status`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Could not read processing state.');
+        const status = await response.json();
+        const nextReference = JSON.stringify(status.reference || {});
+        if (nextReference !== previousReference) {
+          previousReference = nextReference;
+          upsertRow(status.reference as ReferenceRow);
+        }
+        if (status.failed) {
+          updateActivity(activityId, { state: 'error', message: `${filename} · ${status.failed}` });
+          return;
+        }
+        if (status.ready) {
+          updateActivity(activityId, { state: 'complete', message: `${status.reference.title} · metadata and summary ready`, referenceId, mapReady: status.reference.hasStructure });
+          return;
+        }
+        const active = status.pipeline.find((job:any) => job.status === 'running' || job.status === 'queued');
+        updateActivity(activityId, { message: `${filename} · ${stageMessage[active?.stage] || 'Waiting for worker'}`, referenceId });
+        await wait(8000);
       }
-      if (status.ready) {
-        updateActivity(activityId, { state: 'complete', message: `${status.reference.title} · metadata and summary ready`, referenceId, mapReady: status.reference.hasStructure });
-        return;
-      }
-      const active = status.pipeline.find((job:any) => job.status === 'running' || job.status === 'queued');
-      updateActivity(activityId, { message: `${filename} · ${stageMessage[active?.stage] || 'Waiting for worker'}`, referenceId });
-      await wait(4000);
-    }
-    updateActivity(activityId, { state: 'error', message: `${filename} · processing timed out` });
+      updateActivity(activityId, { state: 'error', message: `${filename} · processing continues in background` });
     } finally {
       setProcessing(referenceId, false);
     }
   };
-
-  // Resume subtle status feedback for items still processing at page load.
-  payload.references
-    .filter((reference) => isProcessingReference(reference) && !processingReferences.has(reference.id))
-    .slice(0, 20)
-    .forEach((reference) => {
-      const activityId = `resume-${reference.id}`;
-      updateActivity(activityId, { state: 'working', referenceId: reference.id, message: `${reference.title} · checking processing status` });
-      void followPipeline(reference.id, activityId, reference.filename || reference.title).catch(() => {});
-    });
+  const followPipeline = (referenceId: string, activityId: string, filename: string): Promise<void> => {
+    const existing = pipelineFollowers.get(referenceId);
+    if (existing) return existing;
+    if (pipelineFollowers.size >= MAX_PIPELINE_FOLLOWERS) {
+      updateActivity(activityId, { state: 'complete', referenceId, message: `${filename} · queued; processing continues in background` });
+      return Promise.resolve();
+    }
+    const follower = runPipelineFollower(referenceId, activityId, filename).finally(() => pipelineFollowers.delete(referenceId));
+    pipelineFollowers.set(referenceId, follower);
+    return follower;
+  };
 
   const replaceAssociatedFile = async (referenceId: string, file: File) => {
     const reference = references.get(referenceId);
