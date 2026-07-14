@@ -634,9 +634,30 @@ export class PostgresCatalog {
     this.pool = new Pool({ connectionString, max: 6 });
   }
 
+  private async ensureSchemaLocked(): Promise<void> {
+    const client = await this.pool.connect();
+    const advisoryLock = 'seshat:catalog:schema:v1';
+    try {
+      // The web server, worker, and background sync process may boot together.
+      // Serialize the DDL across processes because several schema statements
+      // require exclusive relation locks and can otherwise deadlock PostgreSQL.
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [advisoryLock]);
+      await client.query(schema);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [advisoryLock]).catch(() => undefined);
+      client.release();
+    }
+  }
+
   ensureSchema(): Promise<void> {
-    this.#ready ??= this.pool.query(schema).then(() => undefined);
-    return this.#ready;
+    if (this.#ready) return this.#ready;
+    const attempt = this.ensureSchemaLocked().catch((error) => {
+      // A transient database error must not poison this process forever.
+      this.#ready = undefined;
+      throw error;
+    });
+    this.#ready = attempt;
+    return attempt;
   }
 
   async getTtsUsage(provider: string, month: string): Promise<number> {
