@@ -1761,6 +1761,160 @@ export class PostgresCatalog {
     return (result.rowCount || 0) > 0;
   }
 
+  async mergeReferences(ownerKey: string, keepId: string, duplicateIds: string[]): Promise<CatalogReference | null> {
+    await this.ensureSchema();
+    const mergedIds = [...new Set(duplicateIds.map(String).filter((id) => id && id !== keepId))].slice(0, 49);
+    if (!keepId || !mergedIds.length) throw new Error('MERGE_REQUIRES_DUPLICATES');
+    const allIds = [keepId, ...mergedIds];
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'SELECT * FROM catalog_references WHERE owner_key=$1 AND id=ANY($2::text[]) FOR UPDATE',
+        [ownerKey, allIds],
+      );
+      if (result.rows.length !== allIds.length) throw new Error('MERGE_REFERENCE_NOT_FOUND');
+      const keep = result.rows.find((row) => row.id === keepId);
+      if (!keep) throw new Error('MERGE_REFERENCE_NOT_FOUND');
+      const duplicates = mergedIds.map((id) => result.rows.find((row) => row.id === id)).filter(Boolean);
+
+      const artifacts = await client.query(
+        'SELECT * FROM catalog_artifacts WHERE reference_id=ANY($1::text[]) ORDER BY created_at,id',
+        [allIds],
+      );
+      const keepArtifacts = artifacts.rows.filter((row) => row.reference_id === keepId);
+      const duplicateArtifacts = artifacts.rows.filter((row) => row.reference_id !== keepId);
+      let hasOriginal = keepArtifacts.some((row) => row.kind === 'original');
+      const promotedOriginal = hasOriginal ? undefined : duplicateArtifacts.find((row) => row.kind === 'original');
+      const zoteroMappings = await client.query(
+        'SELECT * FROM catalog_zotero_items WHERE owner_key=$1 AND reference_id=ANY($2::text[]) ORDER BY version DESC,zotero_key',
+        [ownerKey, allIds],
+      );
+      const keepZoteroMapping = zoteroMappings.rows.find((row) => row.reference_id === keepId);
+      const promotedZoteroMapping = keepZoteroMapping || zoteroMappings.rows.find((row) => row.reference_id !== keepId);
+
+      const text = (field: string): string | null => {
+        const current = String(keep[field] || '').trim();
+        if (current) return current;
+        const candidate = duplicates.find((row) => String(row[field] || '').trim());
+        return candidate ? String(candidate[field]).trim() : null;
+      };
+      const longest = (field: string): string | null => {
+        const candidates = [keep, ...duplicates].map((row) => String(row[field] || '').trim()).filter(Boolean);
+        return candidates.sort((left, right) => right.length - left.length)[0] || null;
+      };
+      const genericTypes = new Set(['', 'misc', 'document', 'unpublished']);
+      const type = genericTypes.has(String(keep.type || '').toLowerCase())
+        ? String(duplicates.find((row) => !genericTypes.has(String(row.type || '').toLowerCase()))?.type || keep.type || 'misc')
+        : String(keep.type);
+      const contributors = Array.isArray(keep.contributors) && keep.contributors.length
+        ? keep.contributors
+        : duplicates.find((row) => Array.isArray(row.contributors) && row.contributors.length)?.contributors || [];
+      const issued = keep.issued || duplicates.find((row) => row.issued)?.issued || null;
+      const identifiers = duplicates.reduce((values, row) => ({ ...values, ...(row.identifiers || {}) }), {} as Record<string, unknown>);
+      Object.assign(identifiers, keep.identifiers || {});
+      const isbn = [...new Set([keep, ...duplicates].flatMap((row) => Array.isArray(row.identifiers?.isbn) ? row.identifiers.isbn.map(String) : []))];
+      if (isbn.length) identifiers.isbn = isbn;
+      const tags = [...new Set([keep, ...duplicates].flatMap((row) => Array.isArray(row.tags) ? row.tags.map(String) : []))];
+      const source = { ...(keep.source || {}) } as Record<string, any>;
+      const mergedReferences = Array.isArray(source.mergedReferences) ? [...source.mergedReferences] : [];
+      for (const row of duplicates) mergedReferences.push({
+        id: row.id, citeKey: row.cite_key, title: row.title, type: row.type,
+        originalSha256: row.original_sha256, mergedAt: new Date().toISOString(),
+      });
+      source.mergedReferences = mergedReferences;
+      source.zoteroMergedKeys = [...new Set([
+        ...[keep, ...duplicates].flatMap((row) => Array.isArray(row.source?.zoteroMergedKeys) ? row.source.zoteroMergedKeys.map(String) : []),
+        ...zoteroMappings.rows.filter((row) => row.zotero_key !== promotedZoteroMapping?.zotero_key).map((row) => String(row.zotero_key)),
+      ])];
+      source.bibtex = duplicates.reduce((values, row) => ({ ...values, ...(row.source?.bibtex || {}) }), {});
+      source.bibtex = { ...source.bibtex, ...(keep.source?.bibtex || {}) };
+      source.biblatexFields = duplicates.reduce((values, row) => ({ ...values, ...(row.source?.biblatexFields || {}) }), {});
+      source.biblatexFields = { ...source.biblatexFields, ...(keep.source?.biblatexFields || {}) };
+      source.keywords = [...new Set([keep, ...duplicates].flatMap((row) => Array.isArray(row.source?.keywords) ? row.source.keywords.map(String) : []))];
+      if (promotedOriginal) {
+        const origin = duplicates.find((row) => row.id === promotedOriginal.reference_id);
+        source.originalFilename = origin?.source?.originalFilename || promotedOriginal.object_key.split('/').pop() || source.originalFilename;
+        source.wasabiObjectKey = promotedOriginal.object_key;
+        if (origin?.source?.wasabiStorageRoot) source.wasabiStorageRoot = origin.source.wasabiStorageRoot;
+      }
+
+      await client.query(
+        `UPDATE catalog_references SET title=$3,type=$4,contributors=$5::jsonb,issued=$6::jsonb,
+           identifiers=$7::jsonb,tags=$8::text[],abstract=$9,language=$10,publisher=$11,
+           publisher_place=$12,url=$13,source=$14::jsonb,word_count=$15,
+           created_at=LEAST(created_at,$16::timestamptz),updated_at=now()
+         WHERE owner_key=$1 AND id=$2`,
+        [ownerKey, keepId,
+          /^untitled$/i.test(String(keep.title || '').trim()) ? text('title') || keep.title : keep.title,
+          type, JSON.stringify(contributors), JSON.stringify(issued), JSON.stringify(identifiers), tags,
+          longest('abstract'), text('language'), text('publisher'), text('publisher_place'), text('url'),
+          JSON.stringify(source), Math.max(...[keep, ...duplicates].map((row) => Number(row.word_count || 0))),
+          [keep, ...duplicates].map((row) => new Date(row.created_at).toISOString()).sort()[0]],
+      );
+
+      for (const artifact of duplicateArtifacts) {
+        let kind = `alternate-${artifact.kind}`;
+        if (artifact.kind === 'original' && !hasOriginal) { kind = 'original'; hasOriginal = true; }
+        await client.query('UPDATE catalog_artifacts SET reference_id=$1,kind=$2 WHERE id=$3', [keepId, kind, artifact.id]);
+      }
+
+      await client.query(
+        `INSERT INTO catalog_library_items(library_id,reference_id,added_at)
+         SELECT library_id,$1,MIN(added_at) FROM catalog_library_items
+         WHERE reference_id=ANY($2::text[]) GROUP BY library_id ON CONFLICT DO NOTHING`,
+        [keepId, mergedIds],
+      );
+      await client.query(
+        `UPDATE catalog_annotations SET reference_id=$1,
+           source_kind=CASE WHEN source_kind LIKE 'merged-%' THEN source_kind ELSE 'merged-' || source_kind END,
+           review_status='merged',updated_at=now()
+         WHERE owner_key=$2 AND reference_id=ANY($3::text[])`,
+        [keepId, ownerKey, mergedIds],
+      );
+      await client.query(
+        'UPDATE catalog_graph_edges SET evidence_reference_id=$1,updated_at=now() WHERE owner_key=$2 AND evidence_reference_id=ANY($3::text[])',
+        [keepId, ownerKey, mergedIds],
+      );
+      await client.query(
+        `INSERT INTO catalog_reading_state(owner_key,reference_id,location,preferences,updated_at)
+         SELECT owner_key,$1,location,preferences,updated_at FROM catalog_reading_state
+         WHERE owner_key=$2 AND reference_id=ANY($3::text[]) ORDER BY updated_at DESC LIMIT 1
+         ON CONFLICT(owner_key,reference_id) DO NOTHING`,
+        [keepId, ownerKey, mergedIds],
+      );
+
+      const keepPaper = await client.query('SELECT 1 FROM catalog_papers WHERE reference_id=$1', [keepId]);
+      if (!keepPaper.rows[0]) {
+        const paper = await client.query(
+          `SELECT reference_id FROM catalog_papers WHERE owner_key=$1 AND reference_id=ANY($2::text[])
+           ORDER BY (resolution_status='resolved') DESC,resolution_confidence DESC,updated_at DESC LIMIT 1`,
+          [ownerKey, mergedIds],
+        );
+        if (paper.rows[0]) await client.query('UPDATE catalog_papers SET reference_id=$1,updated_at=now() WHERE reference_id=$2', [keepId, paper.rows[0].reference_id]);
+      }
+      if (!keepZoteroMapping && promotedZoteroMapping) {
+        await client.query('UPDATE catalog_zotero_items SET reference_id=$1,synced_at=now() WHERE owner_key=$2 AND zotero_key=$3', [keepId, ownerKey, promotedZoteroMapping.zotero_key]);
+      }
+
+      await client.query(
+        `INSERT INTO catalog_vector_deletions(chunk_id)
+         SELECT id FROM catalog_chunks WHERE owner_key=$1 AND reference_id=ANY($2::text[])
+         ON CONFLICT(chunk_id) DO NOTHING`,
+        [ownerKey, mergedIds],
+      );
+      await client.query('DELETE FROM catalog_references WHERE owner_key=$1 AND id=ANY($2::text[])', [ownerKey, mergedIds]);
+      if (promotedOriginal) {
+        await client.query('UPDATE catalog_references SET original_sha256=$3 WHERE owner_key=$1 AND id=$2', [ownerKey, keepId, promotedOriginal.sha256]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+    return this.get(ownerKey, keepId);
+  }
+
   async deleteReference(ownerKey: string, id: string): Promise<boolean> {
     await this.ensureSchema();
     const result = await this.pool.query(

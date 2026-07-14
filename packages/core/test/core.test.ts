@@ -11,6 +11,7 @@ import {
   normalizeBibliographicType,
   formatPublicationYear,
   parsePublicationYear,
+  potentialDuplicateFingerprint,
   normalizeSmartFolderFilters,
   referenceMatchesSmartFolder,
   type BibliographicItem,
@@ -69,6 +70,16 @@ test('validates ISBN checksums', () => {
 
 test('prefers stable identifiers for fingerprints', () => {
   assert.equal(bibliographicFingerprint(completeItem), 'isbn:9780195151947');
+});
+
+test('detects duplicates across entry types without accepting weak metadata', () => {
+  const article = { ...completeItem, type: 'article' as const, identifiers: {} };
+  const book = { ...completeItem, type: 'book' as const, identifiers: {} };
+  assert.equal(potentialDuplicateFingerprint(article), potentialDuplicateFingerprint(book));
+  assert.equal(potentialDuplicateFingerprint(article), potentialDuplicateFingerprint({
+    ...book, contributors: [{ family: 'Clarke', given: 'Eric', role: 'composer' }],
+  }));
+  assert.equal(potentialDuplicateFingerprint({ ...book, title: 'Untitled', contributors: [], issued: undefined }), undefined);
 });
 
 test('generates portable citekeys', () => {

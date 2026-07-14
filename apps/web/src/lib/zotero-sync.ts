@@ -101,7 +101,7 @@ export const previewZoteroSync = async (ownerKey: string) => {
   const [collectionSnapshot, itemSnapshot, local, mapped] = await Promise.all([
     fetchAll((start) => provider.collectionPage(start, 100)),
     fetchAll((start) => provider.itemPage(start, 100, true)),
-    getCatalog().pool.query('SELECT id,title,issued,identifiers FROM catalog_references WHERE owner_key=$1', [ownerKey]),
+    getCatalog().pool.query('SELECT id,title,issued,identifiers,source FROM catalog_references WHERE owner_key=$1', [ownerKey]),
     getCatalog().pool.query('SELECT zotero_key,reference_id FROM catalog_zotero_items WHERE owner_key=$1', [ownerKey]),
   ]);
   const doi = new Map<string, Set<string>>(); const isbn = new Map<string, Set<string>>(); const titleYear = new Map<string, Set<string>>();
@@ -111,7 +111,10 @@ export const previewZoteroSync = async (ownerKey: string) => {
     for (const value of row.identifiers?.isbn || []) add(isbn, String(value).replace(/[^0-9X]/gi, '').toUpperCase(), row.id);
     add(titleYear, normalizedTitleYear(row.title, row.issued), row.id);
   }
-  const mappedKeys = new Set(mapped.rows.map((row: any) => String(row.zotero_key)));
+  const mappedKeys = new Set([
+    ...mapped.rows.map((row: any) => String(row.zotero_key)),
+    ...local.rows.flatMap((row: any) => Array.isArray(row.source?.zoteroMergedKeys) ? row.source.zoteroMergedKeys.map(String) : []),
+  ]);
   const claimedReferences = new Set(mapped.rows.map((row: any) => String(row.reference_id)).filter(Boolean));
   let alreadyMapped = 0; let automaticMerges = 0; let possibleDuplicates = 0; let newItems = 0;
   let bibliographicItems = 0;
@@ -220,13 +223,14 @@ const pullItems = async (input: {
 }): Promise<{ count: number; merged: number }> => {
   const catalog = getCatalog(); const client = await catalog.pool.connect(); let count = 0; let merged = 0;
   const [localRows, mappedRows] = await Promise.all([
-    catalog.pool.query('SELECT id,title,issued,identifiers FROM catalog_references WHERE owner_key=$1', [input.ownerKey]),
+    catalog.pool.query('SELECT id,title,issued,identifiers,source FROM catalog_references WHERE owner_key=$1', [input.ownerKey]),
     catalog.pool.query(
       `SELECT zi.zotero_key,r.id FROM catalog_zotero_items zi LEFT JOIN catalog_references r ON r.id=zi.reference_id
        WHERE zi.owner_key=$1`, [input.ownerKey],
     ),
   ]);
   const mappedReferences = new Map(mappedRows.rows.map((row: any) => [String(row.zotero_key), row.id as string | undefined]));
+  const mergedZoteroKeys = new Set(localRows.rows.flatMap((row: any) => Array.isArray(row.source?.zoteroMergedKeys) ? row.source.zoteroMergedKeys.map(String) : []));
   const zoteroKeyByReference = new Map(mappedRows.rows
     .filter((row: any) => row.id)
     .map((row: any) => [String(row.id), String(row.zotero_key)]));
@@ -243,7 +247,7 @@ const pullItems = async (input: {
   try {
     await client.query('BEGIN');
     for (const item of input.items) {
-      if (input.skip.has(item.key) || item.data.itemType === 'attachment' || item.data.itemType === 'note') continue;
+      if (input.skip.has(item.key) || mergedZoteroKeys.has(item.key) || item.data.itemType === 'attachment' || item.data.itemType === 'note') continue;
       const mapped = mapZoteroItem({ item, libraryType: 'users', libraryId: input.libraryId, importedAt: new Date().toISOString() });
       const collectionKeys = [...new Set((item.data.collections || []).filter((key) => input.collectionMap.has(key)))];
       let referenceId = mappedReferences.get(item.key);

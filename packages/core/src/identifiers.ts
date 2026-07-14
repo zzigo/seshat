@@ -95,3 +95,26 @@ export function bibliographicFingerprint(item: Pick<BibliographicItem, 'title' |
   return `meta:${identity}`;
 }
 
+/**
+ * Conservative key for records that are plausible duplicates. Stable
+ * identifiers always qualify; metadata-only matches require a meaningful
+ * title plus either an author or a publication year. Entry type is
+ * intentionally excluded so the same work can be reconciled across imports
+ * that classified it differently.
+ */
+export function potentialDuplicateFingerprint(item: Pick<BibliographicItem, 'title' | 'issued' | 'contributors' | 'identifiers'>): string | undefined {
+  const doi = normalizeDoi(item.identifiers.doi);
+  if (doi && isValidDoi(doi)) return `doi:${doi}`;
+
+  const isbn = item.identifiers.isbn
+    ?.map(normalizeIsbn)
+    .find((value): value is string => Boolean(value && isValidIsbn(value)));
+  if (isbn) return `isbn:${isbn}`;
+
+  const title = slugPart(item.title);
+  const primary = item.contributors.find((person) => person.role === 'author') ?? item.contributors[0];
+  const authorName = slugPart(contributorName(primary));
+  const year = item.issued?.year;
+  if (title.length < 8 || (authorName === 'anon' && year === undefined)) return undefined;
+  return `meta:${authorName}:${year ?? 'nd'}:${title}`;
+}

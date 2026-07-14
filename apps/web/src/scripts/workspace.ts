@@ -2,7 +2,7 @@ import Handsontable from 'handsontable';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
-import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, potentialDuplicateFingerprint, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -131,6 +131,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
   let activeSmartFolder: string | null = null;
+  let activeVirtualFolder: 'duplicates' | null = null;
   let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
@@ -154,15 +155,44 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
   };
 
+  const duplicateFingerprint = (reference: ReferenceRow) => potentialDuplicateFingerprint({
+    title: reference.title,
+    issued: parsePublicationYear(reference.year) === undefined ? undefined : { year: parsePublicationYear(reference.year) },
+    contributors: reference.contributors,
+    identifiers: {
+      doi: reference.bibliographicFields.doi || undefined,
+      isbn: reference.isbn.split(/[;,\n]+/).map((value) => value.trim()).filter(Boolean),
+    },
+  });
+  const duplicateSnapshot = () => {
+    const candidates = new Map<string,ReferenceRow[]>();
+    payload.references.filter((reference) => reference.access === 'owner').forEach((reference) => {
+      const fingerprint = duplicateFingerprint(reference); if (!fingerprint) return;
+      candidates.set(fingerprint,[...(candidates.get(fingerprint)||[]),reference]);
+    });
+    const groups = [...candidates.entries()].filter(([,rows]) => rows.length > 1)
+      .sort((left,right) => normalize(left[1][0]?.title).localeCompare(normalize(right[1][0]?.title)));
+    const fingerprints = new Map<string,string>();
+    groups.forEach(([fingerprint,rows]) => rows.forEach((row) => fingerprints.set(row.id,fingerprint)));
+    return { groups, fingerprints, ids:new Set(fingerprints.keys()) };
+  };
   const computeFilteredRows = () => {
     const query = normalize(catalogQuery);
     const smartFolder = activeSmartFolder ? payload.smartFolders.find((folder) => folder.id === activeSmartFolder) : undefined;
-    return payload.references.filter((reference) => (!activeLibrary
+    let rows = payload.references.filter((reference) => (!activeLibrary
       || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : reference.libraryIds.includes(activeLibrary)))
       && (!smartFolder || referenceMatchesSmartFolder(reference, smartFolder.filters))
       && (!activeKeyword || reference.keywords.includes(activeKeyword))
       && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status]
         .some((value) => normalize(value).includes(query))));
+    if (activeVirtualFolder === 'duplicates') {
+      const snapshot = duplicateSnapshot();
+      rows = rows.filter((reference) => snapshot.ids.has(reference.id)).sort((left,right) => {
+        const leftKey=snapshot.fingerprints.get(left.id)||'',rightKey=snapshot.fingerprints.get(right.id)||'';
+        return leftKey.localeCompare(rightKey)||normalize(left.title).localeCompare(normalize(right.title))||left.id.localeCompare(right.id);
+      });
+    }
+    return rows;
   };
   // Handsontable invokes renderers and `cells()` many times. Keep the current
   // projection stable so a single cell render never scans the entire catalog.
@@ -174,7 +204,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const refreshTable = () => {
     visibleCatalogRows = computeFilteredRows();
     catalogTable?.loadData(visibleCatalogRows);
-    if (catalogFilterStatus) catalogFilterStatus.textContent = `${visibleCatalogRows.length} / ${payload.references.length}`;
+    if (catalogFilterStatus) {
+      const groups=activeVirtualFolder==='duplicates'?duplicateSnapshot().groups.length:0;
+      catalogFilterStatus.textContent = activeVirtualFolder==='duplicates'
+        ? `${visibleCatalogRows.length} duplicate items · ${groups} groups`
+        : `${visibleCatalogRows.length} / ${payload.references.length}`;
+    }
   };
 
   const setSaveState = (state: string, tone: 'ready' | 'saving' | 'error' = 'ready') => {
@@ -499,12 +534,52 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');heading.textContent=reference?.title||id;const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{await linkWasabiCandidate(id,candidate);section.dataset.linked='true';heading.textContent=`${reference?.title||id} · linked`;setSaveState('candidate linked; extraction queued');}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
     summary.textContent=`${found} candidates across ${editableIds.length} selected items`;setSaveState(`${found} candidates found`);
   };
+  const duplicateGroupFor = (ids:string[]) => {
+    const snapshot=duplicateSnapshot();
+    const mapped=ids.map((id)=>snapshot.fingerprints.get(id));
+    if(mapped.some((value)=>!value))return [];
+    const selectedFingerprints=[...new Set(mapped.filter((value):value is string=>Boolean(value)))];
+    if(selectedFingerprints.length!==1)return [];
+    const first=selectedFingerprints[0];
+    if(!first)return [];
+    return snapshot.groups.find(([fingerprint])=>fingerprint===first)?.[1]||[];
+  };
+  const duplicateRecordScore = (reference:ReferenceRow) =>
+    (reference.hasOriginal?100:0)+(reference.hasText?30:0)+(reference.hasStructure?15:0)
+    +[reference.title,reference.contributorsDisplay,reference.year,reference.publisher,reference.abstract,reference.language,reference.url,reference.isbn].filter(Boolean).length
+    +reference.libraryIds.length;
+  const openDuplicateMerge = (ids:string[]) => {
+    const group=duplicateGroupFor(ids);
+    if(group.length<2){setSaveState('select an item from one duplicate group','error');return;}
+    const suggested=[...group].sort((left,right)=>duplicateRecordScore(right)-duplicateRecordScore(left))[0];
+    const dialog=dialogShell(`Merge duplicate group · ${group.length} items`);dialog.classList.add('duplicate-merge-dialog');
+    const form=document.createElement('form');form.className='duplicate-merge-form';
+    const intro=document.createElement('p');intro.textContent='Choose the surviving catalog record. Seshat combines metadata, collections and notes; every distinct stored original remains attached as an alternate file.';
+    const list=document.createElement('div');list.className='duplicate-merge-list';
+    group.forEach((reference)=>{
+      const option=document.createElement('label');option.className='duplicate-merge-option';
+      const input=document.createElement('input');input.type='radio';input.name='duplicate-survivor';input.value=reference.id;input.checked=reference.id===suggested.id;
+      const copy=document.createElement('span');const title=document.createElement('strong');title.textContent=reference.title||'Untitled';
+      const details=document.createElement('small');details.textContent=[reference.contributorsDisplay,reference.year,reference.type,reference.hasOriginal?reference.filename:'no associated file',`${reference.libraryIds.length} collection${reference.libraryIds.length===1?'':'s'}`].filter(Boolean).join(' · ');
+      copy.append(title,details);option.append(input,copy);list.appendChild(option);
+    });
+    const note=document.createElement('p');note.className='duplicate-merge-note';note.textContent='The other catalog entries disappear after the transaction. Alternate originals are preserved in Wasabi and will be deleted only if the surviving item is later deleted explicitly.';
+    const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const submit=document.createElement('button');submit.type='submit';submit.className='primary';submit.textContent=`Merge ${group.length} items`;footer.append(cancel,submit);
+    form.append(intro,list,note,footer);dialog.appendChild(form);
+    form.onsubmit=(event)=>{event.preventDefault();const keepId=new FormData(form).get('duplicate-survivor')?.toString()||'';if(!keepId)return;submit.disabled=true;cancel.disabled=true;setSaveState('merging duplicate group…','saving');void fetch('/api/library/merge',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keepId,duplicateIds:group.filter((reference)=>reference.id!==keepId).map((reference)=>reference.id)})}).then(async(response)=>{const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Duplicate merge failed');for(const removedId of result.removedIds||[]){api.panels.filter((item)=>item.id.includes(removedId)).forEach((item)=>item.api.close());references.delete(removedId);committed.delete(removedId);selectedReferences.delete(removedId);const index=payload.references.findIndex((item)=>item.id===removedId);if(index>=0)payload.references.splice(index,1);}const next=rowFromCatalogReference(result.reference);upsertRow(next);activeReference=next.id;selectedReferences.clear();selectedReferences.add(next.id);dialog.close();refreshTable();renderTree(search.value);renderProperties(next.id);setSaveState(`${group.length} duplicates merged · files preserved`);}).catch((error)=>{submit.disabled=false;cancel.disabled=false;setSaveState(error instanceof Error?error.message:'Duplicate merge failed','error');});};
+  };
+  const deleteDuplicateSelection = async (ids:string[]) => {
+    const editable=[...new Set(ids)].filter((id)=>references.get(id)?.access==='owner');if(!editable.length)return;
+    const confirmed=await confirmAction('Delete duplicate items',`Permanently delete ${editable.length} selected ${editable.length===1?'item':'items'} and every stored file attached to them?`,'Delete items and files');
+    if(confirmed)await deleteReferences(editable);
+  };
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
     const removableIds = requestedCollectionId && !isInboxLibraryId(requestedCollectionId) && collection?.access !== 'viewer'
       ? editableIds.filter((id) => references.get(id)?.libraryIds.includes(requestedCollectionId)) : [];
     return [
+    { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}`, shortcut:'A', action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}`, shortcut:'B', action: () => copyReferences(ids, 'bibtex') },
@@ -524,7 +599,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
     { label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds,requestedCollectionId) },
-    { label: `Delete item and files${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => deleteReferences(editableIds) },
+    { label: `Delete item and files${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => activeVirtualFolder==='duplicates'?deleteDuplicateSelection(editableIds):deleteReferences(editableIds) },
     ];
   };
 
@@ -900,6 +975,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       },
       afterRenderer: (cell,visualRow) => {
         const physical=catalogTable?.toPhysicalRow(visualRow) ?? visualRow; const row=catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined; cell.draggable=Boolean(row);
+        cell.classList.remove('duplicate-group-cell','duplicate-group-start');
+        if(activeVirtualFolder==='duplicates'&&row){
+          const key=duplicateFingerprint(row);const previousPhysical=visualRow>0?(catalogTable?.toPhysicalRow(visualRow-1)??visualRow-1):-1;const previous=previousPhysical>=0?catalogTable?.getSourceDataAtRow(previousPhysical) as ReferenceRow|undefined:undefined;
+          cell.classList.add('duplicate-group-cell');cell.classList.toggle('duplicate-group-start',!previous||duplicateFingerprint(previous)!==key);
+        }
       },
       afterOnCellMouseDown: (event, coords) => {
         if (coords.row < 0) return;
@@ -3053,7 +3133,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const response=await fetch(existing?`/api/smart-folders/${existing.id}`:'/api/smart-folders',{method:existing?'PATCH':'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:name.value.trim(),filters:normalizedFilters})});
         const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not save smart folder.');
         const saved=result.smartFolder as SmartFolderNode;if(existing)Object.assign(existing,saved);else payload.smartFolders.push(saved);
-        activeLibrary=null;activeSmartFolder=saved.id;refreshTable();renderTree(search.value);controller.openCatalog();setSaveState(existing?'smart folder updated':'smart folder created');dialog.close();
+        activeLibrary=null;activeVirtualFolder=null;activeSmartFolder=saved.id;refreshTable();renderTree(search.value);controller.openCatalog();setSaveState(existing?'smart folder updated':'smart folder created');dialog.close();
       }catch(error){save.disabled=false;status.textContent=error instanceof Error?error.message:'Could not save smart folder.';status.dataset.tone='error';}
     });
     window.requestAnimationFrame(()=>name.focus());
@@ -3099,14 +3179,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     const makeButton = (label: string, directCount: number, libraryId: string | null, recursiveCount = directCount, hideEmptyDirect = false) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'tree-node';
-      button.classList.toggle('active', !activeSmartFolder && activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
+      button.classList.toggle('active', !activeSmartFolder && !activeVirtualFolder && activeLibrary === libraryId); button.dataset.libraryId = libraryId || '';
       const text = document.createElement('span'); text.textContent = label;
       const counts = document.createElement('span'); counts.className = 'tree-counts';
       if (!(hideEmptyDirect && directCount === 0)) {
         const direct = document.createElement('b'); direct.className = 'tree-count-direct'; direct.textContent = String(directCount); direct.title = 'Items directly in this collection'; counts.appendChild(direct);
       }
       const recursive = document.createElement('b'); recursive.className = 'tree-count-recursive'; recursive.textContent = String(recursiveCount); recursive.title = 'Items in this collection and all nested folders'; counts.appendChild(recursive);
-      button.append(text, counts); button.addEventListener('click', () => { activeSmartFolder = null; activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
+      button.append(text, counts); button.addEventListener('click', () => { activeSmartFolder = null; activeVirtualFolder=null; activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
       return button;
     };
     const matched = payload.references.filter((reference) => !query || [reference.title, reference.contributorsDisplay, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
@@ -3512,10 +3592,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const button=document.createElement('button');button.type='button';button.className='smart-folder-node';button.classList.toggle('active',activeSmartFolder===folder.id);button.title=`${folder.name} · ${count} matching item${count===1?'':'s'}`;
       const icon=document.createElement('span');icon.className='smart-folder-icon';icon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><path d="M5 7h8M5 9.5h5"/></svg>';
       const label=document.createElement('span');label.textContent=folder.name;const total=document.createElement('b');total.textContent=String(count);button.append(icon,label,total);
-      button.addEventListener('click',()=>{activeLibrary=null;activeSmartFolder=folder.id;refreshTable();renderTree(search.value);controller.openCatalog();});
+      button.addEventListener('click',()=>{activeLibrary=null;activeVirtualFolder=null;activeSmartFolder=folder.id;refreshTable();renderTree(search.value);controller.openCatalog();});
       button.addEventListener('contextmenu',(event)=>openContextMenu(event,[{label:'Edit smart folder…',action:()=>openSmartFolderEditor(folder)},{label:'Delete smart folder…',danger:true,action:()=>deleteSmartFolder(folder)}]));
       smartSection.appendChild(button);
     });
+    const duplicateState=duplicateSnapshot();
+    const duplicateButton=document.createElement('button');duplicateButton.type='button';duplicateButton.className='smart-folder-node virtual-folder-node duplicate-folder-node';duplicateButton.classList.toggle('active',activeVirtualFolder==='duplicates');duplicateButton.title=`${duplicateState.groups.length} duplicate group${duplicateState.groups.length===1?'':'s'} · ${duplicateState.ids.size} items · matches ignore entry type`;
+    const duplicateIcon=document.createElement('span');duplicateIcon.className='smart-folder-icon';duplicateIcon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><rect x="5" y="6" width="6" height="4"/><rect x="7" y="4.5" width="6" height="4"/></svg>';
+    const duplicateLabel=document.createElement('span');duplicateLabel.textContent='Duplicated';const duplicateTotal=document.createElement('b');duplicateTotal.textContent=String(duplicateState.ids.size);duplicateButton.append(duplicateIcon,duplicateLabel,duplicateTotal);
+    duplicateButton.addEventListener('click',()=>{activeLibrary=null;activeSmartFolder=null;activeVirtualFolder='duplicates';activeKeyword=null;refreshTable();renderTree(search.value);renderKeywordCloud();controller.openCatalog();});
+    duplicateButton.addEventListener('contextmenu',(event)=>{const ids=selectedIds();openContextMenu(event,[{label:'Merge selected duplicate group…',disabled:duplicateGroupFor(ids).length<2,action:()=>openDuplicateMerge(ids)},{label:`Delete selected items and files${ids.length>1?` (${ids.length})`:''}…`,disabled:!ids.length,danger:true,action:()=>deleteDuplicateSelection(ids)}]);});
+    smartSection.appendChild(duplicateButton);
     tree.appendChild(smartSection);
     treeRevealReferenceId = null;
   };
@@ -3524,7 +3611,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if(!referenceId)return;
     const reference=references.get(referenceId);if(!reference)return;
     const targetId=(activeLibrary&&reference.libraryIds.includes(activeLibrary)?activeLibrary:undefined)||reference.libraryIds.find((id)=>payload.libraries.some((library)=>library.id===id))||(isUnfiledReference(reference)?payload.libraries.find((library)=>isInboxLibraryId(library.id))?.id:undefined);
-    activeSmartFolder=null;activeLibrary=targetId||null;
+    activeSmartFolder=null;activeVirtualFolder=null;activeLibrary=targetId||null;
     if(targetId){let current=payload.libraries.find((library)=>library.id===targetId);while(current){collapsedLibraries.delete(current.id);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries]));}
     activeReference=referenceId;selectedReferences.clear();selectedReferences.add(referenceId);treeSelectionAnchor=referenceId;
     search.value='';catalogQuery='';
