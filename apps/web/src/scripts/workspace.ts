@@ -3336,8 +3336,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const locateReference = (referenceId: string | null) => {
     if(!referenceId)return;
     const reference=references.get(referenceId);if(!reference)return;
-    const targetId=reference.libraryIds.find((id)=>payload.libraries.some((library)=>library.id===id))||(isUnfiledReference(reference)?payload.libraries.find((library)=>isInboxLibraryId(library.id))?.id:undefined);
-    if(targetId){activeLibrary=targetId;let current=payload.libraries.find((library)=>library.id===targetId);while(current){collapsedLibraries.delete(current.id);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries]));}
+    const targetId=(activeLibrary&&reference.libraryIds.includes(activeLibrary)?activeLibrary:undefined)||reference.libraryIds.find((id)=>payload.libraries.some((library)=>library.id===id))||(isUnfiledReference(reference)?payload.libraries.find((library)=>isInboxLibraryId(library.id))?.id:undefined);
+    activeLibrary=targetId||null;
+    if(targetId){let current=payload.libraries.find((library)=>library.id===targetId);while(current){collapsedLibraries.delete(current.id);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}window.localStorage.setItem(TREE_STATE_KEY,JSON.stringify([...collapsedLibraries]));}
     activeReference=referenceId;selectedReferences.clear();selectedReferences.add(referenceId);treeSelectionAnchor=referenceId;
     search.value='';catalogQuery='';
     const catalogFilter=root.querySelector<HTMLInputElement>('.catalog-filter-bar input');if(catalogFilter)catalogFilter.value='';
