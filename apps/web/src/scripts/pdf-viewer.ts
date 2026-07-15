@@ -40,9 +40,12 @@ export async function mountPdfViewer(
   toggle.textContent = '☰'; toggle.title = 'Annotations'; toggle.setAttribute('aria-label', 'Toggle annotations'); toggle.setAttribute('aria-expanded', 'false');
   toggle.addEventListener('click', () => {
     const open = !shell.classList.contains('annotations-open'); shell.classList.toggle('annotations-open', open); toggle.setAttribute('aria-expanded', String(open));
+    if (open) window.dispatchEvent(new CustomEvent('seshat:close-reader-sidebars',{ detail:{ referenceId } }));
   });
   const propertiesToggle = document.createElement('button'); propertiesToggle.type = 'button'; propertiesToggle.className = 'pdf-properties-toggle'; propertiesToggle.textContent = 'ⓘ'; propertiesToggle.title = 'Item properties'; propertiesToggle.setAttribute('aria-label','Toggle item properties'); propertiesToggle.setAttribute('aria-expanded','false');
-  propertiesToggle.addEventListener('click',() => { const open=propertiesToggle.getAttribute('aria-expanded')!=='true';propertiesToggle.setAttribute('aria-expanded',String(open));window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId,open } })); });
+  propertiesToggle.addEventListener('click',() => { const open=propertiesToggle.getAttribute('aria-expanded')!=='true';propertiesToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId,open } })); });
+  const structureToggle = document.createElement('button'); structureToggle.type = 'button'; structureToggle.className = 'pdf-structure-toggle'; structureToggle.textContent = '§'; structureToggle.title = 'Document structure'; structureToggle.setAttribute('aria-label','Toggle document structure'); structureToggle.setAttribute('aria-expanded','false');
+  structureToggle.addEventListener('click',() => { const open=structureToggle.getAttribute('aria-expanded')!=='true';structureToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-structure',{ detail:{ referenceId,open } })); });
   const setSidebarWidth = (width: number) => {
     const maximum = Math.max(280, Math.min(620, shell.getBoundingClientRect().width * .68));
     const next = Math.round(Math.max(240, Math.min(maximum, width)));
@@ -60,7 +63,7 @@ export async function mountPdfViewer(
     const current = sidebar.getBoundingClientRect().width || 340; setSidebarWidth(current + (event.key === 'ArrowLeft' ? 20 : -20));
   });
   const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = 'Loading PDF…';
-  pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle); element.replaceChildren(shell);
+  pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle, structureToggle); element.replaceChildren(shell);
 
   let annotations: Annotation[] = [];
   let pending: PdfAnchor | null = null;

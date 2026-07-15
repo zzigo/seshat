@@ -440,6 +440,8 @@ html { max-width: 100%; overflow: hidden; }
 .pdf-annotation-toggle:hover, .pdf-annotation-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
 .pdf-properties-toggle { position: absolute; z-index: 12; top: 45px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 12%,transparent); font: 13px/1 monospace; cursor: pointer; }
 .pdf-properties-toggle:hover, .pdf-properties-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
+.pdf-structure-toggle { position: absolute; z-index: 12; top: 79px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 12%,transparent); font: 14px/1 ui-serif,serif; cursor: pointer; }
+.pdf-structure-toggle:hover, .pdf-structure-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
 .seshat-pdf-annotations { position: relative; min-width: 0; height: 100%; overflow: visible; border-left: 0 solid var(--ink); background: var(--chrome); }
 .seshat-pdf-annotations > .annotation-body { overflow: hidden; }
 .annotations-open .seshat-pdf-annotations { border-left-width: 1px; }
