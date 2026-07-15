@@ -41,8 +41,8 @@ export async function mountPdfViewer(
   toggle.addEventListener('click', () => {
     const open = !shell.classList.contains('annotations-open'); shell.classList.toggle('annotations-open', open); toggle.setAttribute('aria-expanded', String(open));
   });
-  const propertiesToggle = document.createElement('button'); propertiesToggle.type = 'button'; propertiesToggle.className = 'pdf-properties-toggle'; propertiesToggle.textContent = 'ⓘ'; propertiesToggle.title = 'Item properties'; propertiesToggle.setAttribute('aria-label','Toggle item properties');
-  propertiesToggle.addEventListener('click',() => window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId } })));
+  const propertiesToggle = document.createElement('button'); propertiesToggle.type = 'button'; propertiesToggle.className = 'pdf-properties-toggle'; propertiesToggle.textContent = 'ⓘ'; propertiesToggle.title = 'Item properties'; propertiesToggle.setAttribute('aria-label','Toggle item properties'); propertiesToggle.setAttribute('aria-expanded','false');
+  propertiesToggle.addEventListener('click',() => { const open=propertiesToggle.getAttribute('aria-expanded')!=='true';propertiesToggle.setAttribute('aria-expanded',String(open));window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId,open } })); });
   const setSidebarWidth = (width: number) => {
     const maximum = Math.max(280, Math.min(620, shell.getBoundingClientRect().width * .68));
     const next = Math.round(Math.max(240, Math.min(maximum, width)));
@@ -171,7 +171,8 @@ export async function mountPdfViewer(
   const showPalette = () => {
     pending = anchorFromSelection(); if (!pending) { palette.hidden = true; return; }
     const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect(); palette.hidden = false; const bounds = palette.getBoundingClientRect();
-    palette.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - 8)}px`;
+    const mobileLift = window.matchMedia('(pointer: coarse)').matches ? 58 : 8;
+    palette.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`;
   };
 
   async function save(anchor: PdfAnchor, color: typeof annotationColors[number], details: Record<string, unknown> = {}) {

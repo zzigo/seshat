@@ -183,7 +183,8 @@ export async function mountEpubReader(
       button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); void saveEpubAnnotation(doc, anchor, color); }); palette.appendChild(button);
     });
     doc.body.appendChild(palette); const bounds = palette.getBoundingClientRect(); const width = doc.defaultView?.innerWidth || 320;
-    palette.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - 8)}px`; return true;
+    const mobileLift = doc.defaultView?.matchMedia('(pointer: coarse)').matches ? 58 : 8;
+    palette.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`; return true;
   };
   const markReading = (doc: Document, text: string) => {
     clearReadingMarker(); const target = readingBlock(doc, text); if (!target) return;

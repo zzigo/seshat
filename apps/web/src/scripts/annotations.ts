@@ -144,8 +144,9 @@ export async function mountAnnotationWorkspace(
     if (!pending) { palette.hidden = true; return; }
     const selection = window.getSelection(); const rect = selection!.getRangeAt(0).getBoundingClientRect(); palette.hidden = false;
     const bounds = palette.getBoundingClientRect();
+    const mobileLift = window.matchMedia('(pointer: coarse)').matches ? 58 : 8;
     palette.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8))}px`;
-    palette.style.top = `${Math.max(8, rect.top - bounds.height - 8)}px`;
+    palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`;
   };
 
   async function createAnnotation(anchor: SelectionAnchor, color: AnnotationColor, details: Record<string, unknown> = {}) {

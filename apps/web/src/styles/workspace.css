@@ -436,10 +436,10 @@ html { max-width: 100%; overflow: hidden; }
 .seshat-pdf-page canvas { position: absolute; inset: 0; display: block; }
 .pdf-page-number { position: absolute; z-index: 4; right: 7px; bottom: 5px; padding: 2px 4px; color: #555; background: rgba(255,255,255,.72); font: 7px monospace; pointer-events: none; }
 .pdf-loading { min-width: 300px; padding: 60px; color: #4f5952; font: 10px monospace; text-align: center; text-transform: uppercase; }
-.pdf-annotation-toggle { position: absolute; z-index: 12; top: 9px; right: 10px; width: 34px; height: 31px; padding: 0; border: 1px solid var(--ink); color: var(--ink); background: rgba(233,230,220,.94); box-shadow: 2px 3px 10px rgba(23,35,29,.16); font: 15px/1 monospace; cursor: pointer; }
+.pdf-annotation-toggle { position: absolute; z-index: 12; top: 9px; right: 10px; width: 34px; height: 31px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 16%,transparent); font: 15px/1 monospace; cursor: pointer; }
 .pdf-annotation-toggle:hover, .pdf-annotation-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
-.pdf-properties-toggle { position: absolute; z-index: 12; top: 45px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--ink); color: var(--ink); background: rgba(233,230,220,.94); box-shadow: 2px 3px 10px rgba(23,35,29,.12); font: 13px/1 monospace; cursor: pointer; }
-.pdf-properties-toggle:hover { color: #f4f1e8; background: var(--green); }
+.pdf-properties-toggle { position: absolute; z-index: 12; top: 45px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 12%,transparent); font: 13px/1 monospace; cursor: pointer; }
+.pdf-properties-toggle:hover, .pdf-properties-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
 .seshat-pdf-annotations { position: relative; min-width: 0; height: 100%; overflow: visible; border-left: 0 solid var(--ink); background: var(--chrome); }
 .seshat-pdf-annotations > .annotation-body { overflow: hidden; }
 .annotations-open .seshat-pdf-annotations { border-left-width: 1px; }
