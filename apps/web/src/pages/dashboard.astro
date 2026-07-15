@@ -193,7 +193,7 @@ const themePresets = [
 
     <section class="dashboard-panel concepts-panel">
       <header><div><span>Knowledge graph</span><h2>Concept network</h2></div><small>connected items</small></header>
-      <div class="concept-list">{stats.topConcepts.map((concept) => <span><i></i>{concept.name}<b>{concept.count}</b></span>)}</div>
+      <div class="concept-list">{stats.topConcepts.map((concept) => <span><i></i><em>{concept.name}</em><b>{concept.count}</b></span>)}</div>
       {!stats.topConcepts.length && <div class="dashboard-empty">Resolve papers with OpenAlex to discover concepts.</div>}
     </section>
 
@@ -662,4 +662,46 @@ const themePresets = [
   .account-dashboard .emergence-signals button[aria-pressed="true"],
   .account-dashboard .emergence-result :global(.dashboard-reading-item:hover){background:transparent}
   .account-dashboard .bookmark-group{border-top:2px solid var(--bookmark-color)}
+  .account-dashboard,
+  .dashboard-head,
+  .dashboard-head>*,
+  .dashboard-home-grid,
+  .dashboard-columns,
+  .dashboard-panel,
+  .dashboard-panel>*,
+  .dashboard-panel>header>*,
+  .dashboard-totals,
+  .dashboard-totals article,
+  .setup-panel-actions,
+  .ranking-panel li>span,
+  .concept-list span,
+  .concept-list em{min-width:0;max-width:100%}
+  .account-dashboard{overflow-x:clip}
+  .concept-list em{overflow-wrap:anywhere;font-style:normal}
+  .ranking-panel li>span{overflow-wrap:anywhere}
+  .dashboard-head h1,.dashboard-head p,.dashboard-panel h2,.dashboard-panel header small,.tag-cloud>span,.zotero-contract strong,.zotero-preview strong{overflow-wrap:anywhere}
+  @media(max-width:760px){
+    :global(html),:global(body){max-width:100%;overflow-x:clip}
+    .account-dashboard{width:100%;max-width:100%;padding-top:45px}
+    .dashboard-head{width:100%;gap:18px}
+    .dashboard-head>div,.dashboard-head h1,.dashboard-head p{width:100%;max-width:100%}
+    .dashboard-head h1{font-size:clamp(34px,13vw,58px);line-height:.96}
+    .dashboard-panel>header{min-width:0;gap:10px;padding-inline:10px}
+    .dashboard-panel>header>div{min-width:0;flex:1}
+    .dashboard-panel header small{max-width:42%;text-align:right}
+    .dashboard-totals article{padding:12px}
+    .dashboard-totals strong{font-size:clamp(25px,10vw,42px)}
+    .ranking-panel li{gap:10px}
+    .ranking-panel li>span{flex:1}
+    .tag-cloud>span{min-width:0;max-width:100%}
+    .years-panel{max-width:100%;overflow:hidden!important}
+    .years-viewport{max-width:100%;overflow-x:auto!important}
+    .years-head-tools{max-width:48%}
+    .voice-settings-body,.zotero-panel form{min-width:0;padding-inline:10px}
+    .voice-settings-tools,.voice-checklist{min-width:0;grid-template-columns:minmax(0,1fr)}
+    .voice-settings-tools label{min-width:0}
+    .voice-settings-tools input,.zotero-panel input,.zotero-panel select,.account-panel input{min-width:0;max-width:100%}
+    .bookmark-groups{max-width:100%;overscroll-behavior-x:contain}
+    .bookmark-empty{min-width:0}
+  }
 </style>
