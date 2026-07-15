@@ -1,6 +1,8 @@
 import { getDocument, GlobalWorkerOptions, TextLayer } from 'pdfjs-dist';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { annotationColors, mountAnnotationWorkspace, type Annotation } from './annotations';
+import { currentPhoneResourceProfile } from '../lib/client-resources';
+import { adjacentPdfPage, pdfPageScrollTop, pdfSpreadStart } from '../lib/pdf-navigation';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 const SIDEBAR_WIDTH_KEY = 'seshat.pdf.annotation-sidebar-width';
@@ -62,6 +64,7 @@ export async function mountPdfViewer(
   let annotations: Annotation[] = [];
   let pending: PdfAnchor | null = null;
   let disposed = false;
+  const phoneResourceProfile = currentPhoneResourceProfile();
   const dialogs = new Set<HTMLDialogElement>();
   const renderTasks = new Set<{ cancel: () => void }>();
   const loadingTask = getDocument({ url: `/api/library/${referenceId}/original`, withCredentials: true });
@@ -98,16 +101,23 @@ export async function mountPdfViewer(
     });
   };
 
+  let phoneRenderQueue = Promise.resolve();
+  const schedulePageRender = (pageElement: HTMLElement) => {
+    if (!phoneResourceProfile) { void renderPage(pageElement); return; }
+    phoneRenderQueue = phoneRenderQueue.then(() => renderPage(pageElement)).catch(() => undefined);
+  };
   const observer = new IntersectionObserver((entries) => {
     entries.filter((entry) => entry.isIntersecting).forEach((entry) => {
-      const pageElement = entry.target as HTMLElement; observer.unobserve(pageElement); void renderPage(pageElement);
+      const pageElement = entry.target as HTMLElement; observer.unobserve(pageElement); schedulePageRender(pageElement);
     });
-  }, { root: viewer, rootMargin: '800px 0px' });
+  }, { root: viewer, rootMargin: phoneResourceProfile ? '240px 0px' : '800px 0px' });
 
   const renderPage = async (pageElement: HTMLElement) => {
     const pageNumber = Number(pageElement.dataset.page); const page = await pdf.getPage(pageNumber); if (disposed) return;
     const viewport = page.getViewport({ scale: Number(pageElement.dataset.scale) });
-    const canvas = pageElement.querySelector<HTMLCanvasElement>('canvas')!; const context = canvas.getContext('2d')!; const outputScale = window.devicePixelRatio || 1;
+    pageElement.style.width = `${viewport.width}px`; pageElement.style.height = `${viewport.height}px`;
+    const canvas = pageElement.querySelector<HTMLCanvasElement>('canvas')!; const context = canvas.getContext('2d')!;
+    const outputScale = phoneResourceProfile ? Math.min(window.devicePixelRatio || 1, 1.5) : window.devicePixelRatio || 1;
     canvas.width = Math.floor(viewport.width * outputScale); canvas.height = Math.floor(viewport.height * outputScale);
     canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`;
     const task = page.render({ canvas, canvasContext: context, viewport, transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] });
@@ -118,9 +128,12 @@ export async function mountPdfViewer(
   };
 
   const firstPage = await pdf.getPage(1); const base = firstPage.getViewport({ scale: 1 });
-  const available = Math.max(480, viewer.clientWidth - 72); const scale = Math.max(.75, Math.min(1.65, available / base.width));
+  const available = phoneResourceProfile ? Math.max(240, viewer.clientWidth - 16) : Math.max(480, viewer.clientWidth - 72);
+  const scale = Math.max(phoneResourceProfile ? .4 : .75, Math.min(1.65, available / base.width));
+  const phoneViewport = firstPage.getViewport({ scale });
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber); const viewport = page.getViewport({ scale });
+    const page = phoneResourceProfile ? null : pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber);
+    const viewport = page ? page.getViewport({ scale }) : phoneViewport;
     const pageElement = document.createElement('section'); pageElement.className = 'seshat-pdf-page'; pageElement.dataset.page = String(pageNumber); pageElement.dataset.scale = String(scale);
     pageElement.style.width = `${viewport.width}px`; pageElement.style.height = `${viewport.height}px`; pageElement.style.setProperty('--total-scale-factor', String(scale));
     const canvas = document.createElement('canvas'); const highlights = document.createElement('div'); highlights.className = 'pdf-highlight-layer';
@@ -276,9 +289,7 @@ export async function mountPdfViewer(
     // complete facing-page spread into the pod's current reading width.
     void pages.offsetWidth;
     const doublePage = pages.classList.contains('double-page-view');
-    const spreadStart = doublePage && currentPage > 1
-      ? (currentPage % 2 === 0 ? currentPage : currentPage - 1)
-      : currentPage;
+    const spreadStart = pdfSpreadStart(currentPage, doublePage);
     const spreadPages = doublePage
       ? (spreadStart === 1 ? [1] : [spreadStart, Math.min(total, spreadStart + 1)])
       : [currentPage];
@@ -306,14 +317,13 @@ export async function mountPdfViewer(
   };
 
   const handleGotoPage = (e: any) => {
-    const pageNum = e.detail.page;
+    const doublePage = pages.classList.contains('double-page-view') && !pages.classList.contains('mosaic-page-view');
+    const requested = Number(e.detail.page);
+    const pageNum = pdfSpreadStart(Math.max(1, Math.min(pdf.numPages, requested)), doublePage);
     const pageEl = pages.querySelector<HTMLElement>(`[data-page="${pageNum}"]`);
     if (pageEl) {
-      const containerRect = viewer.getBoundingClientRect();
-      const pageRect = pageEl.getBoundingClientRect();
-      const relativeTop = pageRect.top - containerRect.top + viewer.scrollTop;
       viewer.scrollTo({
-        top: relativeTop,
+        top: pdfPageScrollTop(pageEl.offsetTop, currentZoom, 8),
         behavior: 'smooth'
       });
     }
@@ -358,8 +368,9 @@ export async function mountPdfViewer(
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement)?.matches('input,textarea,select,[contenteditable="true"]')) return;
     let page: number | null = null;
-    if (event.key === 'ArrowLeft') page = currentPage - 1;
-    else if (event.key === 'ArrowRight') page = currentPage + 1;
+    const doublePage = pages.classList.contains('double-page-view') && !pages.classList.contains('mosaic-page-view');
+    if (event.key === 'ArrowLeft') page = adjacentPdfPage(currentPage, -1, total, doublePage);
+    else if (event.key === 'ArrowRight') page = adjacentPdfPage(currentPage, 1, total, doublePage);
     else if (event.key === '0') page = 1;
     else if (event.key === 'G') page = total;
     else if (event.key === '1' && !pending) { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')); return; }
@@ -396,14 +407,11 @@ export async function mountPdfViewer(
     const clickX = e.clientX - rect.left;
     const ratio = clickX / rect.width;
 
+    const doublePage = pages.classList.contains('double-page-view') && !pages.classList.contains('mosaic-page-view');
     if (ratio < 0.25) {
-      if (currentPage > 1) {
-        parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage - 1 } }));
-      }
+      parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: adjacentPdfPage(currentPage, -1, total, doublePage) } }));
     } else if (ratio > 0.75) {
-      if (currentPage < total) {
-        parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage + 1 } }));
-      }
+      parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: adjacentPdfPage(currentPage, 1, total, doublePage) } }));
     }
   };
 

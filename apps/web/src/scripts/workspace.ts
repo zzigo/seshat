@@ -1,4 +1,6 @@
 import Handsontable from 'handsontable';
+import { currentPhoneResourceProfile } from '../lib/client-resources';
+import { adjacentPdfPage } from '../lib/pdf-navigation';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
@@ -959,8 +961,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       height: tableHeight,
       renderAllRows: false,
       renderAllColumns: false,
-      viewportRowRenderingOffset: 20,
-      viewportColumnRenderingOffset: 3,
+      viewportRowRenderingOffset: currentPhoneResourceProfile() ? 5 : 20,
+      viewportColumnRenderingOffset: currentPhoneResourceProfile() ? 1 : 3,
       stretchH: 'none',
       fixedColumnsStart: stickyColumns,
       hiddenColumns:{columns:catalogColumns.map((item,index)=>visibleColumns.has(item.key)?-1:index).filter((index)=>index>=0),indicators:true},
@@ -1168,16 +1170,18 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
       let currentPage = 1;
       let totalPages = 1;
+      let isDouble = false;
+      let isMosaic = false;
 
       prevBtn.addEventListener('click', () => {
         if (currentPage > 1) {
-          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage - 1 } }));
+          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: adjacentPdfPage(currentPage, -1, totalPages, isDouble && !isMosaic) } }));
         }
       });
 
       nextBtn.addEventListener('click', () => {
         if (currentPage < totalPages) {
-          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: currentPage + 1 } }));
+          element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: adjacentPdfPage(currentPage, 1, totalPages, isDouble && !isMosaic) } }));
         }
       });
 
@@ -1192,14 +1196,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       doubleBtn.type = 'button';
       doubleBtn.textContent = 'Book';
       doubleBtn.title = 'Toggle Double Page Facing View';
-      let isDouble = false;
 
       // Mosaic layout Toggle Button
       const mosaicBtn = document.createElement('button');
       mosaicBtn.type = 'button';
       mosaicBtn.textContent = 'Grid';
       mosaicBtn.title = 'Toggle Mosaic Thumbnail Grid';
-      let isMosaic = false;
 
       doubleBtn.addEventListener('click', () => {
         isDouble = !isDouble;
@@ -1491,12 +1493,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
       if (ratio < 0.25) {
         element.scrollBy({
-          top: -element.clientHeight * 0.85,
+          top: -element.clientHeight,
           behavior: 'smooth'
         });
       } else if (ratio > 0.75) {
         element.scrollBy({
-          top: element.clientHeight * 0.85,
+          top: element.clientHeight,
           behavior: 'smooth'
         });
       }

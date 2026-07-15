@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { narrationCharacterCount, normalizeReaderLanguage, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
+import { narrationCharacterCount, normalizeReaderLanguage, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 import { billableCharacterCount, chirpMonth, nextChirpRenewal } from '../src/lib/chirp';
 import { chirpAccessAllowed } from '../src/lib/chirp-access';
@@ -43,6 +43,15 @@ test('samples chapter labels across the full timeline', () => {
   assert.deepEqual(visibleChapterLabelIndexes(4,5),[0,1,2,3]);
   assert.deepEqual(visibleChapterLabelIndexes(20,5),[0,5,10,14,19]);
   assert.deepEqual(visibleChapterLabelIndexes(20,1),[0]);
+});
+
+test('maps selected source text onto an exact rendered narration segment', () => {
+  const segments=[
+    {index:0,url:'a',sizeBytes:1,startOffset:0,endOffset:100},
+    {index:1,url:'b',sizeBytes:1,startOffset:100,endOffset:300},
+  ];
+  assert.equal(renderedTimeForSourceOffset(segments,[10,40],300,200),30);
+  assert.equal(renderedTimeForSourceOffset(segments.map((segment)=>({...segment,startOffset:null,endOffset:null})),[10,40],300,150),25);
 });
 
 test('restricts Chirp to the configured server allowlist', () => {
