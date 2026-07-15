@@ -88,6 +88,12 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
       grid?.addEventListener('click',()=>{mosaic=!mosaic;if(mosaic&&double){double=false;book?.classList.remove('active');if(book)book.textContent='Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:false}}));}grid.classList.toggle('active',mosaic);root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:mosaic}}));});
       const runCommand=(command:ReaderCommandDetail['command'])=>{
         if(command==='read'){read.click();return;}
+        if(command==='previous-section'||command==='next-section'){
+          const delta=command==='previous-section'?-1:1;
+          if(readAloud.state!=='idle')void readAloud.shiftSection(delta);
+          else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));
+          return;
+        }
         if(command==='previous-page'){if(data.format==='pdf')movePdf(-1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
         if(command==='next-page'){if(data.format==='pdf')movePdf(1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
         if(command==='zoom-reset'){root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));return;}

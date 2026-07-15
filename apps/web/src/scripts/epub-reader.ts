@@ -1,4 +1,5 @@
 import 'foliate-js/view.js';
+import { epubDocumentAppearance, epubDocumentThemeCss } from '../lib/epub-appearance';
 import type { ReaderCommandDetail, ReaderControlsState, ReaderPlayFromDetail } from '../lib/reader-controls';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 
@@ -157,6 +158,12 @@ export async function mountEpubReader(
   const readerCommand = (event: Event) => {
     const command = (event as CustomEvent<ReaderCommandDetail>).detail?.command;
     if (command === 'toggle-toc') tocButton.click(); else if (command === 'previous-page') previous.click(); else if (command === 'next-page') next.click();
+    else if (command === 'previous-section' || command === 'next-section') {
+      const sections = view.book?.sections || []; const direction = command === 'previous-section' ? -1 : 1;
+      let target = currentSectionIndex + direction;
+      while (target >= 0 && target < sections.length && sections[target]?.linear === 'no') target += direction;
+      if (target >= 0 && target < sections.length) void view.goTo(target);
+    }
     else if (command === 'font-smaller') smaller.click(); else if (command === 'font-reset') { preferences.fontScale = 1; applyFont(); save(); emitControls(); }
     else if (command === 'font-larger') larger.click(); else if (command === 'toggle-flow') { preferences.flow = preferences.flow === 'paginated' ? 'scrolled' : 'paginated'; applyFlow(); save(); emitControls(); }
   };
@@ -175,9 +182,10 @@ export async function mountEpubReader(
   const applyAppearance = (doc: Document) => {
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
-    style.textContent = `${inverted ? `:root{color-scheme:dark!important;background:#111513!important}html,body{background:#111513!important;color:#e4e1d8!important}a{color:#8bb99c!important}img,svg,video{filter:none!important}` : ''}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}`;
-    doc.documentElement.style.backgroundColor = inverted ? '#111513' : '';
-    if (doc.body) { doc.body.style.backgroundColor = inverted ? '#111513' : ''; doc.body.style.color = inverted ? '#e4e1d8' : ''; }
+    const appearance = epubDocumentAppearance(inverted);
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}`;
+    doc.documentElement.style.backgroundColor = appearance.background;
+    if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
   const applyFlow = () => {
     flow.value = preferences.flow;
