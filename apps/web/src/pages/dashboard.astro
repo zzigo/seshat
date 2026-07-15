@@ -306,26 +306,26 @@ const themePresets = [
       <header class="reader-modal-toolbar">
         <div class="reader-modal-scroll">
           <strong data-reader-modal-title title="Reader">Reader</strong>
-          <button type="button" class="reader-epub-only" data-reader-command="toggle-toc" title="Table of contents" aria-label="Table of contents">C</button>
+          <button type="button" class="reader-epub-only reader-modal-initial" data-reader-command="toggle-toc" title="Table of contents" aria-label="Table of contents">C</button>
           <output class="reader-epub-only reader-modal-chapter" data-reader-modal-chapter title="Current chapter">cap</output>
           <div class="reader-epub-only reader-modal-font" aria-label="Text size">
             <button type="button" data-reader-command="font-smaller" aria-label="Smaller text">A−</button>
             <button type="button" data-reader-command="font-reset" data-reader-modal-font-scale>100%</button>
             <button type="button" data-reader-command="font-larger" aria-label="Larger text">A+</button>
           </div>
-          <button type="button" data-reader-modal-theme title="Theme" aria-label="Toggle reader and interface theme">T</button>
-          <button type="button" class="reader-modal-read" data-reader-command="read" data-reader-modal-read title="Read" aria-label="Read">R</button>
+          <button type="button" class="reader-modal-initial" data-reader-modal-theme title="Theme" aria-label="Toggle reader and interface theme">T</button>
+          <button type="button" class="reader-modal-read reader-modal-initial" data-reader-command="read" data-reader-modal-read title="Read" aria-label="Read">R</button>
           <span class="reader-modal-tail" aria-hidden="true"></span>
-          <button type="button" class="reader-epub-only reader-secondary" data-reader-command="toggle-flow" data-reader-modal-flow title="Pages">P</button>
+          <button type="button" class="reader-epub-only reader-secondary reader-modal-initial" data-reader-command="toggle-flow" data-reader-modal-flow title="Pages">P</button>
           <button type="button" class="reader-page-control reader-secondary" data-reader-command="previous-page" aria-label="Previous page">‹</button>
           <output class="reader-secondary reader-modal-page" data-reader-modal-page>1 / —</output>
           <button type="button" class="reader-page-control reader-secondary" data-reader-command="next-page" aria-label="Next page">›</button>
-          <button type="button" class="reader-pdf-only reader-secondary" data-reader-command="zoom-reset" title="Fit current page or spread" aria-label="Fit current page or spread">1</button>
-          <button type="button" class="reader-pdf-only reader-secondary" data-reader-command="toggle-book" title="Book view" aria-label="Book view">B</button>
-          <button type="button" class="reader-pdf-only reader-secondary" data-reader-command="toggle-grid" title="Grid view" aria-label="Grid view">G</button>
-          <button type="button" class="reader-secondary" data-reader-command="play-rendered" data-reader-modal-rendered title="Rendered audio" aria-label="Play rendered audio" hidden>A</button>
-          <a class="reader-secondary" data-reader-modal-original title="Original file" aria-label="Open original file" target="_blank" rel="noreferrer">O</a>
-          <button type="button" class="reader-secondary" data-reader-modal-fullscreen title="Fullscreen" aria-label="Open reader fullscreen">F</button>
+          <button type="button" class="reader-pdf-only reader-secondary reader-modal-initial" data-reader-command="zoom-reset" title="Fit current page or spread" aria-label="Fit current page or spread">1</button>
+          <button type="button" class="reader-pdf-only reader-secondary reader-modal-initial" data-reader-command="toggle-book" title="Book view" aria-label="Book view">B</button>
+          <button type="button" class="reader-pdf-only reader-secondary reader-modal-initial" data-reader-command="toggle-grid" title="Grid view" aria-label="Grid view">G</button>
+          <button type="button" class="reader-secondary reader-modal-initial" data-reader-command="play-rendered" data-reader-modal-rendered title="Rendered audio" aria-label="Play rendered audio" hidden>A</button>
+          <a class="reader-secondary reader-modal-initial" data-reader-modal-original title="Original file" aria-label="Open original file" target="_blank" rel="noreferrer">O</a>
+          <button type="button" class="reader-secondary reader-modal-initial" data-reader-modal-fullscreen title="Fullscreen" aria-label="Open reader fullscreen">F</button>
         </div>
         <button type="button" class="reader-modal-close" data-reader-modal-close aria-label="Close reader">×</button>
       </header>
@@ -601,6 +601,7 @@ const themePresets = [
   .reader-modal-scroll::-webkit-scrollbar{display:none}.reader-modal-scroll>*{flex:0 0 auto}
   .reader-modal-scroll>strong{width:min(31vw,430px);min-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
   .reader-modal-scroll button,.reader-modal-scroll a,.reader-modal-scroll output{height:27px;display:grid;place-items:center;box-sizing:border-box;padding:0 8px;border:0;color:var(--muted);background:transparent;font:9.6px/1 ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none;white-space:nowrap;cursor:pointer}
+  .reader-modal-scroll .reader-modal-initial{min-width:30px;padding-inline:7px;font-size:14.4px}
   .reader-modal-scroll button:hover,.reader-modal-scroll a:hover{color:var(--green)}.reader-modal-scroll button:focus-visible,.reader-modal-close:focus-visible{outline:1px solid var(--gold);outline-offset:-2px}
   .reader-modal-font{display:flex;align-items:center}.reader-modal-font button{min-width:24px;padding:0 5px}.reader-modal-font [data-reader-modal-font-scale]{min-width:36px;padding-inline:2px;color:var(--ink)}
   .reader-modal-chapter{max-width:190px;overflow:hidden;text-overflow:ellipsis}.reader-modal-page{min-width:45px}.reader-modal-read{color:var(--green)!important}.reader-modal-read[data-reader-state="reading"]{box-shadow:inset 0 -2px var(--green)}.reader-modal-read[data-reader-state="paused"]{color:var(--gold)!important}
@@ -611,7 +612,7 @@ const themePresets = [
   :global(.dashboard-bookmark-menu){position:fixed;z-index:5000;min-width:230px;padding:6px;border:1px solid var(--ink);background:var(--paper);box-shadow:0 10px 35px rgba(0,0,0,.22)}:global(.dashboard-bookmark-menu>small){display:block;padding:5px 7px;color:var(--muted);font:7px ui-monospace,SFMono-Regular,Menlo,monospace}:global(.dashboard-bookmark-menu>button){width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);align-items:center;gap:8px;padding:7px;border:0;color:var(--ink);background:transparent;text-align:left;font:10px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}:global(.dashboard-bookmark-menu>button:hover){background:color-mix(in srgb,var(--green) 10%,transparent)}:global(.dashboard-bookmark-menu i){width:8px;height:8px;background:#b07a3c}:global(.dashboard-bookmark-menu i[data-color="coral"]){background:#ba6554}:global(.dashboard-bookmark-menu i[data-color="cyan"]){background:#3996a5}:global(.dashboard-bookmark-menu i[data-color="sage"]){background:#6e8d68}:global(.dashboard-bookmark-menu i[data-color="violet"]){background:#806a9b}:global(.dashboard-bookmark-menu i[data-color="blue"]){background:#4e78a4}:global(.dashboard-bookmark-menu i[data-color="rose"]){background:#a86478}:global(.dashboard-bookmark-menu i[data-color="slate"]){background:#68757b}
   @media(max-width:760px){.dashboard-home-grid{grid-template-columns:1fr}.recent-reading-panel,.bookmark-home-panel{min-height:0}.dashboard-item-list{max-height:390px}.completed-reading-list{grid-template-columns:1fr}.completed-reading-item:nth-child(odd){border-right:0}.emergence-layout{grid-template-columns:1fr}.emergence-signals{border-right:0;border-bottom:1px solid var(--ink)}.dashboard-reader-modal{inset:0;width:100vw;height:100dvh;margin:0;border:0}.reader-modal-toolbar{padding-top:env(safe-area-inset-top);height:calc(39px + env(safe-area-inset-top))}.dashboard-reader-modal iframe{height:calc(100% - 40px - env(safe-area-inset-top))}.reader-modal-scroll>strong{width:min(23vw,150px);min-width:58px}}
   @media(pointer:coarse),(max-width:500px){.reader-page-control{display:none!important}}
-  @media(max-width:500px) and (orientation:portrait){:global(html.dashboard-reader-open),:global(html.dashboard-reader-open body){width:100%;max-width:100%;overflow:hidden;overscroll-behavior-x:none}.dashboard-reader-modal{position:fixed;inset:0;inline-size:100%;min-inline-size:0;max-inline-size:100%;block-size:100dvh;min-block-size:0;max-block-size:100dvh;margin:0;padding:0;overflow:hidden;overscroll-behavior:none}.reader-modal-toolbar{width:100%;max-width:100%;min-width:0}.reader-modal-scroll{gap:0;padding-left:5px}.reader-modal-scroll>strong{width:54px;min-width:54px;font-size:9.6px}.reader-modal-scroll button,.reader-modal-scroll a,.reader-modal-scroll output{padding-inline:5px;font-size:8.4px}.reader-modal-chapter{width:34px;max-width:34px}.reader-modal-font button{min-width:22px;padding-inline:3px}.reader-modal-font [data-reader-modal-font-scale]{min-width:32px}.reader-modal-tail{margin-inline:2px}.reader-modal-close{width:30px;flex-basis:30px}.dashboard-reader-modal iframe{width:100%;max-width:100%;min-width:0;overflow:hidden}}
+  @media(max-width:500px) and (orientation:portrait){:global(html.dashboard-reader-open),:global(html.dashboard-reader-open body){width:100%;max-width:100%;overflow:hidden;overscroll-behavior-x:none}.dashboard-reader-modal{position:fixed;inset:0;inline-size:100%;min-inline-size:0;max-inline-size:100%;block-size:100dvh;min-block-size:0;max-block-size:100dvh;margin:0;padding:0;overflow:hidden;overscroll-behavior:none}.reader-modal-toolbar{width:100%;max-width:100%;min-width:0}.reader-modal-scroll{gap:0;padding-left:5px}.reader-modal-scroll>strong{width:54px;min-width:54px;font-size:9.6px}.reader-modal-scroll button,.reader-modal-scroll a,.reader-modal-scroll output{padding-inline:5px;font-size:8.4px}.reader-modal-scroll .reader-modal-initial{min-width:27px;padding-inline:5px;font-size:12.6px}.reader-modal-chapter{width:34px;max-width:34px}.reader-modal-font button{min-width:22px;padding-inline:3px}.reader-modal-font [data-reader-modal-font-scale]{min-width:32px}.reader-modal-tail{margin-inline:2px}.reader-modal-close{width:30px;flex-basis:30px}.dashboard-reader-modal iframe{width:100%;max-width:100%;min-width:0;overflow:hidden}}
 </style>
 
 <style>

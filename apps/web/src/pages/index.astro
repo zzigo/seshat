@@ -35,7 +35,7 @@ const sample: BibliographicItem = {
 };
 const report = evaluateReferenceHealth(sample);
 const email = String((Astro.locals.session as any)?.user?.email || '');
-if (email) return Astro.redirect('/workspace');
+if (email) return Astro.redirect('/dashboard');
 const library = email
   ? await getCatalog().list(ownerKeyFor(email), 60).catch((error) => {
       console.error('[seshat:library]', error);

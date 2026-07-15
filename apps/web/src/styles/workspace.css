@@ -371,6 +371,8 @@ html { max-width: 100%; overflow: hidden; }
 .read-aloud-caption-controls button:active { color:var(--paper); background:var(--green); transform:translateY(0); }
 .read-aloud-caption-controls button:focus-visible { outline:2px solid var(--green-bright); outline-offset:2px; }
 .read-aloud-caption-controls svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+.read-aloud-caption-controls .caption-section { width:56px; height:56px; }
+.read-aloud-caption-controls .caption-section svg { width:51px; height:51px; stroke-width:1.25; }
 .read-aloud-caption-controls .reader-icon-fill { fill:currentColor; stroke:none; }
 .read-aloud-caption-controls .caption-comment { width:48px; grid-template-columns:16px auto; gap:3px; }
 .read-aloud-caption-controls small { color:inherit; font:7px ui-monospace,monospace; text-transform:uppercase; white-space:nowrap; }
