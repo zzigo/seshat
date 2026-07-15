@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { narrationCharacterCount, normalizeReaderLanguage, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
+import { narrationCharacterCount, normalizeReaderLanguage, readingSentenceIndexForQuote, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 import { billableCharacterCount, chirpMonth, chirpVoicesForLanguage, nextChirpRenewal } from '../src/lib/chirp';
 import { chirpAccessAllowed } from '../src/lib/chirp-access';
@@ -62,6 +62,16 @@ test('maps selected source text onto an exact rendered narration segment', () =>
   ];
   assert.equal(renderedTimeForSourceOffset(segments,[10,40],300,200),30);
   assert.equal(renderedTimeForSourceOffset(segments.map((segment)=>({...segment,startOffset:null,endOffset:null})),[10,40],300,150),25);
+});
+
+test('maps an EPUB play-from-here quote only within its source section', () => {
+  const sentences=[
+    {text:'The recurring sentence appears in chapter one.',start:0,end:46},
+    {text:'A bridge into the second chapter.',start:48,end:82},
+    {text:'The recurring sentence appears in chapter two.',start:84,end:130},
+  ];
+  assert.equal(readingSentenceIndexForQuote(sentences,{quote:'The recurring sentence appears in chapter two.',sectionStart:48,sectionEnd:130}),2);
+  assert.equal(readingSentenceIndexForQuote(sentences,{quote:'not present',sectionStart:48,sectionEnd:130}),-1);
 });
 
 test('restricts Chirp to the configured server allowlist', () => {

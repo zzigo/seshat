@@ -29,7 +29,7 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
   </head>
   <body class="dashboard-reader-body">
     <main class="dashboard-reader document-pod" data-dashboard-reader>
-      <header class="pod-toolbar dashboard-reader-toolbar">
+      <header class="pod-toolbar dashboard-reader-toolbar" hidden>
         <strong title={reference.title}>{reference.title}</strong>
         <div class="dashboard-reader-document-controls">
           <button type="button" data-reader-zoom title="Fit current page or spread">1:1</button>
@@ -52,6 +52,8 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
     <script is:inline type="application/json" id="dashboard-reader-data" set:html={serialized}></script>
     <script>
       import { adjacentPdfPage } from '../../lib/pdf-navigation';
+      import type { ReaderCommandDetail, ReaderControlsState } from '../../lib/reader-controls';
+      import { READER_COMMAND_MESSAGE, READER_STATE_MESSAGE } from '../../lib/reader-controls';
       import { mountPdfViewer } from '../../scripts/pdf-viewer';
       import { mountEpubReader } from '../../scripts/epub-reader';
       import { readAloud } from '../../scripts/read-aloud';
@@ -63,30 +65,49 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
       type ReaderData={id:string;title:string;format:string;language:string;chirpEnabled:boolean;hasKokoroNarration:boolean;hasChirpNarration:boolean};
       const data:ReaderData=JSON.parse(document.getElementById('dashboard-reader-data')?.textContent||'{}');
       const root=document.querySelector<HTMLElement>('[data-dashboard-reader]')!;
-      window.addEventListener('message',(event)=>{if(event.origin!==window.location.origin||event.data?.type!=='seshat:reader-theme')return;const mode=event.data.mode==='dark'?'dark':'light',nextPreset=String(event.data.preset||(mode==='dark'?'ink':'papyrus'));documentThemeDark=mode==='dark';document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',nextPreset);document.documentElement.classList.toggle('dark-theme',documentThemeDark);root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));});
       const surface=root.querySelector<HTMLElement>('[data-reader-surface]')!;
       const status=root.querySelector<HTMLElement>('[data-reader-status]')!;
       const report=(message:string,tone:'ready'|'saving'|'error'='ready')=>{status.textContent=message;status.dataset.tone=tone;};
       const read=root.querySelector<HTMLButtonElement>('[data-reader-read]')!;
       const stop=root.querySelector<HTMLButtonElement>('[data-reader-stop]')!;
+      let controlsState:ReaderControlsState={format:data.format==='pdf'?'pdf':data.format==='epub'?'epub':'text',chapter:data.format==='epub'?'cap':'',pageLabel:data.format==='pdf'?'1 / —':'',fontScale:1,readLabel:'Read',readState:'idle',hasRendered:data.hasKokoroNarration||data.hasChirpNarration};
+      const postState=(partial:Partial<ReaderControlsState>={})=>{controlsState={...controlsState,...partial};window.parent.postMessage({type:READER_STATE_MESSAGE,state:controlsState},window.location.origin);};
+      root.addEventListener('seshat:reader-controls',((event:CustomEvent<ReaderControlsState>)=>postState(event.detail||{})) as EventListener);
       readAloud.attach({referenceId:data.id,language:data.language||navigator.language,container:root,button:read,stopButton:stop,report,chirpEnabled:data.chirpEnabled});
       root.querySelector('[data-reader-rendered]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider:data.hasKokoroNarration?'kokoro':'chirp'}})));
       root.querySelector('[data-reader-zoom]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')));
       let currentPage=1,totalPages=1,double=false,mosaic=false;
       const page=root.querySelector<HTMLElement>('[data-reader-page]');
-      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;if(page)page.textContent=`${currentPage} / ${totalPages}`;}) as EventListener);
-      root.querySelector('[data-reader-prev]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,-1,totalPages,double&&!mosaic)}})));
-      root.querySelector('[data-reader-next]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,1,totalPages,double&&!mosaic)}})));
+      const movePdf=(delta:-1|1)=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,delta,totalPages,double&&!mosaic)}}));
+      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;const label=`${currentPage} / ${totalPages}`;if(page)page.textContent=label;postState({pageLabel:label});}) as EventListener);
+      root.querySelector('[data-reader-prev]')?.addEventListener('click',()=>movePdf(-1));
+      root.querySelector('[data-reader-next]')?.addEventListener('click',()=>movePdf(1));
       const book=root.querySelector<HTMLButtonElement>('[data-reader-book]');const grid=root.querySelector<HTMLButtonElement>('[data-reader-grid]');
       book?.addEventListener('click',()=>{double=!double;if(double&&mosaic){mosaic=false;grid?.classList.remove('active');root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:false}}));}book.classList.toggle('active',double);book.textContent=double?'1 page':'Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:double}}));});
       grid?.addEventListener('click',()=>{mosaic=!mosaic;if(mosaic&&double){double=false;book?.classList.remove('active');if(book)book.textContent='Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:false}}));}grid.classList.toggle('active',mosaic);root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:mosaic}}));});
+      const runCommand=(command:ReaderCommandDetail['command'])=>{
+        if(command==='read'){read.click();return;}
+        if(command==='previous-page'){if(data.format==='pdf')movePdf(-1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
+        if(command==='next-page'){if(data.format==='pdf')movePdf(1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
+        if(command==='zoom-reset'){root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));return;}
+        if(command==='toggle-book'){book?.click();return;}
+        if(command==='toggle-grid'){grid?.click();return;}
+        if(command==='play-rendered'){root.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider:data.hasKokoroNarration?'kokoro':'chirp'}}));return;}
+        root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));
+      };
+      window.addEventListener('message',(event)=>{
+        if(event.origin!==window.location.origin||event.source!==window.parent)return;
+        if(event.data?.type==='seshat:reader-theme'){const mode=event.data.mode==='dark'?'dark':'light',nextPreset=String(event.data.preset||(mode==='dark'?'ink':'papyrus'));documentThemeDark=mode==='dark';document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',nextPreset);document.documentElement.classList.toggle('dark-theme',documentThemeDark);root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));return;}
+        if(event.data?.type===READER_COMMAND_MESSAGE)runCommand(event.data.command as ReaderCommandDetail['command']);
+      });
+      new MutationObserver(()=>postState({readLabel:read.textContent||'Read',readState:read.dataset.readerState||'idle'})).observe(read,{attributes:true,childList:true,subtree:true,attributeFilter:['data-reader-state']});
       const mount=async()=>{
         void fetch(`/api/library/${encodeURIComponent(data.id)}/reading-state`,{method:'PATCH'});
         if(data.format==='pdf')await mountPdfViewer(surface,data.id,data.title,report);
         else if(data.format==='epub')await mountEpubReader(surface,data.id,data.title,report);
         else{surface.classList.add('pod-reading-surface');const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/markdown`);if(!response.ok)throw new Error('Extracted text is not available.');const pre=document.createElement('pre');pre.textContent=await response.text();surface.appendChild(pre);}
         root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));
-        report('ready');
+        report('ready');postState();
       };
       void mount().catch((error)=>report(error instanceof Error?error.message:'Reader unavailable','error'));
     </script>
@@ -96,18 +117,19 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
 <style>
   html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--paper);color:var(--ink)}
   .dashboard-reader-body{min-width:0}
-  .dashboard-reader{display:grid;grid-template-rows:auto auto minmax(0,1fr);width:100%;height:100%;min-width:0;background:var(--paper)}
+  .dashboard-reader{display:grid;grid-template-rows:minmax(0,1fr);width:100%;height:100%;min-width:0;background:var(--paper)}
+  .dashboard-reader-toolbar[hidden]{display:none}
   .dashboard-reader-toolbar{min-width:0;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line)}
   .dashboard-reader-toolbar>strong{min-width:80px;max-width:min(42vw,520px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500;margin-right:auto}
   .dashboard-reader-toolbar button,.dashboard-reader-toolbar a{min-height:25px;padding:3px 8px;border:1px solid var(--hairline);background:transparent;color:var(--ink);font:9px/1 ui-monospace,monospace;text-decoration:none;cursor:pointer}
   .dashboard-reader-toolbar button.active{border-color:var(--green);color:var(--green)}
   .dashboard-reader-document-controls{display:flex;align-items:center;gap:4px}
   .dashboard-reader-document-controls span{min-width:42px;text-align:center;font:9px/1 ui-monospace,monospace;color:var(--muted)}
-  .dashboard-reader-status{min-height:17px;padding:2px 11px;border-bottom:1px solid var(--hairline);color:var(--muted);font:9px/1.4 ui-monospace,monospace}
-  .dashboard-reader-status[data-tone="error"]{color:#a33}
+  .dashboard-reader-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .dashboard-reader-status[data-tone="error"]{z-index:60;top:8px;left:50%;width:auto;height:auto;overflow:visible;clip-path:none;transform:translateX(-50%);padding:5px 8px;color:#a33;background:var(--paper);border:1px solid currentColor;font:9px/1.4 ui-monospace,monospace;white-space:nowrap}
   .pod-document-body{min-height:0;overflow:hidden}
   .pod-reading-surface{overflow:auto;padding:24px}
   .pod-reading-surface pre{max-width:78ch;margin:0 auto;white-space:pre-wrap;font:15px/1.65 ui-serif,serif}
-  @media(max-width:700px){.dashboard-reader-toolbar{overflow-x:auto;scrollbar-width:none}.dashboard-reader-toolbar>strong{max-width:38vw;flex:0 0 auto}.dashboard-reader-document-controls{flex:0 0 auto}.dashboard-reader-toolbar a{display:none}.dashboard-reader-status{display:none}.dashboard-reader{grid-template-rows:auto minmax(0,1fr)}}
+  @media(max-width:700px){.dashboard-reader-toolbar{overflow-x:auto;scrollbar-width:none}.dashboard-reader-toolbar>strong{max-width:38vw;flex:0 0 auto}.dashboard-reader-document-controls{flex:0 0 auto}.dashboard-reader-toolbar a{display:none}}
   @media(max-width:500px) and (orientation:portrait){html,body{width:100%;max-width:100%;height:100dvh;overflow:hidden;overscroll-behavior-x:none}.dashboard-reader{width:100%;max-width:100%;min-width:0;margin:0;overflow:hidden}.dashboard-reader-toolbar{width:100%;max-width:100%;overscroll-behavior-x:contain}.pod-document-body{width:100%;max-width:100%;min-width:0}}
 </style>
