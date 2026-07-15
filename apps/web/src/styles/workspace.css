@@ -521,7 +521,7 @@ html { max-width: 100%; overflow: hidden; }
 .annotation-cards article header small { color: var(--muted); font: 7px monospace; text-transform: uppercase; }
 .annotation-cards blockquote { margin: 10px 0 0; display: -webkit-box; overflow: hidden; font: 13px/1.4 Georgia,serif; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
 .annotation-cards p { margin: 8px 0 0; color: var(--muted); font: 10px/1.4 monospace; }
-.annotation-palette { position: fixed; z-index: 1400; display: flex; gap: 3px; padding: 5px; border: 1px solid var(--ink); background: #e9e6dc; box-shadow: 5px 8px 24px rgba(23,35,29,.25); }
+.annotation-palette { position: fixed; z-index: 2147483647; display: flex; gap: 3px; padding: 5px; border: 1px solid var(--ink); background: #e9e6dc; box-shadow: 5px 8px 24px rgba(23,35,29,.25); }
 .annotation-palette[hidden] { display: none; }
 .annotation-palette button { width: 31px; height: 31px; position: relative; display: grid; place-items: center; padding: 0; border: 1px solid transparent; background: transparent; cursor: pointer; touch-action:manipulation; }
 .annotation-palette button:hover { border-color: var(--ink); }

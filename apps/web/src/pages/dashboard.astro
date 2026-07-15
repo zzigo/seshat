@@ -1,6 +1,7 @@
 ---
 import Shell from '../components/Shell.astro';
 import ReaderModal from '../components/ReaderModal.astro';
+import DashboardSearch from '../components/DashboardSearch.astro';
 import { contributorSummary, formatPublicationYear } from '@seshat/core';
 import { getCatalog, isSessionAccountAdmin, ownerKeyFor, sessionIdentity } from '../lib/catalog';
 import { BOOKMARK_GROUP_COLORS, BOOKMARK_GROUP_ICONS } from '../lib/bookmark-groups';
@@ -76,6 +77,8 @@ const themePresets = [
       <div><div class="eyebrow">Personal archive</div><h1>{session.user.name || identity.email}</h1><p>{identity.email}</p></div>
       <a class="button quiet" href="/workspace">Open workspace →</a>
     </header>
+
+    <DashboardSearch />
 
     <section class="dashboard-home-grid" aria-label="Reading home">
       <section class="dashboard-panel recent-reading-panel">

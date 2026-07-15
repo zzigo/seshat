@@ -47,7 +47,7 @@ const session = Astro.locals.session as any;
         <button type="button" class="identity-action" data-toggle-theme style="border:0; background:transparent; font-size:14px; padding:0 8px; cursor:pointer;" title="Toggle dark/light theme">☼</button>
         {session?.user?.email ? (
           <>
-            <a href="/search" class="identity-action">search</a>
+            <a href="/dashboard#search" class="identity-action">search</a>
             <a href="/dashboard" class="identity-name">{session.user.name || session.user.email}</a>
             <SignOut><span class="identity-action">sign out</span></SignOut>
           </>

@@ -39,7 +39,7 @@ export async function mountAnnotationWorkspace(
   if (!annotationResponse.ok) { element.innerHTML = '<div class="annotation-loading">Annotations could not be loaded.</div>'; return () => undefined; }
   const source = textResponse ? await textResponse.text() : '';
   const annotations: Annotation[] = (await annotationResponse.json()).annotations || [];
-  if (!options.indexOnly) annotations.filter((annotation) => annotation.sourceKind !== 'pdf').forEach((annotation) => {
+  if (!options.indexOnly) annotations.filter((annotation) => annotation.sourceKind === 'markdown').forEach((annotation) => {
     if (source.slice(annotation.startOffset, annotation.endOffset) === annotation.quote) return;
     const candidates: number[] = []; let offset = source.indexOf(annotation.quote);
     while (offset >= 0 && candidates.length < 100) { candidates.push(offset); offset = source.indexOf(annotation.quote, offset + 1); }
@@ -85,7 +85,7 @@ export async function mountAnnotationWorkspace(
 
   const render = () => {
     if (!options.indexOnly) surface.replaceChildren();
-    const valid = annotations.filter((item) => item.sourceKind !== 'pdf' && item.startOffset >= 0 && item.endOffset <= source.length && item.endOffset > item.startOffset)
+    const valid = annotations.filter((item) => item.sourceKind === 'markdown' && item.startOffset >= 0 && item.endOffset <= source.length && item.endOffset > item.startOffset)
       .sort((a, b) => a.startOffset - b.startOffset || a.endOffset - b.endOffset);
     let cursor = 0;
     valid.forEach((annotation) => {

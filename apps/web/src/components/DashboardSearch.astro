@@ -1,0 +1,123 @@
+<section class="dashboard-search" id="search" aria-label="Search archive">
+  <form class="corpus-search-form" data-search-form data-search-kind="items">
+    <input name="q" type="search" minlength="1" maxlength="300" autocomplete="off" placeholder="Search titles, persons, citekeys or tags…" aria-label="Search archive" />
+    <button type="submit">Search</button>
+    <button type="submit" name="intent" value="reason" class="secondary corpus-only" hidden>Reason with evidence</button>
+    <div class="search-modes" aria-label="Retrieval mode">
+      <label><input type="radio" name="mode" value="items" checked /> items</label>
+      <label><input type="radio" name="mode" value="hybrid" /> hybrid</label>
+      <label><input type="radio" name="mode" value="lexical" /> exact</label>
+      <label><input type="radio" name="mode" value="semantic" /> semantic</label>
+      <label><input type="radio" name="mode" value="graph" /> graph</label>
+    </div>
+  </form>
+  <output class="search-status" data-search-status>Type to filter catalog items.</output>
+  <div class="corpus-results" data-search-results></div>
+</section>
+
+<script>
+  const form = document.querySelector<HTMLFormElement>('[data-search-form]');
+  const input = form?.querySelector<HTMLInputElement>('input[name="q"]');
+  const modes = [...(form?.querySelectorAll<HTMLInputElement>('input[name="mode"]') || [])];
+  const reasonButton = form?.querySelector<HTMLButtonElement>('[value="reason"]');
+  const status = document.querySelector<HTMLOutputElement>('[data-search-status]');
+  const results = document.querySelector<HTMLElement>('[data-search-results]');
+  let itemTimer = 0;
+  let itemRequest: AbortController | null = null;
+
+  const selectedMode = () => modes.find((mode) => mode.checked)?.value || 'items';
+  const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[char] || char);
+  const renderSnippet = (value: string) => esc(value).replaceAll('‹', '<mark>').replaceAll('›', '</mark>');
+  const displayYear = (value: unknown) => {
+    const year = Number(value);
+    if (!Number.isFinite(year) || year === 0) return '';
+    return year < 0 ? `${Math.abs(year)} BCE` : String(year);
+  };
+
+  const renderItems = (items: any[]) => {
+    if (!results) return;
+    results.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement('div'); empty.className = 'search-empty'; empty.textContent = 'No catalog items match these characters.'; results.append(empty); return;
+    }
+    const list = document.createElement('div'); list.className = 'item-search-results';
+    items.forEach((item) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'item-search-result';
+      const copy = document.createElement('span'); const title = document.createElement('strong'); title.textContent = String(item.title || 'Untitled');
+      const meta = document.createElement('small'); meta.textContent = [item.citeKey ? `@${item.citeKey}` : '', item.persons, displayYear(item.year), item.type].filter(Boolean).join(' · ');
+      const action = document.createElement('b'); action.textContent = 'Read'; copy.append(title, meta); button.append(copy, action);
+      button.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seshat:open-reader', { detail: { id: String(item.id), title: String(item.title || 'Reader') } })));
+      list.append(button);
+    });
+    results.append(list);
+  };
+
+  const searchItems = async () => {
+    if (!input || !status || !results || selectedMode() !== 'items') return;
+    const query = input.value.trim(); itemRequest?.abort();
+    if (!query) { status.value = 'Type to filter catalog items.'; results.replaceChildren(); return; }
+    itemRequest = new AbortController(); status.value = 'Filtering catalog items…';
+    try {
+      const response = await fetch(`/api/search/items?q=${encodeURIComponent(query)}`, { signal: itemRequest.signal });
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || 'Item search failed');
+      renderItems(payload.items || []); status.value = `${payload.items?.length || 0} matching items · select one to read`;
+    } catch (error: any) { if (error?.name !== 'AbortError') status.value = error?.message || 'Item search failed'; }
+  };
+  const queueItemSearch = () => { window.clearTimeout(itemTimer); itemTimer = window.setTimeout(searchItems, 140); };
+
+  const searchCorpus = async (reasoning: boolean) => {
+    if (!form || !status || !results) return;
+    const data = new FormData(form); const query = String(data.get('q') || '').trim();
+    if (query.length < 2) { status.value = 'Corpus search needs at least two characters.'; return; }
+    itemRequest?.abort(); status.value = 'Searching lexical, vector and graph evidence…'; results.replaceChildren();
+    const params = new URLSearchParams({ q: query, mode: String(data.get('mode') || 'hybrid') });
+    try {
+      const response = reasoning
+        ? await fetch('/api/search/corpus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) })
+        : await fetch(`/api/search/corpus?${params}`);
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || 'Search failed');
+      if (reasoning) {
+        status.value = `${payload.sources.length} evidence fragments used · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
+        results.innerHTML = `<article class="corpus-reasoning"><h2>Evidence-grounded reading</h2><div>${esc(payload.answer).replaceAll('\n', '<br />')}</div><ol>${payload.sources.map((source: any) => `<li><a href="/library/${encodeURIComponent(source.referenceId)}">[${source.number}] @${esc(source.citeKey)} · ${esc(source.title)}${source.locator ? ` · ${esc(source.locator)}` : ''}</a></li>`).join('')}</ol></article>`;
+        return;
+      }
+      status.value = `${payload.items.length} evidence fragments · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
+      const grouped = new Map<string, any[]>(); payload.items.forEach((item: any) => grouped.set(item.referenceId, [...(grouped.get(item.referenceId) || []), item]));
+      results.innerHTML = [...grouped.values()].map((items) => {
+        const first = items[0]; const occurrences = items.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
+        return `<article class="corpus-result-group"><header><div><span>@${esc(first.citeKey)}</span><h2><a href="/library/${encodeURIComponent(first.referenceId)}">${esc(first.title)}</a></h2></div><strong>${occurrences || items.length} ${occurrences === 1 ? 'occurrence' : 'occurrences'}</strong></header><ol>${items.map((item) => `<li><a href="/library/${encodeURIComponent(item.referenceId)}${item.page ? `?page=${encodeURIComponent(item.page)}&q=${encodeURIComponent(query)}` : ''}"><b>${esc(item.locator || item.section || `fragment ${item.metadata?.ordinal ?? ''}`)}</b><p>${renderSnippet(item.snippet)}</p><small>${item.channels.map(esc).join(' · ')}</small></a></li>`).join('')}</ol></article>`;
+      }).join('') || '<div class="search-empty">No evidence found in the indexed corpus.</div>';
+    } catch (error: any) { status.value = error?.message || 'Search failed'; }
+  };
+
+  input?.addEventListener('input', () => { if (selectedMode() === 'items') queueItemSearch(); });
+  modes.forEach((mode) => mode.addEventListener('change', () => {
+    const itemMode = selectedMode() === 'items';
+    if (form) form.dataset.searchKind = itemMode ? 'items' : 'corpus';
+    if (input) input.placeholder = itemMode ? 'Search titles, persons, citekeys or tags…' : 'Search exact phrases, concepts, persons or methods…';
+    if (reasonButton) reasonButton.hidden = itemMode;
+    results?.replaceChildren(); if (itemMode) queueItemSearch(); else if (status) status.value = 'Ready to inspect the corpus.';
+  }));
+  form?.addEventListener('submit', (event: SubmitEvent) => {
+    event.preventDefault(); if (selectedMode() === 'items') void searchItems(); else void searchCorpus((event.submitter as HTMLButtonElement | null)?.value === 'reason');
+  });
+</script>
+
+<style>
+  .dashboard-search{margin:8px 0 30px}
+  .dashboard-search :global(.corpus-search-form){border:0;background:transparent}
+  .dashboard-search :global(.corpus-search-form>input){padding-left:0;border-bottom:1px solid var(--hairline)}
+  .dashboard-search :global(.corpus-search-form>button){border:0}
+  .dashboard-search :global(.corpus-search-form>button.secondary){border:0}
+  .dashboard-search :global(.search-modes){padding-left:0;border:0}
+  .dashboard-search :global(.search-modes input){width:9px;height:9px;margin:0;appearance:none;border:1px solid var(--gold);border-radius:0;background:transparent}
+  .dashboard-search :global(.search-modes input:checked){background:var(--gold);box-shadow:inset 0 0 0 2px var(--paper)}
+  .dashboard-search :global(.corpus-only[hidden]){display:none}
+  .dashboard-search :global(.corpus-results),.dashboard-search :global(.item-search-results){display:grid;gap:0}
+  .dashboard-search :global(.item-search-result){width:100%;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px;padding:11px 0;border:0;color:var(--ink);background:transparent;text-align:left;cursor:pointer}
+  .dashboard-search :global(.item-search-result:hover),.dashboard-search :global(.item-search-result:focus-visible){color:var(--green);background:transparent;outline:0}
+  .dashboard-search :global(.item-search-result>span){min-width:0}.dashboard-search :global(.item-search-result strong),.dashboard-search :global(.item-search-result small){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dashboard-search :global(.item-search-result strong){font:16px/1.25 Georgia,serif}.dashboard-search :global(.item-search-result small){margin-top:5px;color:var(--muted);font:8px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}.dashboard-search :global(.item-search-result>b){color:var(--green);font:8px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}
+  .dashboard-search :global(.corpus-result-group),.dashboard-search :global(.corpus-result-group>header),.dashboard-search :global(.corpus-result-group li),.dashboard-search :global(.corpus-reasoning),.dashboard-search :global(.corpus-reasoning h2),.dashboard-search :global(.corpus-reasoning ol),.dashboard-search :global(.search-empty){border:0;background:transparent}
+  .dashboard-search :global(.corpus-result-group li p){color:var(--ink)}
+  .dashboard-search :global(.search-empty){padding:28px 0;text-align:left}
+</style>
