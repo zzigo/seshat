@@ -21,6 +21,7 @@ export type ReaderControlsState = {
   format: 'pdf' | 'epub' | 'text';
   chapter?: string;
   pageLabel?: string;
+  progress?: number;
   flow?: 'paginated' | 'scrolled';
   fontScale?: number;
   readLabel?: string;

@@ -121,6 +121,8 @@ export interface CatalogRecentReading {
   contributors: unknown[];
   issued?: Record<string, unknown>;
   readAt: string;
+  location: Record<string, unknown>;
+  completedAt?: string;
 }
 
 export interface CatalogAnnotation {
@@ -1557,13 +1559,31 @@ export class PostgresCatalog {
   async listRecentReadings(ownerKey: string, limit = 20): Promise<CatalogRecentReading[]> {
     await this.ensureSchema();
     const result = await this.pool.query(
-      `SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,state.updated_at AS read_at
+      `SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,state.location,state.updated_at AS read_at
        FROM catalog_reading_state state JOIN catalog_references reference ON reference.id=state.reference_id
        WHERE state.owner_key=$1 AND reference.owner_key=$1 ORDER BY state.updated_at DESC LIMIT $2`,
       [ownerKey, Math.max(1, Math.min(100, limit))],
     );
     return result.rows.map((row) => ({ id: row.id, title: row.title, type: row.type,
-      contributors: row.contributors || [], issued: row.issued || undefined, readAt: new Date(row.read_at).toISOString() }));
+      contributors: row.contributors || [], issued: row.issued || undefined, location: row.location || {},
+      readAt: new Date(row.read_at).toISOString(), completedAt: row.location?.completedAt || undefined }));
+  }
+
+  async listCompletedReadings(ownerKey: string, limit = 10): Promise<CatalogRecentReading[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,state.location,state.updated_at AS read_at
+       FROM catalog_reading_state state JOIN catalog_references reference ON reference.id=state.reference_id
+       WHERE state.owner_key=$1 AND reference.owner_key=$1 AND (
+         NULLIF(state.location->>'completedAt','') IS NOT NULL OR
+         CASE WHEN jsonb_typeof(state.location->'progress')='number' THEN (state.location->>'progress')::numeric ELSE 0 END >= 0.995
+       )
+       ORDER BY COALESCE(NULLIF(state.location->>'completedAt',''),state.updated_at::text) DESC LIMIT $2`,
+      [ownerKey, Math.max(1, Math.min(100, limit))],
+    );
+    return result.rows.map((row) => ({ id: row.id, title: row.title, type: row.type,
+      contributors: row.contributors || [], issued: row.issued || undefined, location: row.location || {},
+      readAt: new Date(row.read_at).toISOString(), completedAt: row.location?.completedAt || new Date(row.read_at).toISOString() }));
   }
 
   async ensureLibraryPath(ownerKey: string, names: string[]): Promise<CatalogLibrary | null> {

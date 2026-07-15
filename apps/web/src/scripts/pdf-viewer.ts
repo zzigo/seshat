@@ -3,6 +3,7 @@ import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { annotationColors, mountAnnotationWorkspace, type Annotation } from './annotations';
 import { currentPhoneResourceProfile } from '../lib/client-resources';
 import { adjacentPdfPage, pdfPageScrollTop, pdfSpreadStart } from '../lib/pdf-navigation';
+import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 const SIDEBAR_WIDTH_KEY = 'seshat.pdf.annotation-sidebar-width';
@@ -71,8 +72,13 @@ export async function mountPdfViewer(
   const loadingTask = getDocument({ url: `/api/library/${referenceId}/original`, withCredentials: true });
   const pdf = await loadingTask.promise;
   if (disposed) { await pdf.destroy(); return () => undefined; }
-  const annotationResponse = await fetch(`/api/library/${referenceId}/annotations`);
+  const [annotationResponse,readingStateResponse] = await Promise.all([
+    fetch(`/api/library/${referenceId}/annotations`),
+    fetch(`/api/library/${referenceId}/reading-state`,{cache:'no-store'}),
+  ]);
   if (annotationResponse.ok) annotations = (await annotationResponse.json()).annotations || [];
+  const readingState=readingStateResponse.ok?await readingStateResponse.json() as {location?:ReadingLocation;preferences?:Record<string,unknown>}:{location:{},preferences:{}};
+  let readingLocation:ReadingLocation=readingState.location||{};const readingPreferences=readingState.preferences||{};let readingSaveTimer=0;let readingPersistReady=false;
   const disposeIndex = await mountAnnotationWorkspace(sidebar, referenceId, title, report, { indexOnly: true });
   sidebar.prepend(resizeHandle);
   progress.remove();
@@ -324,7 +330,7 @@ export async function mountPdfViewer(
     if (pageEl) {
       viewer.scrollTo({
         top: pdfPageScrollTop(pageEl.offsetTop, currentZoom, 8),
-        behavior: 'smooth'
+        behavior: e.detail.behavior === 'auto' ? 'auto' : 'smooth'
       });
     }
   };
@@ -363,8 +369,20 @@ export async function mountPdfViewer(
   if (pendingPage) handleReferencePage(new CustomEvent('pending', { detail: { referenceId, page: pendingPage } }));
 
   // Active page change observer
-  let currentPage = 1;
   const total = pdf.numPages;
+  const savedPage=Math.max(1,Math.min(total,Math.floor(Number(pendingPage||readingLocation.lastPage||readingLocation.page||1))));
+  let currentPage = savedPage;
+  const writeReadingState=()=>{
+    readingLocation=updateReadingLocation(readingLocation,{format:'pdf',page:currentPage,lastPage:currentPage,totalPages:total});
+    return fetch(`/api/library/${referenceId}/reading-state`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({location:readingLocation,preferences:readingPreferences}),keepalive:true}).catch(()=>undefined);
+  };
+  const persistPage=(page:number)=>{
+    if(!readingPersistReady)return;
+    window.clearTimeout(readingSaveTimer);readingSaveTimer=window.setTimeout(()=>{
+      currentPage=page;void writeReadingState();
+    },500);
+  };
+  const announcePage=(page:number)=>{parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed',{detail:{page,total}}));persistPage(page);};
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement)?.matches('input,textarea,select,[contenteditable="true"]')) return;
     let page: number | null = null;
@@ -386,10 +404,9 @@ export async function mountPdfViewer(
     if (visible.length > 0) {
       visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio);
       const pageNum = Number((visible[0].target as HTMLElement).dataset.page);
+      if(!readingPersistReady&&savedPage>1&&pageNum!==savedPage)return;
       currentPage = pageNum;
-      parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed', {
-        detail: { page: pageNum, total }
-      }));
+      announcePage(pageNum);
     }
   }, { root: viewer, threshold: 0.15 });
 
@@ -424,13 +441,13 @@ export async function mountPdfViewer(
   viewer.addEventListener('click', handleMarginClicks);
   viewer.addEventListener('dblclick', handleDoubleClicks);
 
-  // Initial dispatch
-  parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed', {
-    detail: { page: 1, total }
-  }));
+  // Restore and announce the last visible page before accepting new progress.
+  announcePage(savedPage);
+  window.requestAnimationFrame(()=>{handleGotoPage({detail:{page:savedPage,behavior:'auto'}});window.setTimeout(()=>{readingPersistReady=true;announcePage(currentPage);},300);});
 
   return () => {
     disposed = true;
+    window.clearTimeout(readingSaveTimer);if(readingPersistReady)void writeReadingState();
     observer.disconnect();
     pageChangeObserver.disconnect();
     renderTasks.forEach((task) => task.cancel());

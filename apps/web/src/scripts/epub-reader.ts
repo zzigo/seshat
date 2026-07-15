@@ -1,5 +1,6 @@
 import 'foliate-js/view.js';
 import type { ReaderCommandDetail, ReaderControlsState, ReaderPlayFromDetail } from '../lib/reader-controls';
+import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 
 type SaveState = (message: string, tone?: 'ready' | 'saving' | 'error') => void;
 type ReadingPreferences = { flow: 'paginated' | 'scrolled'; fontScale: number };
@@ -53,6 +54,8 @@ export async function mountEpubReader(
   let disposed = false;
   let saveTimer = 0;
   let lastLocation = '';
+  let lastFraction = 0;
+  let readingLocation: ReadingLocation = {};
   let preferences: ReadingPreferences = { flow: 'paginated', fontScale: 1 };
   let inverted = false;
   const contentDocuments = new Set<Document>();
@@ -90,7 +93,7 @@ export async function mountEpubReader(
   controls.hidden = externalControls; stage.classList.toggle('external-controls', externalControls);
 
   const emitControls = () => pod?.dispatchEvent(new CustomEvent<ReaderControlsState>('seshat:reader-controls', { detail: {
-    format: 'epub', chapter: currentChapter, pageLabel: progress.textContent || 'Reading', flow: preferences.flow, fontScale: preferences.fontScale,
+    format: 'epub', chapter: currentChapter, pageLabel: progress.textContent || 'Reading', progress:lastFraction, flow: preferences.flow, fontScale: preferences.fontScale,
   } }));
 
   const loadReaderText = async () => {
@@ -181,14 +184,18 @@ export async function mountEpubReader(
     view.renderer?.setAttribute('flow', preferences.flow);
     emitControls();
   };
+  const writeReadingState = (keepalive = false) => {
+    readingLocation = updateReadingLocation(readingLocation, { format:'epub',cfi: lastLocation, fraction: lastFraction, sectionIndex: currentSectionIndex });
+    return fetch(`/api/library/${referenceId}/reading-state`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ location: readingLocation, preferences }), keepalive,
+      ...(keepalive ? {} : { signal: controller.signal }),
+    }).catch(() => undefined);
+  };
   const save = () => {
     window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
-      void fetch(`/api/library/${referenceId}/reading-state`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ location: { cfi: lastLocation }, preferences }),
-        signal: controller.signal,
-      }).catch(() => undefined);
+      void writeReadingState();
     }, 650);
   };
   const renderToc = (items: TocItem[], container: HTMLElement) => {
@@ -229,6 +236,7 @@ export async function mountEpubReader(
   view.addEventListener('relocate', ((event: CustomEvent<RelocateDetail>) => {
     const detail = event.detail || {};
     if (Number.isFinite(detail.index)) currentSectionIndex = Number(detail.index);
+    if (Number.isFinite(detail.fraction)) lastFraction = Math.max(0,Math.min(1,Number(detail.fraction)));
     lastLocation = detail.cfi || lastLocation;
     const percentage = Number.isFinite(detail.fraction) ? `${Math.round((detail.fraction || 0) * 100)}%` : '';
     currentChapter = detail.tocItem?.label || currentChapter; progress.textContent = [currentChapter === 'cap' ? '' : currentChapter, percentage].filter(Boolean).join(' · ') || 'Reading'; emitControls();
@@ -247,8 +255,9 @@ export async function mountEpubReader(
       fetch(`/api/library/${referenceId}/original`, { signal: controller.signal }),
     ]);
     if (!originalResponse.ok) throw new Error('The EPUB original is not available.');
-    const state = stateResponse.ok ? await stateResponse.json() as { location?: { cfi?: string }; preferences?: Partial<ReadingPreferences> } : {};
-    lastLocation = String(state.location?.cfi || '');
+    const state = stateResponse.ok ? await stateResponse.json() as { location?: ReadingLocation; preferences?: Partial<ReadingPreferences> } : {};
+    readingLocation=state.location||{};lastLocation = String(readingLocation.cfi || '');lastFraction=Math.max(0,Math.min(1,Number(readingLocation.fraction||readingLocation.progress||0)));
+    currentSectionIndex=Math.max(0,Math.floor(Number(readingLocation.sectionIndex||0)));
     preferences = {
       flow: state.preferences?.flow === 'scrolled' ? 'scrolled' : 'paginated',
       fontScale: clampScale(state.preferences?.fontScale),
@@ -272,7 +281,7 @@ export async function mountEpubReader(
   }
 
   return () => {
-    disposed = true; controller.abort(); window.clearTimeout(saveTimer);
+    disposed = true; window.clearTimeout(saveTimer);if(lastLocation)void writeReadingState(true);controller.abort();
     pod?.removeEventListener('seshat:doc-toggle-invert', invert);
     pod?.removeEventListener('seshat:pdf-zoom-reset', reset);
     pod?.removeEventListener('seshat:reader-source', provideReaderSource);

@@ -79,7 +79,7 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
       let currentPage=1,totalPages=1,double=false,mosaic=false;
       const page=root.querySelector<HTMLElement>('[data-reader-page]');
       const movePdf=(delta:-1|1)=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,delta,totalPages,double&&!mosaic)}}));
-      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;const label=`${currentPage} / ${totalPages}`;if(page)page.textContent=label;postState({pageLabel:label});}) as EventListener);
+      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;const label=`${currentPage} / ${totalPages}`;if(page)page.textContent=label;postState({pageLabel:label,progress:currentPage/Math.max(1,totalPages)});}) as EventListener);
       root.querySelector('[data-reader-prev]')?.addEventListener('click',()=>movePdf(-1));
       root.querySelector('[data-reader-next]')?.addEventListener('click',()=>movePdf(1));
       const book=root.querySelector<HTMLButtonElement>('[data-reader-book]');const grid=root.querySelector<HTMLButtonElement>('[data-reader-grid]');
