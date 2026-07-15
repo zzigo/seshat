@@ -548,3 +548,52 @@ const themePresets = [
   :global(.dashboard-bookmark-menu){position:fixed;z-index:5000;min-width:230px;padding:6px;border:1px solid var(--ink);background:var(--paper);box-shadow:0 10px 35px rgba(0,0,0,.22)}:global(.dashboard-bookmark-menu>small){display:block;padding:5px 7px;color:var(--muted);font:7px ui-monospace,SFMono-Regular,Menlo,monospace}:global(.dashboard-bookmark-menu>button){width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);align-items:center;gap:8px;padding:7px;border:0;color:var(--ink);background:transparent;text-align:left;font:10px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}:global(.dashboard-bookmark-menu>button:hover){background:color-mix(in srgb,var(--green) 10%,transparent)}:global(.dashboard-bookmark-menu i){width:8px;height:8px;background:#b07a3c}:global(.dashboard-bookmark-menu i[data-color="coral"]){background:#ba6554}:global(.dashboard-bookmark-menu i[data-color="cyan"]){background:#3996a5}:global(.dashboard-bookmark-menu i[data-color="sage"]){background:#6e8d68}:global(.dashboard-bookmark-menu i[data-color="violet"]){background:#806a9b}:global(.dashboard-bookmark-menu i[data-color="blue"]){background:#4e78a4}:global(.dashboard-bookmark-menu i[data-color="rose"]){background:#a86478}:global(.dashboard-bookmark-menu i[data-color="slate"]){background:#68757b}
   @media(max-width:760px){.dashboard-home-grid{grid-template-columns:1fr}.recent-reading-panel,.bookmark-home-panel{min-height:0}.dashboard-item-list{max-height:390px}.emergence-layout{grid-template-columns:1fr}.emergence-signals{border-right:0;border-bottom:1px solid var(--ink)}.dashboard-reader-modal{inset:0;width:100vw;height:100dvh;margin:0;border:0}.dashboard-reader-modal>header{padding-top:env(safe-area-inset-top);height:calc(39px + env(safe-area-inset-top))}.dashboard-reader-modal iframe{height:calc(100% - 40px - env(safe-area-inset-top))}}
 </style>
+
+<style>
+  /* Flat dashboard: structure comes from spacing and type, not white cards. */
+  .account-dashboard .dashboard-totals,
+  .account-dashboard .dashboard-totals article,
+  .account-dashboard .dashboard-panel,
+  .account-dashboard .dashboard-panel>header,
+  .account-dashboard .theme-groups>section,
+  .account-dashboard .theme-groups h3,
+  .account-dashboard .theme-list button,
+  .account-dashboard .years-controls,
+  .account-dashboard .years-controls button,
+  .account-dashboard .ranking-panel li,
+  .account-dashboard .tag-cloud>span,
+  .account-dashboard .concept-list span,
+  .account-dashboard .account-panel dl div,
+  .account-dashboard .account-panel form,
+  .account-dashboard .zotero-analysis-check,
+  .account-dashboard .zotero-continuous-check,
+  .account-dashboard .zotero-contract,
+  .account-dashboard .zotero-preview,
+  .account-dashboard .zotero-contract>div,
+  .account-dashboard .zotero-preview>article,
+  .account-dashboard .voice-checklist,
+  .account-dashboard .voice-checklist :global(label),
+  .account-dashboard .chirp-dashboard-settings,
+  .account-dashboard .chirp-dashboard-settings>div,
+  .account-dashboard .chirp-dashboard-settings>label,
+  .account-dashboard .dashboard-reading-item,
+  .account-dashboard .bookmark-new-button,
+  .account-dashboard .bookmark-group,
+  .account-dashboard .bookmark-group>header,
+  .account-dashboard .bookmark-empty,
+  .account-dashboard .emergence-signals,
+  .account-dashboard .emergence-signals button,
+  .account-dashboard .emergence-result :global(p),
+  .account-dashboard .emergence-result :global(.dashboard-reading-item){border:0;background:transparent}
+  .account-dashboard .dashboard-head{border-bottom-color:color-mix(in srgb,var(--muted) 24%,transparent)}
+  .account-dashboard input,
+  .account-dashboard select{background:transparent}
+  .account-dashboard .dashboard-reading-item:hover,
+  .account-dashboard .theme-list button:hover,
+  .account-dashboard .theme-list button.is-selected,
+  .account-dashboard .years-controls button:hover,
+  .account-dashboard .voice-checklist :global(label:hover),
+  .account-dashboard .emergence-signals button[aria-pressed="true"],
+  .account-dashboard .emergence-result :global(.dashboard-reading-item:hover){background:transparent}
+  .account-dashboard .bookmark-group{border-top:2px solid var(--bookmark-color)}
+</style>
