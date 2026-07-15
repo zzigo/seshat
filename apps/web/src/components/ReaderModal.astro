@@ -1,6 +1,7 @@
 <dialog class="dashboard-reader-modal" data-reader-modal>
-  <header class="reader-modal-toolbar">
-    <div class="reader-modal-scroll">
+  <div class="reader-modal-stage" data-reader-fullscreen-target>
+    <header class="reader-modal-toolbar">
+      <div class="reader-modal-scroll">
       <strong data-reader-modal-title title="Reader">Reader</strong>
       <button type="button" class="reader-epub-only reader-modal-initial" data-reader-command="toggle-toc" title="Table of contents" aria-label="Table of contents">C</button>
       <button type="button" class="reader-epub-only reader-chapter-control" data-reader-command="previous-section" title="Previous chapter" aria-label="Previous chapter">‹</button>
@@ -24,10 +25,11 @@
       <button type="button" class="reader-secondary reader-modal-initial" data-reader-command="play-rendered" data-reader-modal-rendered title="Rendered audio" aria-label="Play rendered audio" hidden>A</button>
       <a class="reader-secondary reader-modal-initial" data-reader-modal-original title="Original file" aria-label="Open original file" target="_blank" rel="noreferrer">O</a>
       <button type="button" class="reader-secondary reader-modal-initial" data-reader-modal-fullscreen title="Fullscreen" aria-label="Open reader fullscreen">F</button>
-    </div>
-    <button type="button" class="reader-modal-close" data-reader-modal-close aria-label="Close reader">×</button>
-  </header>
-  <iframe data-reader-frame title="Seshat document reader"></iframe>
+      </div>
+      <button type="button" class="reader-modal-close" data-reader-modal-close aria-label="Close reader">×</button>
+    </header>
+    <iframe data-reader-frame title="Seshat document reader"></iframe>
+  </div>
 </dialog>
 
 <script>
@@ -37,6 +39,7 @@
   import { normalizeThemeMode, themePresetForMode } from '../lib/theme-preferences';
 
   const readerModal=document.querySelector<HTMLDialogElement>('[data-reader-modal]');
+  const readerStage=readerModal?.querySelector<HTMLElement>('[data-reader-fullscreen-target]');
   const readerFrame=readerModal?.querySelector<HTMLIFrameElement>('[data-reader-frame]');
   const readerModalScroll=readerModal?.querySelector<HTMLElement>('.reader-modal-scroll');
   const readerTitle=readerModal?.querySelector<HTMLElement>('[data-reader-modal-title]');
@@ -51,8 +54,8 @@
   const readerOriginal=readerModal?.querySelector<HTMLAnchorElement>('[data-reader-modal-original]');
   let activeReaderId='',readerReady=false,queuedReaderCommand:ReaderCommandName|null=null;
   const applyUnifiedReaderTheme=(modeValue:string)=>{const mode=normalizeThemeMode(modeValue);const preset=themePresetForMode(mode,localStorage.getItem(`seshat-theme-${mode}-preset`)||localStorage.getItem('seshat-theme-preset'));document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',mode==='dark');localStorage.setItem('seshat-theme',mode);localStorage.setItem('seshat-theme-preset',preset);localStorage.setItem(`seshat-theme-${mode}-preset`,preset);readerFrame?.contentWindow?.postMessage({type:'seshat:reader-theme',mode,preset},window.location.origin);window.dispatchEvent(new CustomEvent('seshat:theme-changed',{detail:{theme:mode,preset}}));};
-  const updateFullscreenControl=()=>{const active=Boolean(screenfull?.isEnabled&&screenfull.isFullscreen);document.documentElement.classList.toggle('reader-native-fullscreen',active&&readerModal?.open===true);if(readerFullscreenButton){readerFullscreenButton.classList.toggle('active',active);readerFullscreenButton.textContent='F';readerFullscreenButton.title=active?'Exit fullscreen':'Fullscreen';readerFullscreenButton.setAttribute('aria-label',active?'Exit reader fullscreen':'Open reader fullscreen');}};
-  const closeReader=async()=>{if(screenfull?.isEnabled&&screenfull.isFullscreen)await screenfull.exit().catch(()=>undefined);document.documentElement.classList.remove('reader-native-fullscreen');readerModal?.classList.remove('is-maximized');readerModal?.close();document.documentElement.classList.remove('dashboard-reader-open');readerReady=false;queuedReaderCommand=null;if(readerFrame)readerFrame.src='about:blank';activeReaderId='';updateFullscreenControl();};
+  const updateFullscreenControl=()=>{const active=Boolean(screenfull?.isEnabled&&screenfull.isFullscreen&&screenfull.element===readerStage);document.documentElement.classList.toggle('reader-native-fullscreen',active);if(readerFullscreenButton){readerFullscreenButton.classList.toggle('active',active);readerFullscreenButton.textContent='F';readerFullscreenButton.title=active?'Exit fullscreen':'Fullscreen';readerFullscreenButton.setAttribute('aria-label',active?'Exit reader fullscreen':'Open reader fullscreen');}};
+  const closeReader=async()=>{if(screenfull?.isEnabled&&screenfull.isFullscreen&&screenfull.element===readerStage)await screenfull.exit().catch(()=>undefined);document.documentElement.classList.remove('reader-native-fullscreen');readerModal?.classList.remove('is-maximized');readerModal?.close();document.documentElement.classList.remove('dashboard-reader-open');readerReady=false;queuedReaderCommand=null;if(readerFrame)readerFrame.src='about:blank';activeReaderId='';updateFullscreenControl();};
   const resetReaderControls=()=>{if(readerChapter)readerChapter.value='cap';if(readerScale)readerScale.textContent='100%';if(readerPage)readerPage.value='1 / —';if(readerFlow){readerFlow.textContent='P';readerFlow.title='Pages';}if(readerRead){readerRead.textContent='R';readerRead.title='Read';readerRead.setAttribute('aria-label','Read');delete readerRead.dataset.readerState;}if(readerRendered)readerRendered.hidden=true;readerModal?.removeAttribute('data-reader-format');};
   const openReader=(id:string,title:string)=>{if(!readerModal||!readerFrame||!id)return;activeReaderId=id;readerReady=false;queuedReaderCommand=null;resetReaderControls();readerModal.classList.add('is-maximized');if(readerModalScroll)readerModalScroll.scrollLeft=0;if(readerTitle){readerTitle.textContent=title;readerTitle.title=title;}if(readerOriginal)readerOriginal.href=`/api/library/${encodeURIComponent(id)}/original`;readerFrame.src=`/dashboard-reader/${encodeURIComponent(id)}`;document.documentElement.classList.add('dashboard-reader-open');readerModal.showModal();updateFullscreenControl();};
   const dispatchReaderCommand=(command:ReaderCommandName)=>readerFrame?.contentWindow?.postMessage({type:READER_COMMAND_MESSAGE,command},window.location.origin);
@@ -74,7 +77,7 @@
     if(!readerReady){readerReady=true;const pending=queuedReaderCommand;queuedReaderCommand=null;if(pending)dispatchReaderCommand(pending);}
     if(activeReaderId&&Number.isFinite(state.progress))window.dispatchEvent(new CustomEvent('seshat:reader-progress',{detail:{id:activeReaderId,progress:Number(state.progress)}}));
   });
-  readerFullscreenButton?.addEventListener('click',()=>{if(!readerModal||!screenfull?.isEnabled)return;const action=screenfull.isFullscreen?screenfull.exit():screenfull.request(document.documentElement,{navigationUI:'hide'});void action.catch((error)=>console.warn('[seshat:reader-fullscreen]',error));});
+  readerFullscreenButton?.addEventListener('click',()=>{if(!readerModal||!readerStage||!screenfull?.isEnabled)return;const action=screenfull.isFullscreen&&screenfull.element===readerStage?screenfull.exit():screenfull.request(readerStage,{navigationUI:'hide'});void action.catch((error)=>console.warn('[seshat:reader-fullscreen]',error));});
   if(screenfull?.isEnabled)screenfull.on('change',updateFullscreenControl);
   readerModal?.addEventListener('dblclick',(event)=>{event.preventDefault();event.stopPropagation();},{capture:true});
   readerModal?.addEventListener('click',(event)=>{if(event.target===readerModal)void closeReader();});
@@ -85,6 +88,8 @@
 <style>
   .dashboard-reader-modal{width:min(1500px,calc(100vw - 40px));height:min(920px,calc(100vh - 40px));max-width:none;max-height:none;padding:0;border:1px solid var(--ink);color:var(--ink);background:var(--paper)}
   .dashboard-reader-modal::backdrop{background:rgba(8,12,10,.64);backdrop-filter:blur(3px)}
+  .reader-modal-stage{width:100%;height:100%;overflow:hidden;background:var(--paper)}
+  .reader-modal-stage:fullscreen{width:100vw;height:100dvh;background:var(--paper)}
   .dashboard-reader-modal.is-maximized,.dashboard-reader-modal:fullscreen{position:fixed;inset:0;width:100vw;height:100dvh;max-width:none;max-height:none;margin:0;border:0}.dashboard-reader-modal.is-maximized iframe,.dashboard-reader-modal:fullscreen iframe{height:calc(100dvh - 38px)}
   .reader-modal-toolbar{position:relative;z-index:10;isolation:isolate;height:37px;display:flex;min-width:0;align-items:stretch;overflow:hidden;border-bottom:1px solid var(--ink);background:var(--paper)}
   .reader-modal-scroll{min-width:0;display:flex;flex:1;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;padding:0 4px 0 9px;background:var(--paper);scrollbar-width:none;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
