@@ -319,7 +319,7 @@ html { max-width: 100%; overflow: hidden; }
 .duplicate-merge-option small.duplicate-merge-location { color: var(--gold); font-weight: 700; }
 .duplicate-merge-note { padding-top: 9px; border-top: 1px solid var(--hairline); }
 .duplicate-merge-form footer { display: flex; justify-content: flex-end; gap: 7px; }
-.tree-reference { gap: 7px; min-height: 25px; padding: 3px 9px; color: #4f5952; font: 11px/1.2 Georgia,serif; touch-action: manipulation; }
+.tree-reference { gap: 7px; min-height: 25px; padding: 3px 9px; color: #4f5952; font: 11px/1.2 monospace; touch-action: manipulation; }
 .tree-reference-title { min-width:0; flex:1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-reference-glyph { position: relative; flex: 0 0 auto; display: inline-block; box-sizing: border-box; border: 1px solid currentColor; }
 .tree-reference-glyph.is-pdf, .tree-reference-glyph.is-ebook { width: 11px; height: 13px; }
