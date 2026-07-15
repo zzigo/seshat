@@ -9,6 +9,7 @@ import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
 import { referenceFileType } from '../lib/reference-file';
+import { belongsToLibraryBranch, collectLibraryBranchIds } from '../lib/library-scope';
 import screenfull from 'screenfull';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
@@ -184,6 +185,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     while(current&&!visited.has(current.id)){visited.add(current.id);parts.unshift(current.name);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}
     return parts.join(' › ');
   };
+  const libraryBranchIds = (libraryId:string) => collectLibraryBranchIds(payload.libraries, libraryId);
   const referenceLocations = (reference:ReferenceRow) => {
     const filedIds=reference.libraryIds.filter((id)=>!isInboxLibraryId(id));
     if(!filedIds.length)return ['Inbox'];
@@ -193,8 +195,9 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const computeFilteredRows = () => {
     const query = normalize(catalogQuery);
     const smartFolder = activeSmartFolder ? payload.smartFolders.find((folder) => folder.id === activeSmartFolder) : undefined;
+    const activeBranch = activeLibrary && !isInboxLibraryId(activeLibrary) ? libraryBranchIds(activeLibrary) : null;
     let rows = payload.references.filter((reference) => (!activeLibrary
-      || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : reference.libraryIds.includes(activeLibrary)))
+      || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : Boolean(activeBranch && belongsToLibraryBranch(reference.libraryIds, activeBranch))))
       && (!smartFolder || referenceMatchesSmartFolder(reference, smartFolder.filters))
       && (!activeKeyword || reference.keywords.includes(activeKeyword))
       && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status, referenceLocationText(reference)]
@@ -3174,6 +3177,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let lastTreeTap:{referenceId:string;time:number;x:number;y:number}|null=null;
   const renderTree = (query = '') => {
     tree.replaceChildren();
+    const normalizedQuery = normalize(query);
     const alphabetical = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
     const libraryLastRead = new Map<string, number>();
     payload.references.forEach((reference) => {
@@ -3214,7 +3218,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       button.append(text, counts); button.addEventListener('click', () => { activeSmartFolder = null; activeVirtualFolder=null; activeLibrary = libraryId; refreshTable(); renderTree(search.value); controller.openCatalog(); });
       return button;
     };
-    const matched = payload.references.filter((reference) => !query || [reference.title, reference.contributorsDisplay, reference.citeKey].some((value) => normalize(value).includes(normalize(query))));
+    const matched = payload.references.filter((reference) => !normalizedQuery || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename]
+      .some((value) => normalize(value).includes(normalizedQuery)));
     const moveReference = async (reference: ReferenceRow, libraryIds: string[]) => {
       const response = await fetch(`/api/library/${reference.id}/libraries`, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ libraryIds }) });
       const result = await response.json().catch(() => ({}));
@@ -3395,16 +3400,6 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       payload.libraries = payload.libraries.filter((item) => !removeIds.has(item.id)); payload.references.forEach((item) => { item.libraryIds = item.libraryIds.filter((id) => !removeIds.has(id)); });
       if (activeLibrary && removeIds.has(activeLibrary)) activeLibrary = null; renderTree(search.value); refreshTable(); setSaveState(`${kind} deleted`);
     };
-    const libraryBranchIds = (libraryId: string) => {
-      const ids = new Set([libraryId]); let changed = true;
-      while (changed) {
-        changed = false;
-        payload.libraries.forEach((item) => {
-          if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; }
-        });
-      }
-      return ids;
-    };
     const exportLibrary = (library: LibraryNode) => {
       const branch = libraryBranchIds(library.id);
       const rows = isInboxLibraryId(library.id)
@@ -3417,8 +3412,100 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       setSaveState(`${rows.length} references exported as Better BibTeX`);
     };
+    const appendReference = (reference:ReferenceRow, container:HTMLElement, selectionRows:ReferenceRow[], contextLibraryId:string|null) => {
+      const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title; item.dataset.referenceId = reference.id;
+      item.classList.toggle('selected', selectedReferences.has(reference.id));
+      item.draggable = reference.access !== 'viewer';
+      const kind = treeReferenceKind(reference);
+      const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
+      glyph.classList.toggle('needs-ocr', reference.needsOcr);
+      glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
+      glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
+      glyph.setAttribute('aria-label', glyph.title);
+      const title = document.createElement('span'); title.className='tree-reference-title'; title.textContent = reference.title; item.appendChild(glyph);
+      const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
+      if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
+      if (isProcessingReference(reference)) {
+        const spinner = document.createElement('i'); spinner.className = 'tree-spinner'; spinner.title = 'Processing…';
+        item.classList.add('is-processing'); item.appendChild(spinner);
+      }
+      item.appendChild(title);
+      if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const play=document.createElement('span');play.className='tree-narration-play';play.textContent='▶';play.title=`Play rendered ${provider} narration`;play.setAttribute('aria-label',play.title);const activate=(event:Event)=>{event.preventDefault();event.stopPropagation();controller.openDocument(reference.id);window.setTimeout(()=>{const pod=root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(reference.id)}"]`);pod?.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}}));},60);};play.addEventListener('pointerdown',(event)=>event.stopPropagation());play.addEventListener('touchend',(event)=>event.stopPropagation(),{passive:true});play.addEventListener('click',activate);item.appendChild(play);}
+      item.addEventListener('click', (event) => {
+        if (event.detail > 1) return;
+        if (event.shiftKey && treeSelectionAnchor) {
+          const anchorIndex = selectionRows.findIndex((item) => item.id === treeSelectionAnchor);
+          const referenceIndex = selectionRows.findIndex((item) => item.id === reference.id);
+          if (anchorIndex >= 0 && referenceIndex >= 0) {
+            if (!event.metaKey && !event.ctrlKey) selectedReferences.clear();
+            const start = Math.min(anchorIndex, referenceIndex);
+            const end = Math.max(anchorIndex, referenceIndex);
+            selectionRows.slice(start, end + 1).forEach((item) => selectedReferences.add(item.id));
+          } else {
+            selectedReferences.clear(); selectedReferences.add(reference.id);
+            treeSelectionAnchor = reference.id;
+          }
+        } else if (event.metaKey || event.ctrlKey) {
+          if (selectedReferences.has(reference.id)) selectedReferences.delete(reference.id);
+          else selectedReferences.add(reference.id);
+          treeSelectionAnchor = reference.id;
+        } else {
+          selectedReferences.clear(); selectedReferences.add(reference.id);
+          treeSelectionAnchor = reference.id;
+        }
+        activeReference = reference.id; renderProperties(reference.id);
+        syncTreeSelection();
+        setSaveState(`${selectedReferences.size} selected`);
+      });
+      item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
+      item.addEventListener('touchend', (event) => {
+        if(event.changedTouches.length!==1)return;const touch=event.changedTouches[0];const now=Date.now();const previous=lastTreeTap;const isDouble=Boolean(previous&&previous.referenceId===reference.id&&now-previous.time<450&&Math.hypot(touch.clientX-previous.x,touch.clientY-previous.y)<28);
+        if(isDouble){event.preventDefault();event.stopPropagation();lastTreeTap=null;controller.openDocument(reference.id);return;}
+        lastTreeTap={referenceId:reference.id,time:now,x:touch.clientX,y:touch.clientY};
+      }, { passive: false });
+      item.addEventListener('contextmenu', (event) => {
+        if (!selectedReferences.has(reference.id)) {
+          selectedReferences.clear(); selectedReferences.add(reference.id); syncTreeSelection();
+        }
+        openContextMenu(event, referenceMenuItems(selectedIds(),contextLibraryId));
+      });
+      item.addEventListener('dragover', (event) => {
+        if (!event.dataTransfer?.types.includes('Files')) return;
+        event.preventDefault(); event.stopPropagation(); item.classList.add('associated-drop-target');
+      });
+      item.addEventListener('dragleave', () => item.classList.remove('associated-drop-target'));
+      item.addEventListener('drop', (event) => {
+        if (!event.dataTransfer?.files.length) return;
+        event.preventDefault(); event.stopPropagation(); item.classList.remove('associated-drop-target');
+        const file = event.dataTransfer.files[0];
+        if (file && reference.access === 'owner') void replaceAssociatedFile(reference.id, file);
+      });
+      let referenceLongPress: number | null = null;
+      const clearReferenceLongPress = () => { if (referenceLongPress) window.clearTimeout(referenceLongPress); referenceLongPress = null; };
+      item.addEventListener('pointerdown', (event) => {
+        if (event.pointerType !== 'touch') return;
+        clearReferenceLongPress();
+        referenceLongPress = window.setTimeout(() => {
+          if (!selectedReferences.has(reference.id)) {
+            selectedReferences.clear(); selectedReferences.add(reference.id); syncTreeSelection();
+          }
+          openContextMenu(event, referenceMenuItems(selectedIds(),contextLibraryId));
+        }, 560);
+      });
+      item.addEventListener('pointermove', clearReferenceLongPress);
+      item.addEventListener('pointerup', clearReferenceLongPress);
+      item.addEventListener('pointercancel', clearReferenceLongPress);
+      item.addEventListener('dragstart', (event) => {
+        if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); syncTreeSelection(); }
+        const openIds=[...selectedReferences]; setOpenDragData(event.dataTransfer,openIds);
+        const moveIds = openIds.filter((id) => references.get(id)?.access !== 'viewer');
+        if (moveIds.length) { event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(moveIds)); event.dataTransfer?.setData('application/x-seshat-reference', moveIds[0]); }
+        setSaveState(`${openIds.length} selected`);
+      });
+      container.appendChild(item);
+    };
     const appendLibrary = (library: LibraryNode, container: HTMLElement) => {
-      const details = document.createElement('details'); details.open = Boolean(query) || !collapsedLibraries.has(library.id); details.className = 'tree-branch';
+      const details = document.createElement('details'); details.open = !collapsedLibraries.has(library.id); details.className = 'tree-branch';
       const summary = document.createElement('summary'); summary.draggable = !library.id.startsWith('inbox:');
       const own = isInboxLibraryId(library.id)
         ? matched.filter(isUnfiledReference)
@@ -3608,6 +3695,21 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       });
       details.appendChild(nested); container.appendChild(details);
     };
+    if (normalizedQuery) {
+      const flatResults = document.createElement('section'); flatResults.className = 'tree-search-results';
+      const resultStatus = document.createElement('header'); resultStatus.textContent = matched.length
+        ? `${matched.length} matching item${matched.length === 1 ? '' : 's'}`
+        : 'No matching items';
+      flatResults.appendChild(resultStatus);
+      const visibleResults = [...matched].sort(sortReferences).slice(0, 500);
+      visibleResults.forEach((reference) => appendReference(reference, flatResults, visibleResults, null));
+      if (matched.length > visibleResults.length) {
+        const overflow = document.createElement('p'); overflow.textContent = `${matched.length - visibleResults.length} more · refine the search`; flatResults.appendChild(overflow);
+      }
+      tree.appendChild(flatResults);
+      treeRevealReferenceId = null;
+      return;
+    }
     children().forEach((library) => appendLibrary(library, tree));
     const smartSection=document.createElement('section');smartSection.className='smart-folder-section';
     const smartHeader=document.createElement('header');const smartTitle=document.createElement('span');smartTitle.textContent='Smart folders';
@@ -3951,7 +4053,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     consoleToggle.setAttribute('aria-expanded', String(expanded));
   });
 
-  search.addEventListener('input', () => renderTree(search.value));
+  let treeSearchTimer=0;
+  search.addEventListener('input', () => {
+    window.clearTimeout(treeSearchTimer);
+    treeSearchTimer=window.setTimeout(()=>renderTree(search.value),100);
+  });
   treeOrderControl?.addEventListener('change', () => {
     treeOrder = (treeOrderControl.value || 'az') as TreeOrder;
     window.localStorage.setItem(TREE_ORDER_KEY, treeOrder);

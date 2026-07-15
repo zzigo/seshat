@@ -203,6 +203,8 @@ html { max-width: 100%; overflow: hidden; }
 .tree-branch > summary::-webkit-details-marker { display: none; }
 .tree-branch > summary.drop-target { outline: 1px solid var(--green-bright); outline-offset: -1px; background: rgba(61,122,88,.12); }
 .tree-children { margin-left: 12px; border-left: 1px solid var(--hairline); }
+.tree-search-results { display: grid; margin-top: 5px; }
+.tree-search-results > header, .tree-search-results > p { margin: 0; padding: 6px 10px; color: var(--muted); font: 8px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace; text-transform: uppercase; }
 .tree-library-row { display: flex; align-items: center; min-width: 0; }
 .tree-library-row > .tree-node { flex: 1; }
 .tree-fold { flex: 0 0 22px; width: 22px; height: 27px; padding: 0; border: 0; color: var(--muted); background: transparent; font: 11px/1 monospace; cursor: pointer; }
@@ -408,6 +410,7 @@ html { max-width: 100%; overflow: hidden; }
 .epub-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: 31px minmax(0,1fr); }
 .epub-stage.external-controls { grid-template-rows: minmax(0,1fr); }
 .epub-controls { min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid var(--hairline); background: var(--chrome-deep); }
+.epub-controls[hidden] { display: none; }
 .epub-controls button, .epub-controls select { height: 23px; padding: 0 7px; border: 1px solid var(--hairline); color: var(--ink); background: var(--paper); font: 9px monospace; cursor: pointer; }
 .epub-progress { min-width: 0; flex: 1; overflow: hidden; padding: 0 8px; color: var(--muted); font: 9px monospace; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .epub-scale { width: 38px; color: var(--muted); font: 8px monospace; text-align: center; }
