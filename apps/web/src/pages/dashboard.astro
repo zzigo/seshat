@@ -336,6 +336,7 @@ const themePresets = [
   <script>
     import type { ReaderCommandName, ReaderControlsState } from '../lib/reader-controls';
     import { READER_COMMAND_MESSAGE, READER_STATE_MESSAGE } from '../lib/reader-controls';
+    import { normalizeThemeMode, themePresetForMode } from '../lib/theme-preferences';
     type DashboardGroup={id:string;name:string;color:string;icon:string;itemIds:string[]};
     type EmergenceSignal={phrase:string;firstYear:number;peakYear:number;count:number;itemIds:string[]};
     const readingData=JSON.parse(document.getElementById('dashboard-reading-data')?.textContent||'{"groups":[],"emergenceSignals":[],"emergenceItems":{}}') as {groups:DashboardGroup[];emergenceSignals:EmergenceSignal[];emergenceItems:Record<string,{id:string;title:string;year:number}>};
@@ -352,7 +353,7 @@ const themePresets = [
     const readerRendered=readerModal?.querySelector<HTMLButtonElement>('[data-reader-modal-rendered]');
     const readerOriginal=readerModal?.querySelector<HTMLAnchorElement>('[data-reader-modal-original]');
     let activeReaderId='';
-    const applyUnifiedReaderTheme=(mode:string)=>{const preset=localStorage.getItem(`seshat-theme-${mode}-preset`)||(mode==='dark'?'ink':'papyrus');document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',mode==='dark');localStorage.setItem('seshat-theme',mode);localStorage.setItem('seshat-theme-preset',preset);readerFrame?.contentWindow?.postMessage({type:'seshat:reader-theme',mode,preset},window.location.origin);window.dispatchEvent(new CustomEvent('seshat:theme-changed',{detail:{theme:mode,preset}}));};
+    const applyUnifiedReaderTheme=(modeValue:string)=>{const mode=normalizeThemeMode(modeValue);const preset=themePresetForMode(mode,localStorage.getItem(`seshat-theme-${mode}-preset`)||localStorage.getItem('seshat-theme-preset'));document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',mode==='dark');localStorage.setItem('seshat-theme',mode);localStorage.setItem('seshat-theme-preset',preset);localStorage.setItem(`seshat-theme-${mode}-preset`,preset);readerFrame?.contentWindow?.postMessage({type:'seshat:reader-theme',mode,preset},window.location.origin);window.dispatchEvent(new CustomEvent('seshat:theme-changed',{detail:{theme:mode,preset}}));};
     const closeReader=()=>{if(document.fullscreenElement===readerModal)void document.exitFullscreen();readerModal?.close();document.documentElement.classList.remove('dashboard-reader-open');if(readerFrame)readerFrame.src='about:blank';activeReaderId='';};
     const resetReaderControls=()=>{if(readerChapter)readerChapter.value='cap';if(readerScale)readerScale.textContent='100%';if(readerPage)readerPage.value='1 / —';if(readerFlow){readerFlow.textContent='P';readerFlow.title='Pages';}if(readerRead){readerRead.textContent='R';readerRead.title='Read';readerRead.setAttribute('aria-label','Read');delete readerRead.dataset.readerState;}if(readerRendered)readerRendered.hidden=true;readerModal?.removeAttribute('data-reader-format');};
     const openReader=(id:string,title:string)=>{if(!readerModal||!readerFrame)return;activeReaderId=id;resetReaderControls();if(readerTitle){readerTitle.textContent=title;readerTitle.title=title;}if(readerOriginal)readerOriginal.href=`/api/library/${encodeURIComponent(id)}/original`;readerFrame.src=`/dashboard-reader/${encodeURIComponent(id)}`;document.documentElement.classList.add('dashboard-reader-open');readerModal.showModal();};
@@ -450,7 +451,8 @@ const themePresets = [
         choices.forEach((choice)=>{const active=choice.dataset.themePreset===preset;choice.classList.toggle('is-selected',active);choice.setAttribute('aria-pressed',String(active));});
         const active=choices.find((choice)=>choice.dataset.themePreset===preset);currentLabel.textContent=active?`${active.textContent?.trim()} · ${mode}`:`${preset} · ${mode}`;
       };
-      const applyTheme = (mode:string,preset:string) => {
+      const applyTheme = (modeValue:string,presetValue:string) => {
+        const mode=normalizeThemeMode(modeValue),preset=themePresetForMode(mode,presetValue);
         const root=document.documentElement;
         root.setAttribute('data-theme',mode);root.setAttribute('data-theme-preset',preset);root.classList.toggle('dark-theme',mode==='dark');
         localStorage.setItem('seshat-theme',mode);localStorage.setItem('seshat-theme-preset',preset);localStorage.setItem(`seshat-theme-${mode}-preset`,preset);
@@ -459,8 +461,8 @@ const themePresets = [
       };
       window.addEventListener('seshat:theme-changed',(event)=>{const detail=(event as CustomEvent<{theme?:string;preset?:string}>).detail;if(detail?.theme&&detail?.preset)syncThemeChoice(detail.theme,detail.preset);});
       choices.forEach((choice)=>choice.addEventListener('click',()=>applyTheme(choice.dataset.themeMode||'light',choice.dataset.themePreset||'papyrus')));
-      const mode=localStorage.getItem('seshat-theme')||document.documentElement.getAttribute('data-theme')||'light';
-      const preset=localStorage.getItem('seshat-theme-preset')||localStorage.getItem(`seshat-theme-${mode}-preset`)||(mode==='dark'?'ink':'papyrus');
+      const mode=normalizeThemeMode(localStorage.getItem('seshat-theme')||document.documentElement.getAttribute('data-theme'));
+      const preset=themePresetForMode(mode,localStorage.getItem('seshat-theme-preset')||localStorage.getItem(`seshat-theme-${mode}-preset`));
       applyTheme(mode,preset);
     }
 

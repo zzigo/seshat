@@ -54,12 +54,13 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
       import { adjacentPdfPage } from '../../lib/pdf-navigation';
       import type { ReaderCommandDetail, ReaderControlsState } from '../../lib/reader-controls';
       import { READER_COMMAND_MESSAGE, READER_STATE_MESSAGE } from '../../lib/reader-controls';
+      import { normalizeThemeMode, themePresetForMode } from '../../lib/theme-preferences';
       import { mountPdfViewer } from '../../scripts/pdf-viewer';
       import { mountEpubReader } from '../../scripts/epub-reader';
       import { readAloud } from '../../scripts/read-aloud';
 
-      const theme=localStorage.getItem('seshat-theme')||'light';
-      const preset=localStorage.getItem('seshat-theme-preset')||localStorage.getItem(`seshat-theme-${theme}-preset`)||(theme==='dark'?'ink':'papyrus');
+      const theme=normalizeThemeMode(localStorage.getItem('seshat-theme'));
+      const preset=themePresetForMode(theme,localStorage.getItem('seshat-theme-preset')||localStorage.getItem(`seshat-theme-${theme}-preset`));
       document.documentElement.setAttribute('data-theme',theme);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',theme==='dark');
       let documentThemeDark=theme==='dark';
       type ReaderData={id:string;title:string;format:string;language:string;chirpEnabled:boolean;hasKokoroNarration:boolean;hasChirpNarration:boolean};
@@ -97,7 +98,7 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
       };
       window.addEventListener('message',(event)=>{
         if(event.origin!==window.location.origin||event.source!==window.parent)return;
-        if(event.data?.type==='seshat:reader-theme'){const mode=event.data.mode==='dark'?'dark':'light',nextPreset=String(event.data.preset||(mode==='dark'?'ink':'papyrus'));documentThemeDark=mode==='dark';document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',nextPreset);document.documentElement.classList.toggle('dark-theme',documentThemeDark);root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));return;}
+        if(event.data?.type==='seshat:reader-theme'){const mode=normalizeThemeMode(event.data.mode),nextPreset=themePresetForMode(mode,event.data.preset);documentThemeDark=mode==='dark';document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',nextPreset);document.documentElement.classList.toggle('dark-theme',documentThemeDark);root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));return;}
         if(event.data?.type===READER_COMMAND_MESSAGE)runCommand(event.data.command as ReaderCommandDetail['command']);
       });
       new MutationObserver(()=>postState({readLabel:read.textContent||'Read',readState:read.dataset.readerState||'idle'})).observe(read,{attributes:true,childList:true,subtree:true,attributeFilter:['data-reader-state']});
