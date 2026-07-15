@@ -65,6 +65,7 @@ export async function mountPdfViewer(
   let pending: PdfAnchor | null = null;
   let disposed = false;
   const phoneResourceProfile = currentPhoneResourceProfile();
+  const parent = element.parentElement || element;
   const dialogs = new Set<HTMLDialogElement>();
   const renderTasks = new Set<{ cancel: () => void }>();
   const loadingTask = getDocument({ url: `/api/library/${referenceId}/original`, withCredentials: true });
@@ -125,6 +126,7 @@ export async function mountPdfViewer(
     const textLayerElement = pageElement.querySelector<HTMLElement>('.textLayer')!;
     const textLayer = new TextLayer({ textContentSource: await page.getTextContent(), container: textLayerElement, viewport });
     await textLayer.render(); renderHighlights(pageElement); pageElement.classList.add('rendered');
+    parent.dispatchEvent(new CustomEvent('seshat:pdf-page-rendered',{detail:{page:pageNumber}}));
   };
 
   const firstPage = await pdf.getPage(1); const base = firstPage.getViewport({ scale: 1 });
@@ -279,8 +281,6 @@ export async function mountPdfViewer(
       viewer.scrollTop = py * currentZoom - mouseY;
     }
   }, { passive: false });
-
-  const parent = element.parentElement || element;
 
   const handleZoomReset = () => {
     pages.style.zoom = '1';

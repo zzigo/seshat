@@ -381,8 +381,9 @@ html { max-width: 100%; overflow: hidden; }
 .read-aloud-caption-controls .caption-transport:hover { color:var(--paper); background:var(--green-bright); }
 .read-aloud-caption.is-marked { border-color:var(--gold); }
 .read-aloud-caption.is-marked .caption-indicator::after { content:''; width:6px; height:6px; position:absolute; margin:24px 0 0 18px; border-radius:50%; background:var(--gold); }
-.textLayer span.read-aloud-active { background:rgba(255,212,0,.38); border-radius:2px; }
-::highlight(seshat-read-aloud){background:rgba(255,212,0,.45);color:inherit;}
+.textLayer span.read-aloud-active { background:transparent; text-decoration:underline; text-decoration-color:var(--gold); text-decoration-thickness:1.5px; text-underline-offset:3px; }
+.textLayer span.read-aloud-anchor::before { content:''; position:absolute; left:-5px; top:.1em; width:2px; height:1.05em; border-radius:2px; background:var(--gold); box-shadow:0 0 0 1px color-mix(in srgb,var(--paper) 65%,transparent); }
+::highlight(seshat-read-aloud){background:transparent;color:inherit;text-decoration:underline 1.5px var(--gold);text-underline-offset:3px;}
 .reader-timeline { grid-column:1/-1; min-width:0; display:grid; grid-template-columns:42px minmax(0,1fr) 52px; align-items:center; gap:7px; padding-top:5px; border-top:1px solid var(--hairline); }
 .reader-timeline>output { color:var(--muted); font:8px/1 ui-monospace,monospace; white-space:nowrap; }
 .reader-timeline>output:last-child { text-align:right; }
