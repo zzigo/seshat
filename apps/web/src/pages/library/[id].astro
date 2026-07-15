@@ -59,6 +59,7 @@ const graphEdges = edgesResult.rows;
 ---
 
 <Shell title={`${reference.title} — Seshat`}>
+  <div class="catalog-item-page">
   <section class="workspace-head compact record-head">
     <div class="eyebrow">Catalogued document</div>
     <h1 data-record-title>{reference.title}</h1>
@@ -146,6 +147,7 @@ const graphEdges = edgesResult.rows;
       <div class="graph-empty">No entities or relationships have been extracted yet. Complete the relate pipeline stage to build the graph.</div>
     )}
   </section>
+  </div>
 
   <script is:inline define:vars={{ graphNodes, graphEdges }}>
     // Force-directed graph simulation
@@ -192,7 +194,7 @@ const graphEdges = edgesResult.rows;
       marker.setAttribute('orient', 'auto-start-reverse');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-      path.setAttribute('fill', '#cbd5e1');
+      path.setAttribute('fill', 'var(--line)');
       marker.appendChild(path);
       defs.appendChild(marker);
       svg.appendChild(defs);
@@ -207,7 +209,7 @@ const graphEdges = edgesResult.rows;
 
       const linkElements = links.map(link => {
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('stroke', '#cbd5e1');
+        line.setAttribute('stroke', 'var(--line)');
         line.setAttribute('stroke-width', '1.5');
         line.setAttribute('marker-end', 'url(#arrow)');
         linkGroup.appendChild(line);
@@ -221,7 +223,7 @@ const graphEdges = edgesResult.rows;
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('r', node.kind === 'document' ? '12' : '8');
         circle.setAttribute('fill', colors[node.kind] || '#94a3b8');
-        circle.setAttribute('stroke', '#ffffff');
+        circle.setAttribute('stroke', 'var(--paper)');
         circle.setAttribute('stroke-width', '2');
         g.appendChild(circle);
 
@@ -230,7 +232,7 @@ const graphEdges = edgesResult.rows;
         text.setAttribute('dx', '14');
         text.setAttribute('dy', '4');
         text.setAttribute('font-size', '11px');
-        text.setAttribute('fill', '#334155');
+        text.setAttribute('fill', 'var(--ink)');
         text.setAttribute('font-weight', '500');
         text.setAttribute('font-family', 'system-ui, sans-serif');
         g.appendChild(text);

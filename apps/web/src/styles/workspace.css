@@ -418,7 +418,11 @@ html { max-width: 100%; overflow: hidden; }
 .epub-scale { width: 38px; color: var(--muted); font: 8px monospace; text-align: center; }
 .epub-reading-surface { min-height: 0; overflow: hidden; background: var(--paper); }
 .epub-reading-surface foliate-view { width: 100%; height: 100%; display: block; color: #262b27; background: #f5f1e8; outline: none; }
+.epub-reading-surface foliate-view::part(filter) { background: #f5f1e8 !important; }
+.epub-reading-surface foliate-view::part(head), .epub-reading-surface foliate-view::part(foot) { color: #262b27 !important; }
 .seshat-epub-shell.is-inverted, .seshat-epub-shell.is-inverted .epub-stage, .seshat-epub-shell.is-inverted .epub-reading-surface, .seshat-epub-shell.is-inverted foliate-view { background: #111513 !important; color: #e4e1d8 !important; color-scheme: dark; }
+.seshat-epub-shell.is-inverted foliate-view::part(filter) { background: #111513 !important; }
+.seshat-epub-shell.is-inverted foliate-view::part(head), .seshat-epub-shell.is-inverted foliate-view::part(foot) { color: #e4e1d8 !important; }
 @media (max-width: 720px) {
   .seshat-epub-shell.toc-open { grid-template-columns: minmax(160px,72vw) minmax(0,1fr); }
   .epub-controls select { max-width: 70px; }

@@ -291,6 +291,29 @@ button.job-card:hover {
   font: 12px monospace;
 }
 
+/* Search and Item Detail share the flat, borderless Dashboard surface. */
+.catalog-item-page .metadata-form,
+.catalog-item-page .catalog-facts,
+.catalog-item-page .job-card,
+.catalog-item-page .structure-list,
+.catalog-item-page .structure-empty,
+.catalog-item-page .graph-container,
+.catalog-item-page .graph-empty {
+  border: 0;
+  background: transparent;
+}
+.catalog-item-page .metadata-form { padding-inline: 0; }
+.catalog-item-page .metadata-form input,
+.catalog-item-page .metadata-form textarea,
+.catalog-item-page .metadata-form select { background: transparent; }
+.catalog-item-page .structure-panel,
+.catalog-item-page .graph-panel { border-top-color: var(--hairline); }
+.catalog-item-page .catalog-facts div,
+.catalog-item-page .job-card,
+.catalog-item-page .structure-list li { border-color: var(--hairline); }
+.catalog-item-page .job-card.queued,
+.catalog-item-page button.job-card:hover { background: color-mix(in srgb, var(--green) 5%, transparent); }
+
 @media (max-width: 760px) {
   .masthead, main, footer { width: min(100% - 28px, 1180px); }
   .identity-name { display: none; }
