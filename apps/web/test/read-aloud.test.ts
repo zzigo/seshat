@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { narrationCharacterCount, normalizeReaderLanguage, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
-import { billableCharacterCount, chirpMonth, nextChirpRenewal } from '../src/lib/chirp';
+import { billableCharacterCount, chirpMonth, chirpVoicesForLanguage, nextChirpRenewal } from '../src/lib/chirp';
 import { chirpAccessAllowed } from '../src/lib/chirp-access';
 import { browserSpeechChunks, normalizeBrowserSpeechText } from '../src/scripts/browser-speech';
 
@@ -20,6 +20,16 @@ test('normalizes catalog and BCP-47 language values for voice selection', () => 
   assert.equal(normalizeReaderLanguage('es-ES'), 'es');
   assert.equal(normalizeReaderLanguage('eng'), 'en');
   assert.equal(normalizeReaderLanguage('en_GB'), 'en');
+  assert.equal(normalizeReaderLanguage('Norwegian'), 'nb');
+  assert.equal(normalizeReaderLanguage('no-NO'), 'nb');
+});
+
+test('Google Chirp exposes the configured voices for every reader language', () => {
+  for (const [language, locale] of [['es','es-ES'],['de','de-DE'],['nb','nb-NO'],['fr','fr-FR'],['it','it-IT']] as const) {
+    const voices=chirpVoicesForLanguage(language);
+    assert.equal(voices.length,7);
+    assert.ok(voices.every((voice)=>voice.id.startsWith(`${locale}-Chirp3-HD-`)));
+  }
 });
 
 test('phonemizes Spanish text for Kokoro', async () => {

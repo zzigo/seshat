@@ -145,7 +145,7 @@ const themePresets = [
             <button type="button" data-years-zoom-in aria-label="Zoom timeline in" title="Zoom in">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M8 3v10" /></svg>
             </button>
-            <button type="button" data-years-zoom-reset aria-label="Fit timeline to panel" title="Fit timeline">
+            <button type="button" data-years-zoom-reset aria-label="Return timeline to the present at 1000%" title="Present · 1000%">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5V2.5H5M11 2.5h2.5V5M13.5 11v2.5H11M5 13.5H2.5V11" /></svg>
             </button>
             <button type="button" data-years-expand aria-label="Expand timeline" aria-pressed="false" title="Expand timeline">
@@ -185,8 +185,8 @@ const themePresets = [
       {!stats.topConcepts.length && <div class="dashboard-empty">Resolve papers with OpenAlex to discover concepts.</div>}
     </section>
 
-    <section class="dashboard-panel theme-panel" data-theme-settings>
-      <header><div><span>Interface</span><h2>Appearance</h2></div><small data-theme-current>current theme</small></header>
+    <section class="dashboard-panel theme-panel dashboard-setup-panel" data-theme-settings data-dashboard-setup data-setup-id="appearance">
+      <header><div><span>Interface</span><h2>Appearance</h2></div><div class="setup-panel-actions"><small data-theme-current>current theme</small><button type="button" data-setup-toggle aria-label="Expand Appearance" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div></header>
       <div class="theme-groups">
         {(['light','dark'] as const).map((mode) => <section>
           <h3>{mode} themes</h3>
@@ -201,10 +201,10 @@ const themePresets = [
       </div>
     </section>
 
-    <section class="dashboard-panel zotero-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)}>
+    <section class="dashboard-panel zotero-panel dashboard-setup-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)} data-dashboard-setup data-setup-id="zotero">
       <header>
         <div><span>Bibliography bridge</span><h2>Zotero synchronization</h2></div>
-        <small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · ${zoteroStatus.continuousSync === false ? 'connected' : 'continuous sync'}` : 'not connected'}</small>
+        <div class="setup-panel-actions"><small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · ${zoteroStatus.continuousSync === false ? 'connected' : 'continuous sync'}` : 'not connected'}</small><button type="button" data-setup-toggle aria-label="Expand Zotero synchronization" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
       </header>
       <form data-zotero-form>
         <label class="zotero-key-field"><span>Zotero API key</span><input type="password" name="apiKey" autocomplete="off" placeholder={zoteroStatus.connected ? 'Leave blank to keep the stored key' : 'Paste a library API key'} /><small class="zotero-credential-state" data-zotero-credential data-stored={String(zoteroStatus.apiKeyStored)}>{zoteroStatus.apiKeyStored ? '● key stored encrypted on the server' : 'No key stored'}</small></label>
@@ -237,8 +237,8 @@ const themePresets = [
       <div class="zotero-preview" data-zotero-preview-result hidden></div>
     </section>
 
-    <section class="dashboard-panel voice-panel" data-voice-settings>
-      <header><div><span>Reader</span><h2>Voice settings</h2></div><small data-voice-summary>loading installed voices…</small></header>
+    <section class="dashboard-panel voice-panel dashboard-setup-panel" data-voice-settings data-dashboard-setup data-setup-id="voice">
+      <header><div><span>Reader</span><h2>Voice settings</h2></div><div class="setup-panel-actions"><small data-voice-summary>loading installed voices…</small><button type="button" data-setup-toggle aria-label="Expand Voice settings" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div></header>
       <div class="voice-settings-body">
         <p>Select the browser and Microsoft voices shown in the Reader menu. With no selection, every installed voice remains visible.</p>
         <div class="voice-settings-tools">
@@ -255,8 +255,8 @@ const themePresets = [
       </div>
     </section>
 
-    <section class="dashboard-panel account-panel">
-      <header><div><span>Identity</span><h2>Logto account</h2></div><small>associated logins</small></header>
+    <section class="dashboard-panel account-panel dashboard-setup-panel" data-dashboard-setup data-setup-id="account">
+      <header><div><span>Identity</span><h2>Logto account</h2></div><div class="setup-panel-actions"><small>associated logins</small><button type="button" data-setup-toggle aria-label="Expand Logto account" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div></header>
       <dl>
         <div><dt>Primary email</dt><dd>{identity.email}</dd></div>
         <div><dt>Linked emails</dt><dd>{linkedEmails.length ? linkedEmails.join(', ') : 'None linked'}</dd></div>
@@ -291,7 +291,7 @@ const themePresets = [
       </form>
     </dialog>
     <dialog class="dashboard-reader-modal" data-reader-modal>
-      <header><strong data-reader-modal-title>Reader</strong><button type="button" data-reader-modal-close aria-label="Close reader">×</button></header>
+      <header><strong data-reader-modal-title>Reader</strong><div class="reader-modal-actions"><button type="button" data-reader-modal-theme aria-label="Toggle reader and interface theme" title="Toggle light / dark"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"/><circle cx="10" cy="10" r="3.2"/></svg></button><button type="button" data-reader-modal-fullscreen aria-label="Open reader fullscreen" title="Fullscreen"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/></svg></button><button type="button" data-reader-modal-close aria-label="Close reader">×</button></div></header>
       <iframe data-reader-frame title="Seshat document reader"></iframe>
     </dialog>
   </section>
@@ -303,11 +303,22 @@ const themePresets = [
     const readerModal=document.querySelector<HTMLDialogElement>('[data-reader-modal]');
     const readerFrame=readerModal?.querySelector<HTMLIFrameElement>('[data-reader-frame]');
     const readerTitle=readerModal?.querySelector<HTMLElement>('[data-reader-modal-title]');
-    const closeReader=()=>{readerModal?.close();if(readerFrame)readerFrame.src='about:blank';};
+    const readerThemeButton=readerModal?.querySelector<HTMLButtonElement>('[data-reader-modal-theme]');
+    const readerFullscreenButton=readerModal?.querySelector<HTMLButtonElement>('[data-reader-modal-fullscreen]');
+    const applyUnifiedReaderTheme=(mode:string)=>{const preset=localStorage.getItem(`seshat-theme-${mode}-preset`)||(mode==='dark'?'ink':'papyrus');document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',mode==='dark');localStorage.setItem('seshat-theme',mode);localStorage.setItem('seshat-theme-preset',preset);readerFrame?.contentWindow?.postMessage({type:'seshat:reader-theme',mode,preset},window.location.origin);window.dispatchEvent(new CustomEvent('seshat:theme-changed',{detail:{theme:mode,preset}}));};
+    const closeReader=()=>{if(document.fullscreenElement===readerModal)void document.exitFullscreen();readerModal?.close();if(readerFrame)readerFrame.src='about:blank';};
     const openReader=(id:string,title:string)=>{if(!readerModal||!readerFrame)return;if(readerTitle)readerTitle.textContent=title;readerFrame.src=`/dashboard-reader/${encodeURIComponent(id)}`;readerModal.showModal();};
     readerModal?.querySelector('[data-reader-modal-close]')?.addEventListener('click',closeReader);
+    readerThemeButton?.addEventListener('click',()=>applyUnifiedReaderTheme((document.documentElement.getAttribute('data-theme')||'light')==='dark'?'light':'dark'));
+    readerFrame?.addEventListener('load',()=>{const mode=document.documentElement.getAttribute('data-theme')||'light';const preset=document.documentElement.getAttribute('data-theme-preset')||(mode==='dark'?'ink':'papyrus');readerFrame.contentWindow?.postMessage({type:'seshat:reader-theme',mode,preset},window.location.origin);});
+    readerFullscreenButton?.addEventListener('click',()=>{if(!readerModal)return;if(document.fullscreenElement===readerModal)void document.exitFullscreen();else void readerModal.requestFullscreen();});
+    document.addEventListener('fullscreenchange',()=>{const active=document.fullscreenElement===readerModal;if(readerFullscreenButton){readerFullscreenButton.classList.toggle('active',active);readerFullscreenButton.title=active?'Exit fullscreen':'Fullscreen';readerFullscreenButton.setAttribute('aria-label',active?'Exit reader fullscreen':'Open reader fullscreen');}});
     readerModal?.addEventListener('click',(event)=>{if(event.target===readerModal)closeReader();});
     readerModal?.addEventListener('cancel',(event)=>{event.preventDefault();closeReader();});
+
+    const setupStateKey='seshat.dashboard.setup-folds.v1';
+    let setupState:Record<string,boolean>={};try{setupState=JSON.parse(localStorage.getItem(setupStateKey)||'{}');}catch{}
+    document.querySelectorAll<HTMLElement>('[data-dashboard-setup]').forEach((panel)=>{const id=panel.dataset.setupId||'';const button=panel.querySelector<HTMLButtonElement>('[data-setup-toggle]');const setCollapsed=(collapsed:boolean)=>{panel.classList.toggle('is-collapsed',collapsed);button?.setAttribute('aria-expanded',String(!collapsed));if(button){button.setAttribute('aria-label',`${collapsed?'Expand':'Collapse'} ${panel.querySelector('h2')?.textContent||'settings'}`);}};setCollapsed(setupState[id]??true);button?.addEventListener('click',()=>{const collapsed=!panel.classList.contains('is-collapsed');setCollapsed(collapsed);setupState[id]=collapsed;localStorage.setItem(setupStateKey,JSON.stringify(setupState));});});
 
     const groupDialog=document.querySelector<HTMLDialogElement>('[data-bookmark-dialog]');
     const groupForm=groupDialog?.querySelector<HTMLFormElement>('[data-bookmark-form]');
@@ -344,7 +355,7 @@ const themePresets = [
       const zoomLabel=panel.querySelector<HTMLOutputElement>('[data-years-zoom-label]')!;
       const expandButton=panel.querySelector<HTMLButtonElement>('[data-years-expand]')!;
       const minYear=Math.min(...nodes.map((node)=>node.year));const maxYear=Math.max(...nodes.map((node)=>node.year));const maxCount=Math.max(1,...nodes.map((node)=>node.count));const yearSpan=Math.max(1,maxYear-minYear);
-      const padX=42;const padY=32;let zoom=1;let expanded=false;
+      const padX=42;const padY=32;const defaultZoom=10;let zoom=defaultZoom;let expanded=false;
       const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
       const niceStep=(minimum:number)=>{const power=10**Math.floor(Math.log10(Math.max(1,minimum)));const fraction=minimum/power;return (fraction<=1?1:fraction<=2?2:fraction<=5?5:10)*power;};
       const renderTimeline=()=>{
@@ -361,11 +372,13 @@ const themePresets = [
       };
       const setZoom=(next:number,clientX=yearsTimeline.getBoundingClientRect().left+yearsTimeline.clientWidth/2)=>{
         const rect=yearsTimeline.getBoundingClientRect();const anchor=clamp(clientX-rect.left,0,rect.width);const ratio=(yearsTimeline.scrollLeft+anchor)/Math.max(1,yearsTimeline.scrollWidth);
-        zoom=clamp(next,1,8);renderTimeline();yearsTimeline.scrollLeft=ratio*yearsTimeline.scrollWidth-anchor;
+        zoom=clamp(next,1,20);renderTimeline();yearsTimeline.scrollLeft=ratio*yearsTimeline.scrollWidth-anchor;
       };
-      panel.querySelector('[data-years-zoom-out]')?.addEventListener('click',()=>setZoom(zoom/1.25));
-      panel.querySelector('[data-years-zoom-in]')?.addEventListener('click',()=>setZoom(zoom*1.25));
-      panel.querySelector('[data-years-zoom-reset]')?.addEventListener('click',()=>{zoom=1;yearsTimeline.scrollLeft=0;renderTimeline();});
+      const centerPresent=()=>{const present=clamp(new Date().getFullYear(),minYear,maxYear);const ratio=(present-minYear)/yearSpan;const x=padX+ratio*Math.max(1,yearsTimeline.scrollWidth-padX*2);yearsTimeline.scrollLeft=clamp(x-yearsTimeline.clientWidth/2,0,Math.max(0,yearsTimeline.scrollWidth-yearsTimeline.clientWidth));};
+      const resetPresent=()=>{zoom=defaultZoom;renderTimeline();window.requestAnimationFrame(centerPresent);};
+      panel.querySelector('[data-years-zoom-out]')?.addEventListener('click',()=>setZoom(zoom/2));
+      panel.querySelector('[data-years-zoom-in]')?.addEventListener('click',()=>setZoom(zoom*2));
+      panel.querySelector('[data-years-zoom-reset]')?.addEventListener('click',resetPresent);
       expandButton.addEventListener('click',()=>{expanded=!expanded;panel.classList.toggle('is-expanded',expanded);document.body.classList.toggle('years-timeline-expanded',expanded);expandButton.setAttribute('aria-pressed',String(expanded));expandButton.setAttribute('aria-label',expanded?'Collapse timeline':'Expand timeline');window.requestAnimationFrame(renderTimeline);});
       yearsTimeline.addEventListener('wheel',(event)=>{if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();setZoom(zoom*Math.exp(-event.deltaY*.008),event.clientX);},{passive:false});
       let pinchDistance=0;let pinchZoom=1;
@@ -375,7 +388,7 @@ const themePresets = [
       yearsTimeline.addEventListener('touchend',(event)=>{if(event.touches.length<2)pinchDistance=0;},{passive:true});
       new ResizeObserver(()=>renderTimeline()).observe(yearsTimeline);
       document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&expanded)expandButton.click();});
-      renderTimeline();
+      resetPresent();
     }
 
     const themeSettingsRoot = document.querySelector<HTMLElement>('[data-theme-settings]');
@@ -503,6 +516,12 @@ const themePresets = [
 
 <style>
   .theme-panel{margin:22px 0}.theme-groups{display:grid;grid-template-columns:1fr 1fr}.theme-groups>section+section{border-left:1px solid var(--ink)}.theme-groups h3{margin:0;padding:10px 16px;border-bottom:1px solid var(--line);color:var(--muted);font:9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}.theme-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.theme-list button{min-height:36px;display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:8px;padding:4px 8px;border:0;border-bottom:1px solid var(--line);color:var(--ink);background:transparent;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:left;cursor:pointer}.theme-list button:hover{background:color-mix(in srgb,var(--green) 8%,transparent)}.theme-list button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.theme-list button>i{position:relative;width:25px;height:18px;border:1px solid var(--theme-ink);background:var(--theme-paper)}.theme-list button>i b{position:absolute;right:3px;bottom:3px;width:7px;height:7px;background:var(--theme-accent)}.theme-list button.is-selected{color:var(--green);background:color-mix(in srgb,var(--green) 11%,transparent)}.theme-list button.is-selected>i{box-shadow:0 0 0 2px var(--gold)}@media(max-width:760px){.theme-groups{grid-template-columns:1fr}.theme-groups>section+section{border-left:0;border-top:1px solid var(--ink)}}
+</style>
+
+<style>
+  .dashboard-setup-panel.is-collapsed>:not(header){display:none!important}.setup-panel-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0}.setup-panel-actions>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.setup-panel-actions button{width:27px;height:27px;display:grid;place-items:center;padding:0;border:0;color:var(--muted);background:transparent;cursor:pointer}.setup-panel-actions button:hover{color:var(--green)}.setup-panel-actions svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.3;transition:transform .16s ease}.dashboard-setup-panel:not(.is-collapsed) .setup-panel-actions svg{transform:rotate(180deg)}
+  .reader-modal-actions{display:flex;align-items:center;gap:2px}.dashboard-reader-modal>header .reader-modal-actions button{display:grid;place-items:center}.reader-modal-actions svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:square}.reader-modal-actions button.active{color:var(--green)}.dashboard-reader-modal:fullscreen{width:100vw;height:100vh;max-width:none;max-height:none;border:0}.dashboard-reader-modal:fullscreen iframe{height:calc(100vh - 38px)}
+  @media(max-width:760px){.setup-panel-actions{max-width:48%}.reader-modal-actions [data-reader-modal-fullscreen]{display:none!important}}
 </style>
 
 <style>
