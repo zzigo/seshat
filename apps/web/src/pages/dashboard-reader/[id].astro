@@ -109,4 +109,5 @@ const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
   .pod-reading-surface{overflow:auto;padding:24px}
   .pod-reading-surface pre{max-width:78ch;margin:0 auto;white-space:pre-wrap;font:15px/1.65 ui-serif,serif}
   @media(max-width:700px){.dashboard-reader-toolbar{overflow-x:auto;scrollbar-width:none}.dashboard-reader-toolbar>strong{max-width:38vw;flex:0 0 auto}.dashboard-reader-document-controls{flex:0 0 auto}.dashboard-reader-toolbar a{display:none}.dashboard-reader-status{display:none}.dashboard-reader{grid-template-rows:auto minmax(0,1fr)}}
+  @media(max-width:500px) and (orientation:portrait){html,body{width:100%;max-width:100%;height:100dvh;overflow:hidden;overscroll-behavior-x:none}.dashboard-reader{width:100%;max-width:100%;min-width:0;margin:0;overflow:hidden}.dashboard-reader-toolbar{width:100%;max-width:100%;overscroll-behavior-x:contain}.pod-document-body{width:100%;max-width:100%;min-width:0}}
 </style>
