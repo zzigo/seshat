@@ -1,0 +1,109 @@
+---
+import { getCatalog, ownerKeyFor } from '../../lib/catalog';
+import { chirpAccessAllowed } from '../../lib/chirp-access';
+import { referenceFileType } from '../../lib/reference-file';
+import '../../styles/global.css';
+import '../../styles/workspace.css';
+
+const email = String((Astro.locals.session as any)?.user?.email || '').trim().toLowerCase();
+const reference = email ? await getCatalog().get(ownerKeyFor(email), Astro.params.id || '') : null;
+if (!reference) return Astro.redirect('/dashboard?reader=not-found');
+const data = {
+  id: reference.id,
+  title: reference.title,
+  format: referenceFileType(reference),
+  language: reference.language || '',
+  chirpEnabled: chirpAccessAllowed(email),
+  hasKokoroNarration: reference.artifacts.some((artifact) => artifact.kind === 'kokoro-audio'),
+  hasChirpNarration: reference.artifacts.some((artifact) => artifact.kind === 'chirp-audio'),
+};
+const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{reference.title} — Seshat Reader</title>
+  </head>
+  <body class="dashboard-reader-body">
+    <main class="dashboard-reader document-pod" data-dashboard-reader>
+      <header class="pod-toolbar dashboard-reader-toolbar">
+        <strong title={reference.title}>{reference.title}</strong>
+        <div class="dashboard-reader-document-controls">
+          <button type="button" data-reader-zoom title="Fit current page or spread">1:1</button>
+          {data.format === 'pdf' && <>
+            <button type="button" data-reader-prev aria-label="Previous page">‹</button>
+            <span data-reader-page>1 / —</span>
+            <button type="button" data-reader-next aria-label="Next page">›</button>
+            <button type="button" data-reader-book>Book</button>
+            <button type="button" data-reader-grid>Grid</button>
+          </>}
+        </div>
+        <button type="button" class="read-aloud-button" data-reader-read>Read</button>
+        <button type="button" class="read-aloud-stop" data-reader-stop hidden>Stop</button>
+        {(data.hasKokoroNarration || data.hasChirpNarration) && <button type="button" data-reader-rendered>▶ OGG</button>}
+        <a href={`/api/library/${reference.id}/original`} target="_blank" rel="noreferrer">Original ↗</a>
+      </header>
+      <div class="dashboard-reader-status" data-reader-status>Loading document…</div>
+      <section class="pod-document-body" data-reader-surface></section>
+    </main>
+    <script is:inline type="application/json" id="dashboard-reader-data" set:html={serialized}></script>
+    <script>
+      import { adjacentPdfPage } from '../../lib/pdf-navigation';
+      import { mountPdfViewer } from '../../scripts/pdf-viewer';
+      import { mountEpubReader } from '../../scripts/epub-reader';
+      import { readAloud } from '../../scripts/read-aloud';
+
+      const theme=localStorage.getItem('seshat-theme')||'light';
+      const preset=localStorage.getItem('seshat-theme-preset')||localStorage.getItem(`seshat-theme-${theme}-preset`)||(theme==='dark'?'ink':'papyrus');
+      document.documentElement.setAttribute('data-theme',theme);document.documentElement.setAttribute('data-theme-preset',preset);document.documentElement.classList.toggle('dark-theme',theme==='dark');
+      type ReaderData={id:string;title:string;format:string;language:string;chirpEnabled:boolean;hasKokoroNarration:boolean;hasChirpNarration:boolean};
+      const data:ReaderData=JSON.parse(document.getElementById('dashboard-reader-data')?.textContent||'{}');
+      const root=document.querySelector<HTMLElement>('[data-dashboard-reader]')!;
+      const surface=root.querySelector<HTMLElement>('[data-reader-surface]')!;
+      const status=root.querySelector<HTMLElement>('[data-reader-status]')!;
+      const report=(message:string,tone:'ready'|'saving'|'error'='ready')=>{status.textContent=message;status.dataset.tone=tone;};
+      const read=root.querySelector<HTMLButtonElement>('[data-reader-read]')!;
+      const stop=root.querySelector<HTMLButtonElement>('[data-reader-stop]')!;
+      readAloud.attach({referenceId:data.id,language:data.language||navigator.language,container:root,button:read,stopButton:stop,report,chirpEnabled:data.chirpEnabled});
+      root.querySelector('[data-reader-rendered]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider:data.hasKokoroNarration?'kokoro':'chirp'}})));
+      root.querySelector('[data-reader-zoom]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')));
+      let currentPage=1,totalPages=1,double=false,mosaic=false;
+      const page=root.querySelector<HTMLElement>('[data-reader-page]');
+      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;if(page)page.textContent=`${currentPage} / ${totalPages}`;}) as EventListener);
+      root.querySelector('[data-reader-prev]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,-1,totalPages,double&&!mosaic)}})));
+      root.querySelector('[data-reader-next]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,1,totalPages,double&&!mosaic)}})));
+      const book=root.querySelector<HTMLButtonElement>('[data-reader-book]');const grid=root.querySelector<HTMLButtonElement>('[data-reader-grid]');
+      book?.addEventListener('click',()=>{double=!double;if(double&&mosaic){mosaic=false;grid?.classList.remove('active');root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:false}}));}book.classList.toggle('active',double);book.textContent=double?'1 page':'Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:double}}));});
+      grid?.addEventListener('click',()=>{mosaic=!mosaic;if(mosaic&&double){double=false;book?.classList.remove('active');if(book)book.textContent='Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:false}}));}grid.classList.toggle('active',mosaic);root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:mosaic}}));});
+      const mount=async()=>{
+        void fetch(`/api/library/${encodeURIComponent(data.id)}/reading-state`,{method:'PATCH'});
+        if(data.format==='pdf')await mountPdfViewer(surface,data.id,data.title,report);
+        else if(data.format==='epub')await mountEpubReader(surface,data.id,data.title,report);
+        else{surface.classList.add('pod-reading-surface');const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/markdown`);if(!response.ok)throw new Error('Extracted text is not available.');const pre=document.createElement('pre');pre.textContent=await response.text();surface.appendChild(pre);}
+        report('ready');
+      };
+      void mount().catch((error)=>report(error instanceof Error?error.message:'Reader unavailable','error'));
+    </script>
+  </body>
+</html>
+
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--paper);color:var(--ink)}
+  .dashboard-reader-body{min-width:0}
+  .dashboard-reader{display:grid;grid-template-rows:auto auto minmax(0,1fr);width:100%;height:100%;min-width:0;background:var(--paper)}
+  .dashboard-reader-toolbar{min-width:0;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line)}
+  .dashboard-reader-toolbar>strong{min-width:80px;max-width:min(42vw,520px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500;margin-right:auto}
+  .dashboard-reader-toolbar button,.dashboard-reader-toolbar a{min-height:25px;padding:3px 8px;border:1px solid var(--hairline);background:transparent;color:var(--ink);font:9px/1 ui-monospace,monospace;text-decoration:none;cursor:pointer}
+  .dashboard-reader-toolbar button.active{border-color:var(--green);color:var(--green)}
+  .dashboard-reader-document-controls{display:flex;align-items:center;gap:4px}
+  .dashboard-reader-document-controls span{min-width:42px;text-align:center;font:9px/1 ui-monospace,monospace;color:var(--muted)}
+  .dashboard-reader-status{min-height:17px;padding:2px 11px;border-bottom:1px solid var(--hairline);color:var(--muted);font:9px/1.4 ui-monospace,monospace}
+  .dashboard-reader-status[data-tone="error"]{color:#a33}
+  .pod-document-body{min-height:0;overflow:hidden}
+  .pod-reading-surface{overflow:auto;padding:24px}
+  .pod-reading-surface pre{max-width:78ch;margin:0 auto;white-space:pre-wrap;font:15px/1.65 ui-serif,serif}
+  @media(max-width:700px){.dashboard-reader-toolbar{overflow-x:auto;scrollbar-width:none}.dashboard-reader-toolbar>strong{max-width:38vw;flex:0 0 auto}.dashboard-reader-document-controls{flex:0 0 auto}.dashboard-reader-toolbar a{display:none}.dashboard-reader-status{display:none}.dashboard-reader{grid-template-rows:auto minmax(0,1fr)}}
+</style>

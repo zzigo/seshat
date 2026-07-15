@@ -94,6 +94,35 @@ export interface CatalogSmartFolder {
   updatedAt: string;
 }
 
+export interface CatalogBookmarkItem {
+  id: string;
+  title: string;
+  type: string;
+  contributors: unknown[];
+  issued?: Record<string, unknown>;
+  addedAt: string;
+}
+
+export interface CatalogBookmarkGroup {
+  id: string;
+  ownerKey: string;
+  name: string;
+  color: string;
+  icon: string;
+  items: CatalogBookmarkItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogRecentReading {
+  id: string;
+  title: string;
+  type: string;
+  contributors: unknown[];
+  issued?: Record<string, unknown>;
+  readAt: string;
+}
+
 export interface CatalogAnnotation {
   id: string;
   referenceId: string;
@@ -494,6 +523,25 @@ const schema = `
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(owner_key,name)
   );
+  CREATE TABLE IF NOT EXISTS catalog_bookmark_groups (
+    id text PRIMARY KEY,
+    owner_key text NOT NULL,
+    name text NOT NULL,
+    color text NOT NULL DEFAULT 'amber',
+    icon text NOT NULL DEFAULT 'bookmark',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS catalog_bookmark_groups_owner_name_idx
+    ON catalog_bookmark_groups (owner_key, lower(name));
+  CREATE TABLE IF NOT EXISTS catalog_bookmark_items (
+    group_id text NOT NULL REFERENCES catalog_bookmark_groups(id) ON DELETE CASCADE,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    added_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(group_id,reference_id)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_bookmark_items_reference_idx
+    ON catalog_bookmark_items (reference_id);
   CREATE UNIQUE INDEX IF NOT EXISTS catalog_smart_folders_owner_name_idx
     ON catalog_smart_folders(owner_key,lower(name));
   CREATE TABLE IF NOT EXISTS catalog_library_shares (
@@ -1419,6 +1467,105 @@ export class PostgresCatalog {
     return result.rowCount === 1;
   }
 
+  async listBookmarkGroups(ownerKey: string): Promise<CatalogBookmarkGroup[]> {
+    await this.ensureSchema();
+    const [groups, items] = await Promise.all([
+      this.pool.query(
+        'SELECT * FROM catalog_bookmark_groups WHERE owner_key=$1 ORDER BY lower(name),created_at', [ownerKey],
+      ),
+      this.pool.query(
+        `SELECT item.group_id,item.added_at,reference.id,reference.title,reference.type,
+                reference.contributors,reference.issued
+         FROM catalog_bookmark_items item
+         JOIN catalog_bookmark_groups group_record ON group_record.id=item.group_id
+         JOIN catalog_references reference ON reference.id=item.reference_id
+         WHERE group_record.owner_key=$1
+         ORDER BY item.added_at DESC`, [ownerKey],
+      ),
+    ]);
+    const byGroup = new Map<string, CatalogBookmarkItem[]>();
+    for (const row of items.rows) {
+      const values = byGroup.get(row.group_id) || [];
+      values.push({ id: row.id, title: row.title, type: row.type, contributors: row.contributors || [],
+        issued: row.issued || undefined, addedAt: new Date(row.added_at).toISOString() });
+      byGroup.set(row.group_id, values);
+    }
+    return groups.rows.map((row) => ({
+      id: row.id, ownerKey: row.owner_key, name: row.name, color: row.color, icon: row.icon,
+      items: byGroup.get(row.id) || [], createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
+
+  async createBookmarkGroup(ownerKey: string, name: string, color: string, icon: string): Promise<CatalogBookmarkGroup> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `INSERT INTO catalog_bookmark_groups(id,owner_key,name,color,icon)
+       VALUES($1,$2,$3,$4,$5) RETURNING *`, [crypto.randomUUID(), ownerKey, name, color, icon],
+    );
+    const row = result.rows[0];
+    return { id: row.id, ownerKey: row.owner_key, name: row.name, color: row.color, icon: row.icon,
+      items: [], createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+  }
+
+  async updateBookmarkGroup(ownerKey: string, id: string, input: { name?: string; color?: string; icon?: string }): Promise<CatalogBookmarkGroup | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE catalog_bookmark_groups SET name=COALESCE($3,name),color=COALESCE($4,color),
+         icon=COALESCE($5,icon),updated_at=now() WHERE id=$1 AND owner_key=$2 RETURNING *`,
+      [id, ownerKey, input.name ?? null, input.color ?? null, input.icon ?? null],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const groups = await this.listBookmarkGroups(ownerKey);
+    return groups.find((item) => item.id === id) || {
+      id: row.id, ownerKey: row.owner_key, name: row.name, color: row.color, icon: row.icon,
+      items: [], createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  async deleteBookmarkGroup(ownerKey: string, id: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query('DELETE FROM catalog_bookmark_groups WHERE id=$1 AND owner_key=$2', [id, ownerKey]);
+    return result.rowCount === 1;
+  }
+
+  async setBookmarkMembership(ownerKey: string, groupId: string, referenceIds: string[], enabled: boolean): Promise<number> {
+    await this.ensureSchema();
+    const ids = [...new Set(referenceIds.map(String).filter(Boolean))].slice(0, 500);
+    if (!ids.length) return 0;
+    if (enabled) {
+      const result = await this.pool.query(
+        `INSERT INTO catalog_bookmark_items(group_id,reference_id)
+         SELECT group_record.id,reference.id
+         FROM catalog_bookmark_groups group_record
+         JOIN catalog_references reference ON reference.id=ANY($3::text[]) AND reference.owner_key=$1
+         WHERE group_record.id=$2 AND group_record.owner_key=$1
+         ON CONFLICT(group_id,reference_id) DO UPDATE SET added_at=now()`, [ownerKey, groupId, ids],
+      );
+      return result.rowCount || 0;
+    }
+    const result = await this.pool.query(
+      `DELETE FROM catalog_bookmark_items item USING catalog_bookmark_groups group_record
+       WHERE item.group_id=group_record.id AND group_record.id=$2 AND group_record.owner_key=$1
+         AND item.reference_id=ANY($3::text[])`, [ownerKey, groupId, ids],
+    );
+    return result.rowCount || 0;
+  }
+
+  async listRecentReadings(ownerKey: string, limit = 20): Promise<CatalogRecentReading[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,state.updated_at AS read_at
+       FROM catalog_reading_state state JOIN catalog_references reference ON reference.id=state.reference_id
+       WHERE state.owner_key=$1 AND reference.owner_key=$1 ORDER BY state.updated_at DESC LIMIT $2`,
+      [ownerKey, Math.max(1, Math.min(100, limit))],
+    );
+    return result.rows.map((row) => ({ id: row.id, title: row.title, type: row.type,
+      contributors: row.contributors || [], issued: row.issued || undefined, readAt: new Date(row.read_at).toISOString() }));
+  }
+
   async ensureLibraryPath(ownerKey: string, names: string[]): Promise<CatalogLibrary | null> {
     await this.ensureSchema();
     const path = names.map((name) => name.trim().replace(/\s+/g, ' ').slice(0, 160)).filter(Boolean);
@@ -1863,6 +2010,13 @@ export class PostgresCatalog {
         `INSERT INTO catalog_library_items(library_id,reference_id,added_at)
          SELECT library_id,$1,MIN(added_at) FROM catalog_library_items
          WHERE reference_id=ANY($2::text[]) GROUP BY library_id ON CONFLICT DO NOTHING`,
+        [keepId, mergedIds],
+      );
+      await client.query(
+        `INSERT INTO catalog_bookmark_items(group_id,reference_id,added_at)
+         SELECT group_id,$1,MIN(added_at) FROM catalog_bookmark_items
+         WHERE reference_id=ANY($2::text[]) GROUP BY group_id
+         ON CONFLICT(group_id,reference_id) DO NOTHING`,
         [keepId, mergedIds],
       );
       await client.query(

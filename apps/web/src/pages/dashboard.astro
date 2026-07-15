@@ -1,14 +1,25 @@
 ---
 import Shell from '../components/Shell.astro';
-import { formatPublicationYear } from '@seshat/core';
+import { contributorSummary, formatPublicationYear } from '@seshat/core';
 import { getCatalog, isSessionAccountAdmin, ownerKeyFor, sessionIdentity } from '../lib/catalog';
+import { BOOKMARK_GROUP_COLORS, BOOKMARK_GROUP_ICONS } from '../lib/bookmark-groups';
 import { chirpAccessAllowed } from '../lib/chirp-access';
 import { chirpMonth, CHIRP_VOICES, DEFAULT_CHIRP_LIMIT, nextChirpRenewal } from '../lib/chirp';
+import { detectEmergence } from '../lib/emergence';
 import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 
 const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
-const catalog = getCatalog(); const stats = await catalog.dashboardStats(ownerKeyFor(identity.email));
-const zoteroStatus = await getZoteroConnectionStatus(ownerKeyFor(identity.email));
+const ownerKey = ownerKeyFor(identity.email);
+const catalog = getCatalog();
+await catalog.ensureSchema();
+const [stats, recentReadings, bookmarkGroups, emergenceRows, zoteroStatus] = await Promise.all([
+  catalog.dashboardStats(ownerKey), catalog.listRecentReadings(ownerKey, 20), catalog.listBookmarkGroups(ownerKey),
+  catalog.pool.query(`SELECT id,title,(issued->>'year')::int AS year FROM catalog_references
+    WHERE owner_key=$1 AND (issued->>'year') ~ '^-?[0-9]{1,4}$' ORDER BY updated_at DESC LIMIT 10000`, [ownerKey]),
+  getZoteroConnectionStatus(ownerKey),
+]);
+const emergenceSignals = detectEmergence(emergenceRows.rows.map((row:any) => ({ id: row.id, title: row.title, year: Number(row.year) })));
+const emergenceItems = Object.fromEntries(emergenceRows.rows.map((row:any) => [row.id, { id:row.id, title:row.title, year:Number(row.year) }]));
 const admin = isSessionAccountAdmin(session);
 const linkedEmailsQuery = await catalog.pool.query(
   'SELECT DISTINCT current_email FROM catalog_identities WHERE owner_key = $1 ORDER BY current_email ASC',
@@ -27,6 +38,11 @@ const point = (item: { year: number; count: number }) => ({
 const points = years.map(point); const line = points.map((item) => `${item.x},${item.y}`).join(' ');
 const area = points.length ? `${padX},${height - padY} ${line} ${points.at(-1)!.x},${height - padY}` : '';
 const number = (value: number) => new Intl.NumberFormat('en').format(value);
+const personLine = (contributors: unknown[]) => contributorSummary(contributors as any) || 'Unknown persons';
+const dashboardData = JSON.stringify({
+  groups: bookmarkGroups.map((group) => ({ id:group.id,name:group.name,color:group.color,icon:group.icon,itemIds:group.items.map((item)=>item.id) })),
+  emergenceSignals, emergenceItems,
+}).replace(/</g, '\\u003c');
 const themePresets = [
   { id:'papyrus', mode:'light', label:'Papyrus', paper:'#f1efe6', ink:'#17231d', accent:'#244f3a' },
   { id:'alabaster', mode:'light', label:'Alabaster', paper:'#f7f7f3', ink:'#202420', accent:'#315c46' },
@@ -58,6 +74,55 @@ const themePresets = [
       <div><div class="eyebrow">Personal archive</div><h1>{session.user.name || identity.email}</h1><p>{identity.email}</p></div>
       <a class="button quiet" href="/workspace">Open workspace →</a>
     </header>
+
+    <section class="dashboard-home-grid" aria-label="Reading home">
+      <section class="dashboard-panel recent-reading-panel">
+        <header><div><span>Return</span><h2>Recent readings</h2></div><small>last 20</small></header>
+        <div class="dashboard-item-list">
+          {recentReadings.map((item) => <button type="button" class="dashboard-reading-item" data-dashboard-item={item.id} data-item-title={item.title}>
+            <span><strong>{item.title}</strong><small>{personLine(item.contributors)} · {item.issued?.year ? formatPublicationYear(Number(item.issued.year)) : item.type}</small></span>
+            <time datetime={item.readAt}>{new Date(item.readAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</time>
+          </button>)}
+          {!recentReadings.length && <div class="dashboard-empty">Documents appear here as soon as you read or annotate them.</div>}
+        </div>
+      </section>
+
+      <section class="dashboard-panel bookmark-home-panel">
+        <header>
+          <div><span>Working sets</span><h2>Bookmark groups</h2></div>
+          <button type="button" class="bookmark-new-button" data-new-bookmark-group>＋ New group</button>
+        </header>
+        <div class="bookmark-groups">
+          {bookmarkGroups.map((group) => <article class="bookmark-group" data-bookmark-color={group.color} data-bookmark-group={group.id}>
+            <header>
+              <span class="bookmark-group-icon" data-bookmark-icon={group.icon} aria-hidden="true"></span>
+              <div><strong>{group.name}</strong><small>{group.items.length} {group.items.length === 1 ? 'item' : 'items'}</small></div>
+              <button type="button" data-edit-bookmark-group={group.id} aria-label={`Edit ${group.name}`}>•••</button>
+            </header>
+            <div class="bookmark-group-items">
+              {group.items.slice(0,8).map((item) => <button type="button" class="dashboard-reading-item" data-dashboard-item={item.id} data-item-title={item.title}>
+                <span><strong>{item.title}</strong><small>{personLine(item.contributors)}{item.issued?.year ? ` · ${formatPublicationYear(Number(item.issued.year))}` : ''}</small></span>
+              </button>)}
+              {!group.items.length && <p>Right-click a recent item to add it here.</p>}
+              {group.items.length > 8 && <small class="bookmark-more">+ {group.items.length-8} more</small>}
+            </div>
+          </article>)}
+          {!bookmarkGroups.length && <button type="button" class="bookmark-empty" data-new-bookmark-group><span>Create a focused working set</span><small>Groups are for active themes, questions or projects — not another folder tree.</small></button>}
+        </div>
+      </section>
+    </section>
+
+    <section class="dashboard-panel emergence-panel" data-emergence-panel>
+      <header><div><span>Corpus signal</span><h2>Emerging language</h2></div><small>rising title phrases</small></header>
+      {emergenceSignals.length ? <div class="emergence-layout">
+        <div class="emergence-signals">
+          {emergenceSignals.map((signal,index) => <button type="button" data-emergence-signal={index} aria-pressed={index===0?'true':'false'}>
+            <span>{signal.phrase}</span><i style={`--signal:${Math.min(100,30+signal.strength*10)}%`}></i><small>{signal.count} items · rises {formatPublicationYear(signal.peakYear)}</small>
+          </button>)}
+        </div>
+        <div class="emergence-result" data-emergence-result aria-live="polite"></div>
+      </div> : <div class="dashboard-empty">More repeated title language is needed before a signal can emerge.</div>}
+    </section>
 
     <div class="dashboard-totals">
       <article><span>Items</span><strong>{number(stats.totals.items)}</strong></article>
@@ -214,9 +279,60 @@ const themePresets = [
         </form>
       )}
     </section>
+    <script is:inline type="application/json" id="dashboard-reading-data" set:html={dashboardData}></script>
+    <dialog class="bookmark-group-dialog" data-bookmark-dialog>
+      <form method="dialog" data-bookmark-form>
+        <header><div><small>BOOKMARK GROUP</small><strong data-bookmark-dialog-title>New working set</strong></div><button type="button" data-bookmark-dialog-close aria-label="Close">×</button></header>
+        <label><span>Name</span><input name="name" maxlength="80" required placeholder="e.g. Sonic epistemologies" /></label>
+        <fieldset><legend>Color</legend><div class="bookmark-choice-row">{BOOKMARK_GROUP_COLORS.map((color,index)=><label data-bookmark-color={color}><input type="radio" name="color" value={color} checked={index===0}/><i></i><span>{color}</span></label>)}</div></fieldset>
+        <fieldset><legend>Icon</legend><div class="bookmark-choice-row icon-choices">{BOOKMARK_GROUP_ICONS.map((icon,index)=><label><input type="radio" name="icon" value={icon} checked={index===0}/><i class="bookmark-group-icon" data-bookmark-icon={icon}></i><span>{icon}</span></label>)}</div></fieldset>
+        <output data-bookmark-dialog-output></output>
+        <footer><button type="button" class="danger" data-delete-bookmark-group hidden>Delete group</button><span></span><button type="button" data-bookmark-dialog-cancel>Cancel</button><button type="submit" class="primary">Save group</button></footer>
+      </form>
+    </dialog>
+    <dialog class="dashboard-reader-modal" data-reader-modal>
+      <header><strong data-reader-modal-title>Reader</strong><button type="button" data-reader-modal-close aria-label="Close reader">×</button></header>
+      <iframe data-reader-frame title="Seshat document reader"></iframe>
+    </dialog>
   </section>
 
   <script>
+    type DashboardGroup={id:string;name:string;color:string;icon:string;itemIds:string[]};
+    type EmergenceSignal={phrase:string;firstYear:number;peakYear:number;count:number;itemIds:string[]};
+    const readingData=JSON.parse(document.getElementById('dashboard-reading-data')?.textContent||'{"groups":[],"emergenceSignals":[],"emergenceItems":{}}') as {groups:DashboardGroup[];emergenceSignals:EmergenceSignal[];emergenceItems:Record<string,{id:string;title:string;year:number}>};
+    const readerModal=document.querySelector<HTMLDialogElement>('[data-reader-modal]');
+    const readerFrame=readerModal?.querySelector<HTMLIFrameElement>('[data-reader-frame]');
+    const readerTitle=readerModal?.querySelector<HTMLElement>('[data-reader-modal-title]');
+    const closeReader=()=>{readerModal?.close();if(readerFrame)readerFrame.src='about:blank';};
+    const openReader=(id:string,title:string)=>{if(!readerModal||!readerFrame)return;if(readerTitle)readerTitle.textContent=title;readerFrame.src=`/dashboard-reader/${encodeURIComponent(id)}`;readerModal.showModal();};
+    readerModal?.querySelector('[data-reader-modal-close]')?.addEventListener('click',closeReader);
+    readerModal?.addEventListener('click',(event)=>{if(event.target===readerModal)closeReader();});
+    readerModal?.addEventListener('cancel',(event)=>{event.preventDefault();closeReader();});
+
+    const groupDialog=document.querySelector<HTMLDialogElement>('[data-bookmark-dialog]');
+    const groupForm=groupDialog?.querySelector<HTMLFormElement>('[data-bookmark-form]');
+    const groupOutput=groupDialog?.querySelector<HTMLOutputElement>('[data-bookmark-dialog-output]');
+    const groupDelete=groupDialog?.querySelector<HTMLButtonElement>('[data-delete-bookmark-group]');
+    let editingGroup:DashboardGroup|null=null;
+    const openGroupDialog=(group?:DashboardGroup)=>{if(!groupDialog||!groupForm)return;editingGroup=group||null;groupForm.reset();const name=groupForm.elements.namedItem('name') as HTMLInputElement;name.value=group?.name||'';const color=groupForm.querySelector<HTMLInputElement>(`input[name="color"][value="${CSS.escape(group?.color||'amber')}"]`);if(color)color.checked=true;const icon=groupForm.querySelector<HTMLInputElement>(`input[name="icon"][value="${CSS.escape(group?.icon||'bookmark')}"]`);if(icon)icon.checked=true;const title=groupDialog.querySelector<HTMLElement>('[data-bookmark-dialog-title]');if(title)title.textContent=group?'Edit working set':'New working set';if(groupDelete)groupDelete.hidden=!group;if(groupOutput)groupOutput.textContent='';groupDialog.showModal();window.setTimeout(()=>name.focus(),20);};
+    document.querySelectorAll('[data-new-bookmark-group]').forEach((button)=>button.addEventListener('click',()=>openGroupDialog()));
+    document.querySelectorAll<HTMLElement>('[data-edit-bookmark-group]').forEach((button)=>button.addEventListener('click',()=>openGroupDialog(readingData.groups.find((group)=>group.id===button.dataset.editBookmarkGroup))));
+    groupDialog?.querySelector('[data-bookmark-dialog-close]')?.addEventListener('click',()=>groupDialog.close());
+    groupDialog?.querySelector('[data-bookmark-dialog-cancel]')?.addEventListener('click',()=>groupDialog.close());
+    groupForm?.addEventListener('submit',(event)=>{event.preventDefault();const values=new FormData(groupForm);const body={name:String(values.get('name')||''),color:String(values.get('color')||'amber'),icon:String(values.get('icon')||'bookmark')};if(groupOutput)groupOutput.textContent='Saving…';void fetch(editingGroup?`/api/bookmark-groups/${editingGroup.id}`:'/api/bookmark-groups',{method:editingGroup?'PATCH':'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(async(response)=>{const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Bookmark group could not be saved.');window.location.reload();}).catch((error)=>{if(groupOutput)groupOutput.textContent=error instanceof Error?error.message:'Bookmark group could not be saved.';});});
+    groupDelete?.addEventListener('click',()=>{if(!editingGroup||!confirm(`Delete “${editingGroup.name}”? The items themselves will remain untouched.`))return;groupDelete.disabled=true;void fetch(`/api/bookmark-groups/${editingGroup.id}`,{method:'DELETE'}).then(async(response)=>{if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||'Group could not be deleted.');}window.location.reload();}).catch((error)=>{groupDelete.disabled=false;if(groupOutput)groupOutput.textContent=error instanceof Error?error.message:'Group could not be deleted.';});});
+
+    let bookmarkMenu:HTMLElement|null=null;
+    const closeBookmarkMenu=()=>{bookmarkMenu?.remove();bookmarkMenu=null;};
+    const openBookmarkMenu=(event:MouseEvent,id:string)=>{event.preventDefault();closeBookmarkMenu();const menu=document.createElement('div');menu.className='dashboard-bookmark-menu';const heading=document.createElement('small');heading.textContent='BOOKMARK GROUP';menu.appendChild(heading);if(!readingData.groups.length){const create=document.createElement('button');create.type='button';create.textContent='＋ Create bookmark group…';create.onclick=()=>{closeBookmarkMenu();openGroupDialog();};menu.appendChild(create);}readingData.groups.forEach((group)=>{const assigned=group.itemIds.includes(id);const button=document.createElement('button');button.type='button';button.innerHTML=`<i data-color="${group.color}"></i><span>${assigned?'✓ ':''}${group.name}</span>`;button.onclick=()=>{button.disabled=true;void fetch(`/api/bookmark-groups/${group.id}/items`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({referenceIds:[id],enabled:!assigned})}).then(async(response)=>{const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Bookmark could not be changed.');window.location.reload();}).catch(()=>{button.disabled=false;});};menu.appendChild(button);});document.body.appendChild(menu);const width=menu.offsetWidth,height=menu.offsetHeight;menu.style.left=`${Math.max(8,Math.min(window.innerWidth-width-8,event.clientX))}px`;menu.style.top=`${Math.max(8,Math.min(window.innerHeight-height-8,event.clientY))}px`;bookmarkMenu=menu;};
+    document.addEventListener('pointerdown',(event)=>{if(bookmarkMenu&&!bookmarkMenu.contains(event.target as Node))closeBookmarkMenu();});
+    document.querySelectorAll<HTMLElement>('[data-dashboard-item]').forEach((item)=>{const id=item.dataset.dashboardItem||'',title=item.dataset.itemTitle||'Reader';item.addEventListener('click',()=>openReader(id,title));item.addEventListener('contextmenu',(event)=>openBookmarkMenu(event,id));let timer=0;item.addEventListener('pointerdown',(event)=>{if(event.pointerType==='mouse')return;timer=window.setTimeout(()=>openBookmarkMenu(new MouseEvent('contextmenu',{clientX:event.clientX,clientY:event.clientY}),id),560);});['pointerup','pointercancel','pointermove'].forEach((name)=>item.addEventListener(name,()=>window.clearTimeout(timer)));});
+
+    const emergenceResult=document.querySelector<HTMLElement>('[data-emergence-result]');
+    const renderEmergence=(index:number)=>{const signal=readingData.emergenceSignals[index];if(!signal||!emergenceResult)return;emergenceResult.replaceChildren();const intro=document.createElement('p');intro.innerHTML=`<strong>${signal.phrase}</strong><span>First seen ${signal.firstYear<0?`${Math.abs(signal.firstYear)} BCE`:signal.firstYear}; strongest rise around ${signal.peakYear<0?`${Math.abs(signal.peakYear)} BCE`:signal.peakYear}.</span>`;emergenceResult.appendChild(intro);signal.itemIds.slice(0,6).forEach((id)=>{const item=readingData.emergenceItems[id];if(!item)return;const button=document.createElement('button');button.type='button';button.className='dashboard-reading-item';button.innerHTML=`<span><strong></strong><small>${item.year<0?`${Math.abs(item.year)} BCE`:item.year}</small></span>`;button.querySelector('strong')!.textContent=item.title;button.onclick=()=>openReader(item.id,item.title);emergenceResult.appendChild(button);});document.querySelectorAll<HTMLButtonElement>('[data-emergence-signal]').forEach((button)=>button.setAttribute('aria-pressed',String(Number(button.dataset.emergenceSignal)===index)));};
+    document.querySelectorAll<HTMLButtonElement>('[data-emergence-signal]').forEach((button)=>button.addEventListener('click',()=>renderEmergence(Number(button.dataset.emergenceSignal))));
+    if(readingData.emergenceSignals.length)renderEmergence(0);
+
     const yearsTimeline=document.querySelector<HTMLElement>('[data-years-timeline]');
     if(yearsTimeline){
       const panel=yearsTimeline.closest<HTMLElement>('.years-panel')!;
@@ -403,4 +519,13 @@ const themePresets = [
 
 <style>
   .voice-panel{margin:22px 0}.voice-settings-body{padding:16px}.voice-settings-body>p{margin:0 0 14px;color:var(--muted);font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.voice-settings-tools{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;align-items:end;gap:8px;margin-bottom:12px}.voice-settings-tools label{display:grid;gap:5px;color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.voice-settings-tools input{height:36px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.voice-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));max-height:360px;overflow:auto;padding:8px;border:1px solid var(--line)}.voice-checklist :global(label){display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:34px;padding:4px 8px;border-bottom:1px solid var(--line);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}.voice-checklist :global(label:hover){background:color-mix(in srgb,var(--green) 7%,transparent)}.voice-checklist :global(input){width:9px;height:9px;margin:0;appearance:none;border:1px solid #b07a3c;border-radius:0;background:transparent;cursor:pointer}.voice-checklist :global(input:checked){background:#b07a3c;box-shadow:inset 0 0 0 2px var(--paper)}.voice-checklist :global(input:focus-visible){outline:2px solid var(--gold);outline-offset:2px}.voice-checklist :global(small){color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.chirp-dashboard-settings{display:grid;grid-template-columns:1fr 1fr minmax(240px,1.2fr);margin-top:14px;border:1px solid var(--line)}.chirp-dashboard-settings>div,.chirp-dashboard-settings>label{min-height:74px;display:grid;align-content:center;gap:5px;padding:10px 12px;border-right:1px solid var(--line)}.chirp-dashboard-settings span{color:var(--muted);font:7px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.chirp-dashboard-settings strong{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}.chirp-dashboard-settings small{color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.chirp-dashboard-settings select{width:100%;height:34px;border:1px solid var(--ink);padding:0 7px;color:var(--ink);background:var(--paper);font:9px ui-monospace,SFMono-Regular,Menlo,monospace}@media(max-width:760px){.voice-settings-tools{grid-template-columns:1fr 1fr}.voice-settings-tools label{grid-column:1/-1}.voice-checklist{grid-template-columns:1fr}.chirp-dashboard-settings{grid-template-columns:1fr}.chirp-dashboard-settings>div,.chirp-dashboard-settings>label{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+
+<style>
+  .dashboard-home-grid{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:22px;margin:22px 0}.recent-reading-panel,.bookmark-home-panel{min-height:410px}.dashboard-item-list{max-height:520px;overflow:auto}.dashboard-reading-item{width:100%;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:9px 12px;border:0;border-bottom:1px solid var(--line);color:var(--ink);background:transparent;text-align:left;cursor:pointer}.dashboard-reading-item:hover{background:color-mix(in srgb,var(--green) 8%,transparent)}.dashboard-reading-item>span{min-width:0}.dashboard-reading-item strong,.dashboard-reading-item small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dashboard-reading-item strong{font:12px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace}.dashboard-reading-item small,.dashboard-reading-item time{margin-top:4px;color:var(--muted);font:8px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-new-button{padding:6px 9px;border:1px solid var(--line);color:var(--green);background:transparent;font:9px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}.bookmark-groups{display:flex;gap:10px;padding:10px;overflow-x:auto;scroll-snap-type:x proximity}.bookmark-group{--bookmark-color:#b07a3c;flex:0 0 min(320px,82vw);border:1px solid var(--line);border-top:3px solid var(--bookmark-color);scroll-snap-align:start}.bookmark-group[data-bookmark-color="amber"],.bookmark-choice-row label[data-bookmark-color="amber"]{--bookmark-color:#b07a3c}.bookmark-group[data-bookmark-color="coral"],.bookmark-choice-row label[data-bookmark-color="coral"]{--bookmark-color:#ba6554}.bookmark-group[data-bookmark-color="cyan"],.bookmark-choice-row label[data-bookmark-color="cyan"]{--bookmark-color:#3996a5}.bookmark-group[data-bookmark-color="sage"],.bookmark-choice-row label[data-bookmark-color="sage"]{--bookmark-color:#6e8d68}.bookmark-group[data-bookmark-color="violet"],.bookmark-choice-row label[data-bookmark-color="violet"]{--bookmark-color:#806a9b}.bookmark-group[data-bookmark-color="blue"],.bookmark-choice-row label[data-bookmark-color="blue"]{--bookmark-color:#4e78a4}.bookmark-group[data-bookmark-color="rose"],.bookmark-choice-row label[data-bookmark-color="rose"]{--bookmark-color:#a86478}.bookmark-group[data-bookmark-color="slate"],.bookmark-choice-row label[data-bookmark-color="slate"]{--bookmark-color:#68757b}.bookmark-group>header{display:grid;grid-template-columns:25px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:50px;padding:7px 9px;border-bottom:1px solid var(--line)}.bookmark-group>header strong,.bookmark-group>header small{display:block}.bookmark-group>header strong{font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group>header small{margin-top:3px;color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group>header button{border:0;background:transparent;color:var(--muted);cursor:pointer}.bookmark-group-items{min-height:205px;max-height:330px;overflow:auto}.bookmark-group-items>p{margin:0;padding:30px 14px;color:var(--muted);font:9px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-more{display:block;padding:8px 12px;color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-empty{flex:1 0 100%;min-height:265px;display:grid;place-content:center;gap:6px;border:1px dashed var(--line);color:var(--ink);background:transparent;cursor:pointer}.bookmark-empty span{font:18px Georgia,serif}.bookmark-empty small{max-width:50ch;color:var(--muted);font:9px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group-icon{display:grid;place-items:center;width:22px;height:22px;border:1px solid currentColor;color:var(--bookmark-color,currentColor);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group-icon[data-bookmark-icon="bookmark"]::before{content:"▮"}.bookmark-group-icon[data-bookmark-icon="star"]::before{content:"★"}.bookmark-group-icon[data-bookmark-icon="idea"]::before{content:"✦"}.bookmark-group-icon[data-bookmark-icon="question"]::before{content:"?"}.bookmark-group-icon[data-bookmark-icon="project"]::before{content:"▦"}.bookmark-group-icon[data-bookmark-icon="archive"]::before{content:"⌂"}
+  .emergence-panel{margin:22px 0}.emergence-layout{display:grid;grid-template-columns:minmax(250px,.75fr) minmax(0,1.25fr);min-height:280px}.emergence-signals{border-right:1px solid var(--ink)}.emergence-signals button{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 66px;gap:3px 12px;padding:10px 12px;border:0;border-bottom:1px solid var(--line);color:var(--ink);background:transparent;text-align:left;cursor:pointer}.emergence-signals button[aria-pressed="true"]{background:color-mix(in srgb,var(--green) 10%,transparent)}.emergence-signals span{font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.emergence-signals i{align-self:center;height:2px;background:linear-gradient(90deg,var(--gold) var(--signal),var(--line) var(--signal))}.emergence-signals small{grid-column:1/-1;color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.emergence-result{padding:8px}.emergence-result :global(p){display:grid;gap:5px;margin:0;padding:14px 12px 18px;border-bottom:1px solid var(--line)}.emergence-result :global(p strong){font:25px/1 Georgia,serif}.emergence-result :global(p span){color:var(--muted);font:9px ui-monospace,SFMono-Regular,Menlo,monospace}.emergence-result :global(.dashboard-reading-item){width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:8px 10px;border:0;border-bottom:1px solid var(--line);color:var(--ink);background:transparent;text-align:left;cursor:pointer}.emergence-result :global(.dashboard-reading-item:hover){background:color-mix(in srgb,var(--green) 8%,transparent)}.emergence-result :global(.dashboard-reading-item strong),.emergence-result :global(.dashboard-reading-item small){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.emergence-result :global(.dashboard-reading-item strong){font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.emergence-result :global(.dashboard-reading-item small){margin-top:3px;color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}
+  .bookmark-group-dialog{width:min(620px,calc(100vw - 28px));padding:0;border:1px solid var(--ink);color:var(--ink);background:var(--paper)}.bookmark-group-dialog::backdrop,.dashboard-reader-modal::backdrop{background:rgba(8,12,10,.64);backdrop-filter:blur(3px)}.bookmark-group-dialog form>header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--ink)}.bookmark-group-dialog header small,.bookmark-group-dialog header strong{display:block}.bookmark-group-dialog header small{color:var(--green);font:8px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group-dialog header strong{margin-top:3px;font:20px Georgia,serif}.bookmark-group-dialog header button{border:0;background:transparent;color:var(--muted);font-size:20px}.bookmark-group-dialog form>label,.bookmark-group-dialog fieldset{display:grid;gap:7px;margin:0;padding:12px 14px;border:0;border-bottom:1px solid var(--line)}.bookmark-group-dialog label>span,.bookmark-group-dialog legend{color:var(--muted);font:8px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.bookmark-group-dialog input[name="name"]{height:36px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-choice-row{display:flex;flex-wrap:wrap;gap:7px}.bookmark-choice-row label{--bookmark-color:#b07a3c;display:grid;grid-template-columns:auto auto;align-items:center;gap:5px;padding:5px 7px;border:1px solid var(--line);cursor:pointer}.bookmark-choice-row input{position:absolute;opacity:0}.bookmark-choice-row label:has(input:checked){border-color:var(--bookmark-color);box-shadow:inset 0 -2px var(--bookmark-color)}.bookmark-choice-row label>i:not(.bookmark-group-icon){width:10px;height:10px;background:var(--bookmark-color)}.bookmark-choice-row label span{font-size:7px}.icon-choices label{grid-template-columns:auto auto}.icon-choices label:has(input:checked){border-color:var(--gold)}.bookmark-group-dialog output{display:block;min-height:15px;padding:5px 14px;color:#a33;font:9px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group-dialog footer{display:grid;grid-template-columns:auto 1fr auto auto;gap:8px;padding:12px 14px}.bookmark-group-dialog footer button{min-height:32px;padding:0 11px;border:1px solid var(--ink);color:var(--ink);background:transparent;font:9px ui-monospace,SFMono-Regular,Menlo,monospace}.bookmark-group-dialog footer .primary{color:var(--paper);background:var(--green)}.bookmark-group-dialog footer .danger{color:#a33;border-color:#a33}
+  .dashboard-reader-modal{width:min(1500px,calc(100vw - 40px));height:min(920px,calc(100vh - 40px));max-width:none;max-height:none;padding:0;border:1px solid var(--ink);color:var(--ink);background:var(--paper)}.dashboard-reader-modal>header{height:37px;display:flex;align-items:center;justify-content:space-between;padding:0 11px;border-bottom:1px solid var(--ink)}.dashboard-reader-modal>header strong{max-width:calc(100% - 48px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px ui-monospace,SFMono-Regular,Menlo,monospace}.dashboard-reader-modal>header button{width:28px;height:28px;border:0;color:var(--muted);background:transparent;font-size:20px;cursor:pointer}.dashboard-reader-modal iframe{display:block;width:100%;height:calc(100% - 38px);border:0;background:var(--paper)}
+  :global(.dashboard-bookmark-menu){position:fixed;z-index:5000;min-width:230px;padding:6px;border:1px solid var(--ink);background:var(--paper);box-shadow:0 10px 35px rgba(0,0,0,.22)}:global(.dashboard-bookmark-menu>small){display:block;padding:5px 7px;color:var(--muted);font:7px ui-monospace,SFMono-Regular,Menlo,monospace}:global(.dashboard-bookmark-menu>button){width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);align-items:center;gap:8px;padding:7px;border:0;color:var(--ink);background:transparent;text-align:left;font:10px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}:global(.dashboard-bookmark-menu>button:hover){background:color-mix(in srgb,var(--green) 10%,transparent)}:global(.dashboard-bookmark-menu i){width:8px;height:8px;background:#b07a3c}:global(.dashboard-bookmark-menu i[data-color="coral"]){background:#ba6554}:global(.dashboard-bookmark-menu i[data-color="cyan"]){background:#3996a5}:global(.dashboard-bookmark-menu i[data-color="sage"]){background:#6e8d68}:global(.dashboard-bookmark-menu i[data-color="violet"]){background:#806a9b}:global(.dashboard-bookmark-menu i[data-color="blue"]){background:#4e78a4}:global(.dashboard-bookmark-menu i[data-color="rose"]){background:#a86478}:global(.dashboard-bookmark-menu i[data-color="slate"]){background:#68757b}
+  @media(max-width:760px){.dashboard-home-grid{grid-template-columns:1fr}.recent-reading-panel,.bookmark-home-panel{min-height:0}.dashboard-item-list{max-height:390px}.emergence-layout{grid-template-columns:1fr}.emergence-signals{border-right:0;border-bottom:1px solid var(--ink)}.dashboard-reader-modal{inset:0;width:100vw;height:100dvh;margin:0;border:0}.dashboard-reader-modal>header{padding-top:env(safe-area-inset-top);height:calc(39px + env(safe-area-inset-top))}.dashboard-reader-modal iframe{height:calc(100% - 40px - env(safe-area-inset-top))}}
 </style>

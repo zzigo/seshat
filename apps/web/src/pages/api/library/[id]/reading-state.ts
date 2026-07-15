@@ -44,3 +44,15 @@ export const PUT: APIRoute = async ({ request, locals, params }) => {
   );
   return Response.json({ ok: true });
 };
+
+export const PATCH: APIRoute = async ({ locals, params }) => {
+  const context = await sessionContext(locals, params.id || '');
+  if (!context) return Response.json({ error: 'not_found' }, { status: 404 });
+  await context.catalog.ensureSchema();
+  await context.catalog.pool.query(
+    `INSERT INTO catalog_reading_state(owner_key,reference_id) VALUES($1,$2)
+     ON CONFLICT(owner_key,reference_id) DO UPDATE SET updated_at=now()`,
+    [context.ownerKey, params.id],
+  );
+  return Response.json({ ok: true });
+};
