@@ -27,7 +27,7 @@ export async function mountAnnotationWorkspace(
   referenceId: string,
   title: string,
   report: (message: string, tone?: 'ready' | 'saving' | 'error') => void,
-  options: { indexOnly?: boolean } = {},
+  options: { indexOnly?: boolean; initialEditId?: string } = {},
 ): Promise<() => void> {
   element.classList.add('annotation-workspace');
   element.innerHTML = '<div class="annotation-loading">Loading extracted text and annotations…</div>';
@@ -53,7 +53,6 @@ export async function mountAnnotationWorkspace(
   });
   let pending: SelectionAnchor | null = null;
   let activeId: string | null = null;
-  const dialogs = new Set<HTMLDialogElement>();
 
   const header = document.createElement('header'); header.className = 'annotation-head';
   const heading = document.createElement('div');
@@ -65,7 +64,8 @@ export async function mountAnnotationWorkspace(
   const surface = document.createElement('div'); surface.className = 'annotation-surface'; surface.tabIndex = 0; reading.appendChild(surface);
   const rail = document.createElement('aside'); rail.className = 'annotation-rail';
   const railHead = document.createElement('header'); railHead.innerHTML = '<strong>Annotations</strong><span>Reading marks · click or contextual menu to classify</span>';
-  const cards = document.createElement('div'); cards.className = 'annotation-cards'; rail.append(railHead, cards);
+  const editorHost = document.createElement('div'); editorHost.className = 'annotation-editor-host'; editorHost.hidden = true;
+  const cards = document.createElement('div'); cards.className = 'annotation-cards'; rail.append(railHead, editorHost, cards);
   if (options.indexOnly) { element.classList.add('annotation-index-only'); body.appendChild(rail); }
   else body.append(reading, rail);
   element.replaceChildren(header, body);
@@ -116,9 +116,8 @@ export async function mountAnnotationWorkspace(
       card.addEventListener('click', () => {
         activeId = annotation.id; render();
         if (!options.indexOnly) surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (readingMark) openEditor(annotation);
+        openEditor(annotation);
       });
-      card.addEventListener('dblclick', () => { if (!readingMark) openEditor(annotation); });
       card.addEventListener('contextmenu', (event) => { event.preventDefault(); activeId = annotation.id; render(); openEditor(annotation); }); cards.appendChild(card);
     });
     stats.replaceChildren();
@@ -149,27 +148,29 @@ export async function mountAnnotationWorkspace(
     palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`;
   };
 
-  async function createAnnotation(anchor: SelectionAnchor, color: AnnotationColor, details: Record<string, unknown> = {}) {
+  async function createAnnotation(anchor: SelectionAnchor, color: AnnotationColor, details: Record<string, unknown> = {}): Promise<boolean> {
     palette.hidden = true; report('saving annotation…', 'saving');
     const response = await fetch(`/api/library/${referenceId}/annotations`, {
       method: 'POST', headers: {'content-type':'application/json'},
       body: JSON.stringify({ ...anchor, color: color.hex, category: color.category, ...details }),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) { report(result.error || 'Annotation could not be saved', 'error'); return; }
+    if (!response.ok) { report(result.error || 'Annotation could not be saved', 'error'); return false; }
     annotations.push(result.annotation); activeId = result.annotation.id; pending = null; window.getSelection()?.removeAllRanges(); render(); report('annotation saved');
     window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
+    return true;
   }
 
-  async function updateAnnotation(annotation: Annotation, details: Record<string, unknown>) {
+  async function updateAnnotation(annotation: Annotation, details: Record<string, unknown>): Promise<boolean> {
     report('saving annotation…', 'saving');
     const response = await fetch(`/api/library/${referenceId}/annotations/${annotation.id}`, {
       method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(details),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) { report(result.error || 'Annotation could not be updated', 'error'); return; }
+    if (!response.ok) { report(result.error || 'Annotation could not be updated', 'error'); return false; }
     Object.assign(annotation, result.annotation); render(); report('annotation saved');
     window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
+    return true;
   }
 
   async function deleteAnnotation(annotation: Annotation) {
@@ -179,13 +180,15 @@ export async function mountAnnotationWorkspace(
     window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
   }
 
+  const closeEditor = () => { editorHost.replaceChildren(); editorHost.hidden = true; };
+
   function openEditor(annotation?: Annotation, anchor?: SelectionAnchor) {
     palette.hidden = true;
-    const dialog = document.createElement('dialog'); dialog.className = 'annotation-editor';
-    dialogs.add(dialog);
+    closeEditor(); editorHost.hidden = false;
+    const editor = document.createElement('section'); editor.className = 'annotation-editor annotation-editor-inline';
     const form = document.createElement('form'); const readingMark = annotation?.noteType === 'reading-mark';
     const head = document.createElement('header'); const title = document.createElement('strong'); title.textContent = readingMark ? 'Classify reading mark' : annotation ? 'Edit annotation' : 'Annotate selection';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; close.addEventListener('click', () => dialog.close()); head.append(title, close);
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label','Close annotation editor'); close.addEventListener('click', closeEditor); head.append(title, close);
     const quote = document.createElement('blockquote'); quote.textContent = annotation?.quote || anchor?.quote || '';
     const colors = document.createElement('div'); colors.className = 'annotation-editor-colors'; let selected = colorFor(annotation || { color: annotationColors[0].hex });
     annotationColors.forEach((color) => {
@@ -193,6 +196,7 @@ export async function mountAnnotationWorkspace(
       button.classList.toggle('selected', selected.hex === color.hex); button.innerHTML = `<i></i><span>${color.sigil}</span>`;
       button.addEventListener('click', () => { selected = color; colors.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); }); colors.appendChild(button);
     });
+    const noteLabel = document.createElement('label'); noteLabel.className = 'annotation-editor-comment'; noteLabel.textContent = 'Comment'; const note = document.createElement('textarea'); note.rows = 4; note.value = annotation?.note || ''; noteLabel.appendChild(note);
     const grid = document.createElement('div'); grid.className = 'annotation-editor-grid';
     const noteType = selectField('Note type', [['','—'],['reading-mark','Reading mark'],['explanatory','Explanatory'],['critical','Critical'],['projective','Projective']], annotation?.noteType || '');
     if (readingMark) { noteType.input.disabled = true; noteType.input.title = 'The reading-mark type is preserved so Read can resume here.'; }
@@ -200,22 +204,19 @@ export async function mountAnnotationWorkspace(
     const page = inputField('Page', annotation?.page ? String(annotation.page) : '', 'number'); const locator = inputField('Locator', annotation?.locator || '');
     const targets = inputField('Targets (comma separated)', annotation?.targets.join(', ') || ''); const tags = inputField('Tags (comma separated)', annotation?.tags.join(', ') || '');
     grid.append(noteType.label, review.label, page.label, locator.label, targets.label, tags.label);
-    const noteLabel = document.createElement('label'); noteLabel.textContent = 'Comment'; const note = document.createElement('textarea'); note.rows = 5; note.value = annotation?.note || ''; noteLabel.appendChild(note);
     const actions = document.createElement('footer');
-    if (annotation) { const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Delete'; remove.addEventListener('click', () => { void deleteAnnotation(annotation); dialog.close(); }); actions.appendChild(remove); }
+    if (annotation) { const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Delete'; remove.addEventListener('click', () => { void deleteAnnotation(annotation); closeEditor(); }); actions.appendChild(remove); }
     const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save'; actions.appendChild(save);
-    form.append(head, quote, colors, grid, noteLabel, actions); dialog.appendChild(form);
-    const parentContainer = document.fullscreenElement || document.querySelector('.maximized-pod') || document.body;
-    parentContainer.appendChild(dialog);
-    dialog.addEventListener('close', () => { dialogs.delete(dialog); dialog.remove(); });
-    form.addEventListener('submit', (event) => {
+    form.append(head, noteLabel, colors, grid, quote, actions); editor.appendChild(form); editorHost.appendChild(editor);
+    form.addEventListener('submit', async (event) => {
       event.preventDefault(); const details = { color: selected.hex, category: selected.category, noteType: readingMark ? 'reading-mark' : noteType.input.value || undefined,
         reviewStatus: review.input.value, page: page.input.value ? Number(page.input.value) : undefined, locator: locator.input.value,
         targets: commaList(targets.input.value), tags: commaList(tags.input.value), note: note.value };
-      if (annotation) void updateAnnotation(annotation, details); else if (anchor) void createAnnotation(anchor, selected, details);
-      dialog.close();
+      save.disabled = true;
+      if (annotation) { if (await updateAnnotation(annotation, details)) closeEditor(); else save.disabled = false; }
+      else if (anchor) { if (await createAnnotation(anchor, selected, details)) closeEditor(); else save.disabled = false; }
     });
-    dialog.showModal(); note.focus();
+    window.requestAnimationFrame(() => { note.focus(); note.setSelectionRange(note.value.length,note.value.length); editor.scrollIntoView({block:'nearest'}); });
   }
 
   function inputField(text: string, value: string, type = 'text') {
@@ -242,6 +243,12 @@ export async function mountAnnotationWorkspace(
     if ((event as CustomEvent).detail?.referenceId !== referenceId) return;
     const response = await fetch(`/api/library/${referenceId}/annotations`); if (!response.ok) return;
     annotations.splice(0, annotations.length, ...((await response.json()).annotations || [])); render();
+  };
+  const requestedEdit = (event: Event) => {
+    const detail=(event as CustomEvent<{referenceId?:string;annotationId?:string}>).detail;
+    if(detail?.referenceId!==referenceId||!detail.annotationId)return;
+    const annotation=annotations.find((item)=>item.id===detail.annotationId);if(!annotation)return;
+    activeId=annotation.id;render();openEditor(annotation);
   };
   if (!options.indexOnly) {
     surface.addEventListener('mouseup', () => window.setTimeout(showPalette));
@@ -304,6 +311,8 @@ export async function mountAnnotationWorkspace(
   document.addEventListener('keydown', keyboard);
   document.addEventListener('pointerdown', outsidePointer);
   window.addEventListener('seshat:annotations-changed', changed);
+  window.addEventListener('seshat:edit-annotation', requestedEdit);
   render();
-  return () => { document.removeEventListener('keydown', keyboard); document.removeEventListener('pointerdown', outsidePointer); window.removeEventListener('seshat:annotations-changed', changed); palette.remove(); dialogs.forEach((dialog) => dialog.remove()); dialogs.clear(); };
+  if(options.initialEditId){const initial=annotations.find((item)=>item.id===options.initialEditId);if(initial){activeId=initial.id;render();openEditor(initial);}}
+  return () => { document.removeEventListener('keydown', keyboard); document.removeEventListener('pointerdown', outsidePointer); window.removeEventListener('seshat:annotations-changed', changed); window.removeEventListener('seshat:edit-annotation', requestedEdit); palette.remove(); closeEditor(); };
 }

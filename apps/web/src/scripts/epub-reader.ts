@@ -165,13 +165,18 @@ export async function mountEpubReader(
     return { quote, startOffset: localStart, endOffset: localEnd, sourceKind: 'epub', locator: `epub-section:${index}`, rects: [],
       prefix: sectionText.slice(Math.max(0, localStart - 250), localStart), suffix: sectionText.slice(localEnd, localEnd + 250) };
   };
-  const saveEpubAnnotation = async (doc: Document, anchor: EpubAnchor, color: typeof annotationColors[number]) => {
-    clearAnnotationPalettes(); setSaveState('saving EPUB annotation…', 'saving');
-    const response = await fetch(`/api/library/${referenceId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...anchor, color: color.hex, category: color.category }) });
+  const saveEpubAnnotation = async (doc: Document, anchor: EpubAnchor, color: typeof annotationColors[number], details:Record<string,unknown> = {}):Promise<Annotation|null> => {
+    doc.querySelectorAll('.seshat-annotation-palette').forEach((node)=>node.remove());clearAnnotationPalettes(); setSaveState('saving EPUB annotation…', 'saving');
+    const response = await fetch(`/api/library/${referenceId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...anchor, color: color.hex, category: color.category, ...details }) });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) { setSaveState(result.error || 'EPUB annotation could not be saved', 'error'); return; }
+    if (!response.ok) { setSaveState(result.error || 'EPUB annotation could not be saved', 'error'); return null; }
     epubAnnotations.push(result.annotation); renderEpubAnnotations(doc); doc.defaultView?.getSelection()?.removeAllRanges(); setSaveState('EPUB annotation saved');
     window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
+    return result.annotation;
+  };
+  const saveEpubComment = async (doc:Document,anchor:EpubAnchor) => {
+    const annotation=await saveEpubAnnotation(doc,anchor,annotationColors[7],{note:'',reviewStatus:'captured'});if(!annotation)return;
+    window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation',{detail:{referenceId,annotationId:annotation.id}}));
   };
   const showEpubAnnotationPalette = (doc: Document): boolean => {
     const anchor = anchorFromEpubSelection(doc); if (!anchor || !doc.body) return false;
@@ -179,9 +184,11 @@ export async function mountEpubReader(
     const palette = doc.createElement('div'); palette.className = 'seshat-annotation-palette'; palette.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); });
     annotationColors.forEach((color, index) => {
       const button = doc.createElement('button'); button.type = 'button'; button.title = `${index + 1} · ${color.label}`; button.setAttribute('aria-label', button.title);
+      button.dataset.annotationKey=String(index+1);
       const dot = doc.createElement('i'); dot.style.background = color.hex; const key = doc.createElement('small'); key.textContent = String(index + 1); button.append(dot, key);
       button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); void saveEpubAnnotation(doc, anchor, color); }); palette.appendChild(button);
     });
+    const comment=doc.createElement('button');comment.type='button';comment.className='seshat-annotation-comment';comment.dataset.annotationKey='m';comment.title='M · Comment';comment.setAttribute('aria-label',comment.title);comment.textContent='M';comment.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();void saveEpubComment(doc,anchor);});palette.appendChild(comment);
     doc.body.appendChild(palette); const bounds = palette.getBoundingClientRect(); const width = doc.defaultView?.innerWidth || 320;
     const mobileLift = doc.defaultView?.matchMedia('(pointer: coarse)').matches ? 58 : 8;
     palette.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`; return true;
@@ -255,7 +262,7 @@ export async function mountEpubReader(
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
     const appearance = epubDocumentAppearance(inverted);
-    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}`;
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
     doc.documentElement.style.backgroundColor = appearance.background;
     if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
@@ -301,6 +308,10 @@ export async function mountEpubReader(
   larger.addEventListener('click', () => { preferences.fontScale = clampScale(preferences.fontScale + .1); applyFont(); save(); emitControls(); });
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement | null)?.matches?.('input,textarea,select,[contenteditable="true"]')) return;
+    const sourceDoc=(event.target as HTMLElement|null)?.ownerDocument||(event.currentTarget as Document|null);
+    const palette=sourceDoc?.querySelector?.<HTMLElement>('.seshat-annotation-palette');
+    if(palette){const key=event.key.toLowerCase();const annotationKey=/^[1-8]$/.test(key)||key==='m'?key:'';if(annotationKey){event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();palette.querySelector<HTMLButtonElement>(`[data-annotation-key="${annotationKey}"]`)?.click();return;}}
+    if(event.defaultPrevented)return;
     if (event.key === 'ArrowLeft') { event.preventDefault(); void view.prev(); }
     if (event.key === 'ArrowRight') { event.preventDefault(); void view.next(); }
     if (event.key === '0') { event.preventDefault(); void view.goTo(0); }

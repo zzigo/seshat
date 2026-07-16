@@ -142,6 +142,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let previewRender: ((referenceId: string) => void) | null = null;
   const documentDisposers = new WeakMap<HTMLElement, () => void>();
   const selectedReferences = new Set<string>();
+  const pendingAnnotationEdits = new Map<string,string>();
   let treeSelectionAnchor: string | null = null;
   let treeRevealReferenceId: string | null = null;
   let altLocateArmed = false;
@@ -1608,7 +1609,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const reference = referenceId ? references.get(referenceId) : undefined;
       if (kind === 'annotation' && reference) {
         element.classList.remove('future-tool-pod');
-        void mountAnnotationWorkspace(element, reference.id, reference.title, setSaveState, { indexOnly: true }).then((dispose) => {
+        const initialEditId=pendingAnnotationEdits.get(reference.id);pendingAnnotationEdits.delete(reference.id);
+        void mountAnnotationWorkspace(element, reference.id, reference.title, setSaveState, { indexOnly: true, initialEditId }).then((dispose) => {
           if (disposed) dispose(); else disposeAnnotation = dispose;
         });
         return;
@@ -3076,6 +3078,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     },
     openBibliography(batchId: string, title = 'Bibliography') { const panelId=`bibliography-${batchId}`;closePhoneAuxiliaryPanels(panelId);addPanel(panelId, `bibliography:${batchId}`, title, 'right');maximizePhonePanel(panelId); },
   };
+
+  window.addEventListener('seshat:request-edit-annotation',((event:CustomEvent<{referenceId?:string;annotationId?:string}>)=>{
+    const referenceId=event.detail?.referenceId,annotationId=event.detail?.annotationId;if(!referenceId||!annotationId||!references.has(referenceId))return;
+    const panelId=`tool-annotation-${referenceId}`,existing=api.getPanel(panelId);
+    if(existing){existing.api.setActive();maximizePhonePanel(panelId);window.dispatchEvent(new CustomEvent('seshat:edit-annotation',{detail:{referenceId,annotationId}}));return;}
+    pendingAnnotationEdits.set(referenceId,annotationId);controller.openTool('annotation',referenceId);
+  }) as EventListener);
 
   async function deleteReference(referenceId: string) {
     const reference = references.get(referenceId);
