@@ -80,6 +80,13 @@ html { max-width: 100%; overflow: hidden; }
 .workspace-tools, .workspace-session { min-width:0; display: flex; align-items: center; height: 100%; border: 0; }
 .workspace-tools button, .workspace-session button { height: 100%; padding: 0 8px; border: 0; color: var(--ink); background: transparent; font: 8px monospace; text-transform: uppercase; cursor: pointer; }
 .workspace-tools button:hover { background: rgba(61,122,88,.09); }
+.workspace-tools .zotero-sync-wheel { position:relative; width:34px; min-width:34px; padding:0; color:var(--gold); font:18px/1 Georgia,serif; text-transform:none; }
+.zotero-sync-glyph { display:block; transform-origin:50% 50%; }
+.zotero-sync-wheel.is-syncing .zotero-sync-glyph { animation:zotero-sync-turn 1.15s linear infinite; }
+.zotero-sync-wheel.is-success { color:var(--green-bright); }
+.zotero-sync-wheel.is-error { color:#a64b3c; }
+.zotero-sync-tooltip { position:fixed; z-index:2147483647; max-width:min(360px,calc(100vw - 16px)); padding:7px 9px; border:1px solid var(--hairline); color:var(--ink); background:var(--paper); box-shadow:4px 7px 20px color-mix(in srgb,var(--ink) 18%,transparent); font:9px/1.4 ui-monospace,monospace; pointer-events:none; }
+@keyframes zotero-sync-turn { to { transform:rotate(360deg); } }
 .workspace-session { gap: 7px; padding-left: 7px; color: var(--muted); font: 8px monospace; white-space: nowrap; }
 .workspace-session > a { color: var(--muted); text-decoration: none; }
 .workspace-session > a:hover { color: var(--green); }
@@ -875,6 +882,7 @@ html { max-width: 100%; overflow: hidden; }
     white-space: nowrap !important;
     height: auto !important;
   }
+  .workspace-tools .zotero-sync-wheel { min-width:40px !important; padding:7px 10px !important; font-size:20px !important; }
 
   .workspace-tools button:hover, .workspace-tools button:active {
     background: rgba(61, 122, 88, 0.2) !important;

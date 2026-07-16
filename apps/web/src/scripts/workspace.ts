@@ -4163,13 +4163,33 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const kind = button.dataset.openTool as ToolKind;
     controller.openTool(kind, kind === 'graph' ? null : undefined);
   }));
-  root.querySelector<HTMLButtonElement>('[data-zotero-sync]')?.addEventListener('click',async(event)=>{
-    const button=event.currentTarget as HTMLButtonElement;const original=button.textContent||'Sync Zotero';button.disabled=true;button.textContent='Syncing…';setSaveState('synchronizing Zotero…','saving');
-    try{
-      const response=await fetch('/api/zotero/sync-now',{method:'POST'});const result=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error(result.error==='ZOTERO_SYNC_IN_PROGRESS'?'Zotero sync is already running':result.error||'Zotero sync failed');
-      const processed=Number(result.pulled?.items||0)+Number(result.pushed?.items||0);setSaveState(`Zotero synchronized · ${processed} item${processed===1?'':'s'} processed`);button.textContent='Synced';window.setTimeout(()=>window.location.reload(),900);
-    }catch(error){button.disabled=false;button.textContent=original;setSaveState(error instanceof Error?error.message:'Zotero sync failed','error');}
-  });
+  const zoteroButton=root.querySelector<HTMLButtonElement>('[data-zotero-sync]');
+  if(zoteroButton){
+    type ZoteroLiveStatus={connected?:boolean;syncing?:boolean;lastSyncedAt?:string;lastCheckedAt?:string;lastError?:string;libraryVersion?:number};
+    let tooltip:HTMLElement|null=null,lastStatusRead=0;
+    const describe=(status:ZoteroLiveStatus)=>status.syncing?'Zotero synchronization in progress'
+      :status.lastError?`Last Zotero sync failed · ${status.lastError}`
+      :status.lastSyncedAt?`Last Zotero update · ${new Date(status.lastSyncedAt).toLocaleString()}`
+      :'Synchronize with Zotero · never synchronized';
+    const setTooltip=(message:string)=>{zoteroButton.dataset.tooltip=message;zoteroButton.title=message;zoteroButton.setAttribute('aria-label',message);if(tooltip)tooltip.textContent=message;};
+    const applyStatus=(status:ZoteroLiveStatus)=>{zoteroButton.classList.toggle('is-syncing',Boolean(status.syncing));zoteroButton.dataset.syncing=String(Boolean(status.syncing));setTooltip(describe(status));return status;};
+    const readStatus=async()=>{const response=await fetch('/api/zotero/connection',{cache:'no-store'});const status=await response.json().catch(()=>({})) as ZoteroLiveStatus;if(!response.ok)throw new Error('Zotero status unavailable');lastStatusRead=Date.now();return applyStatus(status);};
+    const wait=(milliseconds:number)=>new Promise((resolve)=>window.setTimeout(resolve,milliseconds));
+    const awaitCompletion=async()=>{for(let attempt=0;attempt<600;attempt+=1){await wait(attempt<3?700:2000);const status=await readStatus();if(!status.syncing)return status;}throw new Error('Zotero synchronization continues in the background');};
+    const showTooltip=()=>{if(window.matchMedia('(hover:none)').matches)return;tooltip?.remove();tooltip=document.createElement('div');tooltip.className='zotero-sync-tooltip';tooltip.textContent=zoteroButton.dataset.tooltip||zoteroButton.title;document.body.appendChild(tooltip);const bounds=zoteroButton.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();tooltip.style.left=`${Math.max(8,Math.min(window.innerWidth-tip.width-8,bounds.left+bounds.width/2-tip.width/2))}px`;tooltip.style.top=`${Math.min(window.innerHeight-tip.height-8,bounds.bottom+7)}px`;if(Date.now()-lastStatusRead>15_000)void readStatus().catch(()=>undefined);};
+    const hideTooltip=()=>{tooltip?.remove();tooltip=null;};
+    zoteroButton.addEventListener('pointerenter',showTooltip);zoteroButton.addEventListener('pointerleave',hideTooltip);zoteroButton.addEventListener('blur',hideTooltip);
+    const synchronize=async()=>{
+      zoteroButton.disabled=true;zoteroButton.classList.remove('is-success','is-error');zoteroButton.classList.add('is-syncing');setTooltip('Zotero synchronization in progress');setSaveState('synchronizing Zotero in background…','saving');
+      try{
+        const response=await fetch('/api/zotero/sync-now',{method:'POST'});const result=await response.json().catch(()=>({}));
+        if(!response.ok&&response.status!==409)throw new Error(result.error||'Zotero synchronization could not start');
+        const status=await awaitCompletion();if(status.lastError)throw new Error(status.lastError);
+        zoteroButton.classList.remove('is-syncing');zoteroButton.classList.add('is-success');setSaveState('Zotero synchronized');setTooltip(describe(status));window.setTimeout(()=>window.location.reload(),900);
+      }catch(error){zoteroButton.classList.remove('is-syncing');zoteroButton.classList.add('is-error');zoteroButton.disabled=false;const message=error instanceof Error?error.message:'Zotero synchronization failed';setTooltip(`Zotero sync failed · ${message}`);setSaveState(message,'error');}
+    };
+    zoteroButton.addEventListener('click',()=>void synchronize());
+    if(zoteroButton.dataset.syncing==='true')void (async()=>{zoteroButton.disabled=true;try{const status=await awaitCompletion();if(status.lastError)throw new Error(status.lastError);window.location.reload();}catch(error){zoteroButton.disabled=false;zoteroButton.classList.remove('is-syncing');setSaveState(error instanceof Error?error.message:'Zotero synchronization failed','error');}})();
+  }
   renderTree(); renderKeywordCloud(); renderProperties(activeReference);
 }

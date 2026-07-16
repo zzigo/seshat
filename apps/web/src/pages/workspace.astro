@@ -80,6 +80,10 @@ const payload = {
   keywordStyles: Object.fromEntries(keywordStyleRows.rows.map((row:any) => [row.keyword,row.color])),
 };
 const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
+const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress'
+  : zoteroStatus.lastError ? `Last Zotero sync failed · ${zoteroStatus.lastError}`
+  : zoteroStatus.lastSyncedAt ? `Last Zotero update · ${new Date(zoteroStatus.lastSyncedAt).toLocaleString()}`
+  : 'Synchronize with Zotero · never synchronized';
 ---
 
 <!doctype html>
@@ -105,7 +109,7 @@ const serialized = JSON.stringify(payload).replace(/</g, '\\u003c');
           <button type="button" data-open-tool="agent">AI agent</button>
           <button type="button" data-open-tool="graph">Knowledge Graph</button>
           <button type="button" data-open-tool="search">Corpus Search</button>
-          {zoteroStatus.connected && <button type="button" data-zotero-sync title="Pull and push changes through the Zotero Web API">Sync Zotero</button>}
+          {zoteroStatus.connected && <button type="button" class:list={['zotero-sync-wheel',zoteroStatus.syncing&&'is-syncing']} data-zotero-sync data-tooltip={zoteroTooltip} data-syncing={String(zoteroStatus.syncing)} title={zoteroTooltip} aria-label={zoteroTooltip}><span class="zotero-sync-glyph" aria-hidden="true">𓋇</span></button>}
         </nav>
         <div class="workspace-session">
           <button type="button" data-toggle-theme title="Toggle dark/light theme" style="border:0; background:transparent; font-size:13px; color:var(--muted); cursor:pointer; padding:0 8px;">☼</button>
