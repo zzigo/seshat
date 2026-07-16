@@ -84,6 +84,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       import { mountAnnotationWorkspace } from '../../scripts/annotations';
       import { mountPdfViewer } from '../../scripts/pdf-viewer';
       import { mountEpubReader } from '../../scripts/epub-reader';
+      import { mountHtmlReader } from '../../scripts/html-reader';
       import { readAloud } from '../../scripts/read-aloud';
 
       const theme=normalizeThemeMode(localStorage.getItem('seshat-theme'));
@@ -164,6 +165,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
         void fetch(`/api/library/${encodeURIComponent(data.id)}/reading-state`,{method:'PATCH'});
         if(data.format==='pdf')await mountPdfViewer(surface,data.id,data.title,report);
         else if(data.format==='epub')await mountEpubReader(surface,data.id,data.title,report);
+        else if(data.format==='webarchive')await mountHtmlReader(surface,data.id,data.title,report);
         else{surface.classList.add('pod-reading-surface');const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/markdown`);if(!response.ok)throw new Error('Extracted text is not available.');const pre=document.createElement('pre');pre.textContent=await response.text();surface.appendChild(pre);}
         root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));
         report('ready');postState();

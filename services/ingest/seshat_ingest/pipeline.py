@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
+from .webarchive import extract_webarchive
+
 
 class ConvertedDocument(Protocol):
     def export_to_markdown(self) -> str: ...
@@ -74,6 +76,7 @@ def _write(path: Path, content: bytes) -> GeneratedArtifact:
         ".json": "application/json",
         ".jsonl": "application/x-ndjson",
         ".md": "text/markdown",
+        ".html": "text/html; charset=utf-8",
     }.get(path.suffix, "application/octet-stream")
     return GeneratedArtifact(
         kind={
@@ -81,6 +84,7 @@ def _write(path: Path, content: bytes) -> GeneratedArtifact:
             "document.md": "markdown",
             "chunks.jsonl": "chunks",
             "structure.json": "structure",
+            "document.html": "html",
         }.get(path.name, "derived"),
         filename=path.name,
         media_type=media_type,
@@ -276,14 +280,23 @@ def ingest_document(
     source = request.source_path.resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Document not found: {source}")
-    if source.suffix.lower() not in {".pdf", ".epub", ".docx", ".txt"}:
-        raise ValueError("Seshat ingestion accepts PDF, EPUB, DOCX, and TXT documents.")
+    if source.suffix.lower() not in {".pdf", ".epub", ".docx", ".txt", ".webarchive"}:
+        raise ValueError("Seshat ingestion accepts PDF, EPUB, DOCX, TXT, and WebArchive documents.")
 
     output_dir = request.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    if source.suffix.lower() == ".txt":
+    html_bytes: bytes | None = None
+    if source.suffix.lower() == ".webarchive":
+        extracted = extract_webarchive(source)
+        document_dict = {"schema": "seshat-webarchive-reader", **extracted["metadata"]}
+        json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2).encode("utf-8")
+        markdown_bytes = extracted["markdown"].encode("utf-8")
+        html_bytes = extracted["html"].encode("utf-8")
+        chunk_rows = extracted["chunks"]
+    elif source.suffix.lower() == ".txt":
         text = source.read_text(encoding="utf-8", errors="replace")
-        json_bytes = json.dumps({"schema": "seshat-plain-text", "text": text}, ensure_ascii=False, indent=2).encode("utf-8")
+        document_dict = {"schema": "seshat-plain-text", "text": text}
+        json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2).encode("utf-8")
         markdown_bytes = text.encode("utf-8")
         paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
         chunk_rows = [{"id": index, "text": part, "metadata": {}} for index, part in enumerate(paragraphs)]
@@ -299,7 +312,7 @@ def ingest_document(
         for row in chunk_rows
     )
     structure_bytes = json.dumps(
-        _docling_structure(document_dict, markdown_bytes.decode("utf-8")) if source.suffix.lower() != ".txt"
+        _docling_structure(document_dict, markdown_bytes.decode("utf-8")) if source.suffix.lower() not in {".txt", ".webarchive"}
         else _markdown_structure(markdown_bytes.decode("utf-8")),
         ensure_ascii=False,
         indent=2,
@@ -310,6 +323,7 @@ def ingest_document(
         _write(output_dir / "document.md", markdown_bytes),
         _write(output_dir / "chunks.jsonl", chunk_bytes),
         _write(output_dir / "structure.json", structure_bytes),
+        *(() if html_bytes is None else (_write(output_dir / "document.html", html_bytes),)),
     )
     timestamp = (now or (lambda: datetime.now(UTC).isoformat()))()
     manifest = IngestManifest(
@@ -318,7 +332,7 @@ def ingest_document(
         original_artifact_id=request.original_artifact_id,
         source_sha256=_sha256(source),
         source_size_bytes=source.stat().st_size,
-        parser="plain-text" if source.suffix.lower() == ".txt" else "docling",
+        parser="webarchive-reader" if source.suffix.lower() == ".webarchive" else "plain-text" if source.suffix.lower() == ".txt" else "docling",
         parser_version=request.parser_version,
         ocr=request.ocr,
         created_at=timestamp,

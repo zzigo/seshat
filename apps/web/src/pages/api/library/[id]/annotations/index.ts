@@ -27,7 +27,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const startOffset = Number(body?.startOffset); const endOffset = Number(body?.endOffset);
   const color = String(body?.color || '').toLowerCase(); const category = String(body?.category || '');
   const requestedSourceKind = String(body?.sourceKind || 'markdown');
-  const sourceKind = requestedSourceKind === 'pdf' || requestedSourceKind === 'epub' ? requestedSourceKind : 'markdown'; const rects = cleanRects(body?.rects);
+  const sourceKind = ['pdf','epub','html'].includes(requestedSourceKind) ? requestedSourceKind : 'markdown'; const rects = cleanRects(body?.rects);
   if (!quote.trim() || quote.length > 20_000 || !Number.isInteger(startOffset) || !Number.isInteger(endOffset) || startOffset < 0 || endOffset <= startOffset) {
     return Response.json({ error: 'invalid_selector' }, { status: 400 });
   }

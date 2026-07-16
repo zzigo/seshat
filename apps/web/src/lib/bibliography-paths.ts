@@ -57,7 +57,7 @@ export const extractBibAttachmentPath = (raw: unknown): string | null => {
     path = path.replace(/:(?:application|text)\/[a-z0-9.+-]+$/i, '');
     try { path = decodeURIComponent(path); } catch { /* preserve literal path */ }
     path = path.replaceAll('\\', '/').replace(/\/{2,}/g, '/');
-    if (/\.(?:pdf|docx|epub|txt)$/i.test(path)) return path;
+    if (/\.(?:pdf|docx|epub|txt|webarchive)$/i.test(path)) return path;
   }
   return null;
 };
@@ -71,7 +71,7 @@ export const mapBibAttachment = (raw: unknown, identity: SeshatUserIdentity, con
   const segments = candidate.split('/').map(cleanSegment).filter((segment) => Boolean(segment) && segment !== '.' && segment !== '..');
   if (!segments.length) return null;
   const filename = segments.at(-1) || '';
-  if (!filename || !/\.(?:pdf|docx|epub|txt)$/i.test(filename)) return null;
+  if (!filename || !/\.(?:pdf|docx|epub|txt|webarchive)$/i.test(filename)) return null;
   const directories = segments.slice(0, -1);
   const { root: defaultRoot, privileged } = storageRootFor(identity);
   const root = String(configuredRoot || defaultRoot).replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');

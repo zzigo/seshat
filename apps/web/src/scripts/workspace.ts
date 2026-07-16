@@ -8,6 +8,7 @@ import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
+import { mountHtmlReader } from './html-reader';
 import { referenceFileType } from '../lib/reference-file';
 import { belongsToLibraryBranch, collectLibraryBranchIds } from '../lib/library-scope';
 import screenfull from 'screenfull';
@@ -48,6 +49,7 @@ const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'ow
 const treeReferenceKind = (reference: ReferenceRow): 'pdf' | 'ebook' | 'text' | 'no-text' => {
   if (reference.format === 'pdf') return 'pdf';
   if (['epub', 'mobi', 'azw', 'azw3'].includes(reference.format)) return 'ebook';
+  if (reference.format === 'webarchive') return 'text';
   if (reference.hasText || ['txt', 'md', 'rtf'].includes(reference.format)) return 'text';
   return 'no-text';
 };
@@ -294,7 +296,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const active = activities.filter((activity) => activity.state === 'working');
     const latest = activities[activities.length - 1];
     consoleRoot.dataset.state = active.length ? 'working' : latest?.state || 'idle';
-    consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB or BIB anywhere';
+    consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE or BIB anywhere';
     consoleCount.textContent = `${active.length} ${active.length === 1 ? 'job' : 'jobs'}`;
     consoleLog.replaceChildren();
     [...activities].reverse().slice(0, 30).forEach((activity) => {
@@ -409,7 +411,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     void copyText(format === 'apa' ? rows.map(toApa).join('\n') : toBetterBibtex(rows), format === 'apa' ? 'APA citation' : 'Better BibTeX');
   };
   const pickAssociatedFile = (referenceId: string) => {
-    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.docx,.txt,.epub';
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.docx,.txt,.epub,.webarchive';
     input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void replaceAssociatedFile(referenceId, file); });
     input.click();
   };
@@ -1375,6 +1377,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       void mountEpubReader(body, reference.id, reference.title, setSaveState).then((dispose) => {
         if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
       }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'EPUB viewer unavailable'; });
+    } else if (reference.format === 'webarchive') {
+      const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
+      void mountHtmlReader(body, reference.id, reference.title, setSaveState).then((dispose) => {
+        if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
+      }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'WebArchive reader unavailable'; });
     } else void mountText(body, reference.id, 'markdown');
   };
 

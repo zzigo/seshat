@@ -6,11 +6,11 @@ import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { storageRootFor } from '../../../../lib/bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 
-const supported = new Set(['pdf','docx','txt','epub']);
+const supported = new Set(['pdf','docx','txt','epub','webarchive']);
 const extension = (name: string) => name.toLowerCase().split('.').pop() || '';
 const filenameFor = (key: string) => key.split('/').filter(Boolean).at(-1) || key;
 const titleFor = (filename: string) => filename.replace(/\.[a-z0-9]+$/i,'').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim() || 'Untitled document';
-const mimeFor = (filename: string) => ({ pdf:'application/pdf', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', txt:'text/plain; charset=utf-8', epub:'application/epub+zip' } as Record<string,string>)[extension(filename)] || 'application/octet-stream';
+const mimeFor = (filename: string) => ({ pdf:'application/pdf', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', txt:'text/plain; charset=utf-8', epub:'application/epub+zip', webarchive:'application/x-webarchive' } as Record<string,string>)[extension(filename)] || 'application/octet-stream';
 
 const folderContext = async (locals: App.Locals, libraryId: string) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();

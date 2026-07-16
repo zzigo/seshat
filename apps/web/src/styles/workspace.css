@@ -457,6 +457,23 @@ html { max-width: 100%; overflow: hidden; }
 .seshat-epub-shell.is-inverted, .seshat-epub-shell.is-inverted .epub-stage, .seshat-epub-shell.is-inverted .epub-reading-surface, .seshat-epub-shell.is-inverted foliate-view { background: #111513 !important; color: #e4e1d8 !important; color-scheme: dark; }
 .seshat-epub-shell.is-inverted foliate-view::part(filter) { background: #111513 !important; }
 .seshat-epub-shell.is-inverted foliate-view::part(head), .seshat-epub-shell.is-inverted foliate-view::part(foot) { color: #e4e1d8 !important; }
+.seshat-html-reader { width:100%; height:100%; min-width:0; overflow:hidden; color:var(--ink); background:var(--paper); }
+.seshat-html-reader-scroll { width:100%; height:100%; overflow:auto; overscroll-behavior:contain; padding:clamp(24px,5vw,72px) max(18px,calc((100% - 860px)/2)); scroll-padding-block:60px 100px; }
+.webarchive-reader-content { max-width:860px; margin:0 auto; color:inherit; font:16px/1.7 ui-serif,Georgia,serif; overflow-wrap:anywhere; }
+.webarchive-reader-content>header { margin:0 0 clamp(28px,5vw,58px); padding-bottom:18px; border-bottom:1px solid var(--hairline); }
+.webarchive-reader-content>header>p:first-child { margin:0 0 12px; font:9px/1.4 ui-monospace,monospace; letter-spacing:.04em; text-transform:uppercase; }
+.webarchive-reader-content>header h1 { max-width:24ch; margin:0 0 12px; font:400 clamp(30px,5vw,62px)/1.02 ui-serif,Georgia,serif; letter-spacing:-.025em; }
+.webarchive-reader-content>header p { margin:0; color:var(--muted); font:10px/1.5 ui-monospace,monospace; }
+.webarchive-reader-content a { color:var(--green); text-decoration-thickness:1px; text-underline-offset:.18em; }
+.webarchive-reader-content h1,.webarchive-reader-content h2,.webarchive-reader-content h3,.webarchive-reader-content h4 { margin:1.5em 0 .55em; font-weight:500; line-height:1.15; }
+.webarchive-reader-content p,.webarchive-reader-content blockquote,.webarchive-reader-content figure,.webarchive-reader-content table,.webarchive-reader-content pre { margin:0 0 1.25em; }
+.webarchive-reader-content img { display:block; max-width:100%; height:auto; margin:1.5em auto; }
+.webarchive-reader-content figure { max-width:100%; }.webarchive-reader-content figcaption { color:var(--muted); font:11px/1.45 ui-monospace,monospace; }
+.webarchive-reader-content blockquote { margin-inline:0; padding-left:1.2em; border-left:2px solid var(--gold); color:color-mix(in srgb,var(--ink) 82%,transparent); }
+.webarchive-reader-content pre { max-width:100%; overflow:auto; padding:14px; background:color-mix(in srgb,var(--ink) 6%,transparent); font:12px/1.55 ui-monospace,monospace; }
+.webarchive-reader-content table { width:100%; border-collapse:collapse; font-size:13px; }.webarchive-reader-content th,.webarchive-reader-content td { padding:7px 9px; border:1px solid var(--hairline); text-align:left; vertical-align:top; }
+.seshat-html-reader.is-inverted { color:#e4e1d8; background:#111513; color-scheme:dark; }.seshat-html-reader.is-inverted .webarchive-reader-content { color:#e4e1d8; }.seshat-html-reader.is-inverted .webarchive-reader-content a { color:#8bc5a4; }
+@media(max-width:500px){.seshat-html-reader-scroll{padding:24px 17px 100px}.webarchive-reader-content{font-size:16px}.webarchive-reader-content>header h1{font-size:34px}}
 @media (max-width: 720px) {
   .seshat-epub-shell.toc-open { grid-template-columns: minmax(160px,72vw) minmax(0,1fr); }
   .epub-controls select { max-width: 70px; }

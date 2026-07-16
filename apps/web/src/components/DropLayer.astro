@@ -6,14 +6,14 @@ const { authenticated, workspace = false } = Astro.props;
 <div class="drop-layer" data-drop-layer data-authenticated={String(authenticated)} data-workspace={String(workspace)} aria-hidden="true">
   <div class="drop-glyph">𓆓</div>
   <strong>Release into Seshat</strong>
-  <span>PDF · DOCX · TXT · EPUB · BIB</span>
+  <span>PDF · DOCX · TXT · EPUB · WEBARCHIVE · BIB</span>
 </div>
 <div class="drop-toast" data-drop-toast role="status" aria-live="polite"></div>
 
 <script>
   const layer = document.querySelector<HTMLElement>('[data-drop-layer]');
   const toast = document.querySelector<HTMLElement>('[data-drop-toast]');
-  const accepted = new Set(['pdf', 'docx', 'txt', 'epub', 'bib']);
+  const accepted = new Set(['pdf', 'docx', 'txt', 'epub', 'webarchive', 'bib']);
   let dragDepth = 0;
 
   const extension = (name: string) => name.toLowerCase().split('.').pop() || '';
@@ -85,7 +85,7 @@ const { authenticated, workspace = false } = Astro.props;
     const files = incoming.filter((file) => accepted.has(extension(file.name)));
     const rejected = incoming.length - files.length;
     if (!files.length) {
-      showToast('No compatible files found. Use PDF, DOCX, TXT, EPUB or BIB.');
+      showToast('No compatible files found. Use PDF, DOCX, TXT, EPUB, WEBARCHIVE or BIB.');
       return;
     }
     if (layer?.dataset.workspace === 'true') {

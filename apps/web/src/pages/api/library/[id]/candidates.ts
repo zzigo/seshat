@@ -6,9 +6,10 @@ import { mapBibAttachment } from '../../../../lib/bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 import { getWasabiLibraryRoot, safeWasabiRelativePath, wasabiKeyWithinRoot, wasabiUnicodePathForms } from '../../../../lib/wasabi-settings';
 
-const supported = /\.(pdf|epub|docx|txt)$/i;
+const supported = /\.(pdf|epub|docx|txt|webarchive)$/i;
 const mimeType = (filename: string): string => filename.toLowerCase().endsWith('.pdf') ? 'application/pdf'
   : filename.toLowerCase().endsWith('.epub') ? 'application/epub+zip'
+  : filename.toLowerCase().endsWith('.webarchive') ? 'application/x-webarchive'
   : filename.toLowerCase().endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   : 'text/plain; charset=utf-8';
 const normalized = (value: unknown): string => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

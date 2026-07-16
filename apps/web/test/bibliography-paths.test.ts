@@ -41,3 +41,9 @@ test('queries both composed and macOS-decomposed Wasabi paths', () => {
   assert.deepEqual(forms, ['zzttuntref/libros/acústica', 'zzttuntref/libros/acústica']);
   assert.equal(forms[0].normalize('NFC'), forms[1].normalize('NFC'));
 });
+
+test('maps Safari WebArchive attachments as preserved documents', () => {
+  const mapped = mapBibAttachment('/Users/zztt/My Drive/libros/web/Signal and Form.webarchive', { email:'lucianoazzigotti@gmail.com' });
+  assert.equal(mapped?.filename, 'Signal and Form.webarchive');
+  assert.equal(mapped?.relativePath, 'web/Signal and Form.webarchive');
+});

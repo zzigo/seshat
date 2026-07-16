@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,7 +89,7 @@ class IngestPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.zip"
             source.write_bytes(b"not supported yet")
-            with self.assertRaisesRegex(ValueError, "PDF, EPUB, DOCX, and TXT"):
+            with self.assertRaisesRegex(ValueError, "PDF, EPUB, DOCX, TXT, and WebArchive"):
                 ingest_document(IngestRequest(
                     reference_id="ref:1",
                     original_artifact_id="artifact:1",
@@ -104,6 +105,42 @@ class IngestPipelineTest(unittest.TestCase):
             result = ingest_document(IngestRequest("ref:1", "artifact:1", source, root / "out"))
             self.assertEqual(result.parser, "plain-text")
             self.assertIn("978-0-19", (root / "out" / "document.md").read_text())
+
+    def test_webarchive_creates_clean_reader_html_and_search_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "article.webarchive"
+            page = b"""<!doctype html><html><head><title>Signal and Form</title>
+              <meta name="author" content="Ada Example"><meta property="article:published_time" content="2026-07-17">
+              </head><body><nav>Home Shop Subscribe Advertising</nav><main><article>
+              <h1>Signal and Form</h1><p>This is the first substantial paragraph of the archived scholarly article.</p>
+              <img src="https://example.org/figure.png" alt="A useful figure"><script>alert('never')</script>
+              <p>This second paragraph preserves the argument while navigation and scripts disappear.</p>
+              </article></main><aside>Related clickbait</aside></body></html>"""
+            source.write_bytes(plistlib.dumps({
+                "WebMainResource": {
+                    "WebResourceData": page,
+                    "WebResourceMIMEType": "text/html",
+                    "WebResourceTextEncodingName": "UTF-8",
+                    "WebResourceURL": "https://example.org/research/signal",
+                },
+                "WebSubresources": [{
+                    "WebResourceData": b"fake-png",
+                    "WebResourceMIMEType": "image/png",
+                    "WebResourceURL": "https://example.org/figure.png",
+                }],
+            }, fmt=plistlib.FMT_BINARY))
+            result = ingest_document(IngestRequest("ref:web", "artifact:web", source, root / "out"))
+            reader = (root / "out" / "document.html").read_text()
+            markdown = (root / "out" / "document.md").read_text()
+            self.assertEqual(result.parser, "webarchive-reader")
+            self.assertEqual([item.kind for item in result.artifacts][-1], "html")
+            self.assertIn("Signal and Form", reader)
+            self.assertIn("data:image/png;base64,", reader)
+            self.assertNotIn("Subscribe Advertising", reader)
+            self.assertNotIn("<script", reader)
+            self.assertIn("first substantial paragraph", markdown)
+            self.assertIn("Source: https://example.org/research/signal", markdown)
 
     def test_ocr_is_opt_in(self) -> None:
         request = IngestRequest(

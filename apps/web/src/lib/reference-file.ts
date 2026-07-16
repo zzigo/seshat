@@ -12,6 +12,8 @@ const mimeExtensions: Record<string, string> = {
   'text/plain': 'txt',
   'text/markdown': 'md',
   'application/vnd.oasis.opendocument.text': 'odt',
+  'application/x-webarchive': 'webarchive',
+  'application/webarchive': 'webarchive',
 };
 
 export const referenceFileType = (reference: FileReference): string => {
