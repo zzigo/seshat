@@ -61,6 +61,17 @@ export const safeWasabiRelativePath = (value: unknown): string | null => {
   return normalized;
 };
 
+/**
+ * Object keys uploaded from macOS commonly contain decomposed Unicode (NFD),
+ * while browser and PostgreSQL paths are normally composed (NFC). S3 compares
+ * prefixes byte-for-byte, so both spellings must be queried even though they
+ * render identically.
+ */
+export const wasabiUnicodePathForms = (value: unknown): string[] => {
+  const canonical = normalizeWasabiRoot(value);
+  return [...new Set([canonical, canonical.normalize('NFD')])];
+};
+
 export const wasabiKeyWithinRoot = (key: unknown, root: string): boolean => {
   const normalized = normalizeWasabiRoot(key);
   return validWasabiRoot(normalized)

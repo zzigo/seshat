@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { extractBibAttachmentPath, mapBibAttachment, storageRootFor } from '../src/lib/bibliography-paths';
+import { wasabiUnicodePathForms } from '../src/lib/wasabi-settings';
 
 test('maps the privileged Zotero libros root without showing libros', () => {
   const mapped = mapBibAttachment(
@@ -33,4 +34,10 @@ test('resolves Zotero relative paths below a user-configured Wasabi library root
   assert.equal(mapped?.relativePath, 'history/Plato_Republic.pdf');
   assert.equal(mapped?.objectKey, 'zzttuntref/migrated-zotero/history/Plato_Republic.pdf');
   assert.equal(mapped?.storageRoot, 'zzttuntref/migrated-zotero');
+});
+
+test('queries both composed and macOS-decomposed Wasabi paths', () => {
+  const forms = wasabiUnicodePathForms('zzttuntref/libros/acústica');
+  assert.deepEqual(forms, ['zzttuntref/libros/acústica', 'zzttuntref/libros/acústica']);
+  assert.equal(forms[0].normalize('NFC'), forms[1].normalize('NFC'));
 });

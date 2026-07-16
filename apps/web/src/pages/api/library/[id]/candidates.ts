@@ -4,7 +4,7 @@ import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { mapBibAttachment } from '../../../../lib/bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
-import { getWasabiLibraryRoot, safeWasabiRelativePath, wasabiKeyWithinRoot } from '../../../../lib/wasabi-settings';
+import { getWasabiLibraryRoot, safeWasabiRelativePath, wasabiKeyWithinRoot, wasabiUnicodePathForms } from '../../../../lib/wasabi-settings';
 
 const supported = /\.(pdf|epub|docx|txt)$/i;
 const mimeType = (filename: string): string => filename.toLowerCase().endsWith('.pdf') ? 'application/pdf'
@@ -47,23 +47,28 @@ const logicalFolderFor = async (value: NonNullable<Awaited<ReturnType<typeof con
 const browse = async (root: string, rawPath: unknown, query: string) => {
   const relativePath = safeWasabiRelativePath(rawPath);
   if (relativePath === null) return Response.json({ error:'invalid_wasabi_path' }, { status:400 });
-  const prefix = relativePath ? `${root}/${relativePath}/` : `${root}/`;
-  const result = await getWasabiClient().send(new ListObjectsV2Command({
+  const prefixes = wasabiUnicodePathForms(relativePath ? `${root}/${relativePath}` : root).map((value) => `${value}/`);
+  const results = await Promise.all(prefixes.map((prefix) => getWasabiClient().send(new ListObjectsV2Command({
     Bucket:getWasabiBucket(), Prefix:prefix, Delimiter:'/', MaxKeys:1000,
-  }));
+  }))));
   const needle = normalized(query);
-  const directories = (result.CommonPrefixes || []).flatMap((entry) => {
+  const seenDirectories = new Set<string>();
+  const directories = results.flatMap((result) => result.CommonPrefixes || []).flatMap((entry) => {
     const key = String(entry.Prefix || '').replace(/\/+$/,'');
-    const path = key.slice(root.length + 1); const name = path.split('/').at(-1) || '';
-    if (!name || (needle && !normalized(name).includes(needle))) return [];
+    const path = key.slice(root.length + 1); const name = path.split('/').at(-1) || ''; const identity = path.normalize('NFC');
+    if (!name || seenDirectories.has(identity) || (needle && !normalized(name).includes(needle))) return [];
+    seenDirectories.add(identity);
     return [{ name,path }];
   });
-  const files = (result.Contents || []).flatMap((object) => {
+  const seenFiles = new Set<string>();
+  const files = results.flatMap((result) => result.Contents || []).flatMap((object) => {
     const key = String(object.Key || ''); const filename = key.split('/').at(-1) || '';
-    if (!filename || !supported.test(filename) || key.includes('/.seshat/') || (needle && !normalized(filename).includes(needle))) return [];
+    const identity = key.normalize('NFC');
+    if (!filename || seenFiles.has(identity) || !supported.test(filename) || key.includes('/.seshat/') || (needle && !normalized(filename).includes(needle))) return [];
+    seenFiles.add(identity);
     return [{ key,filename,path:key.slice(root.length + 1),sizeBytes:Number(object.Size || 0),lastModified:object.LastModified?.toISOString(),score:0 }];
   });
-  return Response.json({ mode:'browse', path:relativePath, directories, files, truncated:Boolean(result.IsTruncated), root });
+  return Response.json({ mode:'browse', path:relativePath, directories, files, truncated:results.some((result) => Boolean(result.IsTruncated)), root });
 };
 
 export const GET: APIRoute = async ({ locals, params, url }) => {
@@ -79,18 +84,22 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
     return browse(root, requested, url.searchParams.get('q') || '');
   }
   const relativeDirectory = safeWasabiRelativePath(logicalFolder) ?? '';
-  const expectedDirectory = relativeDirectory ? `${root}/${relativeDirectory}/` : `${root}/`;
+  const expectedDirectories = wasabiUnicodePathForms(relativeDirectory ? `${root}/${relativeDirectory}` : root).map((value) => `${value}/`);
   const storage = getWasabiClient(); const bucket = getWasabiBucket(); const objects: Array<{ Key?:string; Size?:number; LastModified?:Date }> = [];
   if (mapped) {
-    try {
-      const exact = await storage.send(new HeadObjectCommand({ Bucket:bucket, Key:mapped.objectKey }));
-      objects.push({ Key:mapped.objectKey, Size:Number(exact.ContentLength || 0), LastModified:exact.LastModified });
-    } catch { /* the mapped Zotero path is a hint, not an existing object guarantee */ }
+    for (const objectKey of wasabiUnicodePathForms(mapped.objectKey)) {
+      try {
+        const exact = await storage.send(new HeadObjectCommand({ Bucket:bucket, Key:objectKey }));
+        objects.push({ Key:objectKey, Size:Number(exact.ContentLength || 0), LastModified:exact.LastModified }); break;
+      } catch { /* the mapped Zotero path is a hint, not an existing object guarantee */ }
+    }
   }
-  let token: string | undefined;
-  for (let page = 0; page < 20; page += 1) {
-    const result = await storage.send(new ListObjectsV2Command({ Bucket:bucket, Prefix:expectedDirectory, ContinuationToken:token, MaxKeys:1000 }));
-    objects.push(...(result.Contents || [])); token = result.NextContinuationToken; if (!token) break;
+  for (const expectedDirectory of expectedDirectories) {
+    let token: string | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const result = await storage.send(new ListObjectsV2Command({ Bucket:bucket, Prefix:expectedDirectory, ContinuationToken:token, MaxKeys:1000 }));
+      objects.push(...(result.Contents || [])); token = result.NextContinuationToken; if (!token) break;
+    }
   }
   const titleTokens = tokens(value.reference.title);
   const creatorTokens = tokens((value.reference.contributors || []).map((person:any) => person.family || person.literal || '').join(' '));
@@ -108,7 +117,7 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
     score += Math.round(titleCoverage * 60 + creatorCoverage * 20);
     if (!exact && titleCoverage < .28 && !(titleHits >= 1 && creatorHits >= 1)) return [];
     if (year && name.includes(year)) score += 12;
-    if (mapped && key.startsWith(expectedDirectory)) score += 8;
+    if (mapped && expectedDirectories.some((directory) => key.startsWith(directory))) score += 8;
     if (!score) return [];
     return [{ key, filename, path:key.slice(root.length + 1), sizeBytes:Number(object.Size || 0), lastModified:object.LastModified?.toISOString(), score }];
   }).sort((a,b) => b.score - a.score || a.filename.localeCompare(b.filename)).slice(0,100);
