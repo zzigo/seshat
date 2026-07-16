@@ -11,7 +11,7 @@ for package in ./*.deb; do
   dpkg-deb -x "$package" "$root"
 done
 library="$root/usr/lib/x86_64-linux-gnu"
-if ldd "$root/usr/bin/ddjvu" | grep -q 'not found'; then
+if LD_LIBRARY_PATH="$library${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$root/usr/bin/ddjvu" | grep -q 'not found'; then
   printf 'DjVuLibre has unresolved shared libraries.\n' >&2
   exit 1
 fi
