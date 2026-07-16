@@ -6,7 +6,7 @@ import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 import { chooseConfidentWasabiMatch, scoreWasabiMatch, type WasabiMatchObject } from '../../../../lib/wasabi-candidate-match';
 import { getWasabiLibraryRoot, wasabiPathIdentity, wasabiUnicodePathForms } from '../../../../lib/wasabi-settings';
 
-const supported=/\.(pdf|epub|docx|txt|webarchive)$/i;const MAX_OBJECTS=100_000;
+const supported=/\.(pdf|epub|docx|txt|webarchive|djvu|djv)$/i;const MAX_OBJECTS=100_000;
 const cleanSegment=(value:unknown):string=>String(value||'').normalize('NFC').replace(/[\u0000-\u001f\u007f/\\]/g,'').trim();
 
 const resolveWasabiPrefixes=async(storage:ReturnType<typeof getWasabiClient>,bucket:string,root:string,folder:string):Promise<string[]>=>{

@@ -5,6 +5,7 @@ import plistlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from seshat_ingest.pipeline import IngestRequest, ingest_document
 
@@ -89,7 +90,7 @@ class IngestPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.zip"
             source.write_bytes(b"not supported yet")
-            with self.assertRaisesRegex(ValueError, "PDF, EPUB, DOCX, TXT, and WebArchive"):
+            with self.assertRaisesRegex(ValueError, "PDF, EPUB, DOCX, TXT, WebArchive, and DjVu"):
                 ingest_document(IngestRequest(
                     reference_id="ref:1",
                     original_artifact_id="artifact:1",
@@ -141,6 +142,30 @@ class IngestPipelineTest(unittest.TestCase):
             self.assertNotIn("<script", reader)
             self.assertIn("first substantial paragraph", markdown)
             self.assertIn("Source: https://example.org/research/signal", markdown)
+
+    def test_djvu_creates_pdf_reader_and_page_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old-score.djvu"
+            source.write_bytes(b"AT&TFORM fake DjVu")
+
+            def fake_extract(_source: Path, reader_pdf: Path) -> dict:
+                reader_pdf.write_bytes(b"%PDF-1.7 reader")
+                return {
+                    "metadata": {"title": "old-score", "pageCount": 2, "nativeText": True, "ocrApplied": False},
+                    "markdown": "# old-score\n\n## Page 1\n\nFirst page.\n\n## Page 2\n\nSecond page.\n",
+                    "chunks": [{"id": 0, "text": "First page.", "metadata": {"page": 1}}],
+                    "structure": {"schemaVersion": 2, "sections": [{"id": "page-1", "level": 2, "title": "Page 1", "page": 1}], "blocks": []},
+                }
+
+            with patch("seshat_ingest.pipeline.extract_djvu", side_effect=fake_extract):
+                result = ingest_document(IngestRequest("ref:djvu", "artifact:djvu", source, root / "out"))
+            self.assertEqual(result.parser, "djvulibre")
+            self.assertEqual(result.artifacts[-1].kind, "reader-pdf")
+            self.assertEqual(result.artifacts[-1].media_type, "application/pdf")
+            self.assertEqual((root / "out" / "document.pdf").read_bytes(), b"%PDF-1.7 reader")
+            structure = json.loads((root / "out" / "structure.json").read_text())
+            self.assertEqual(structure["sections"][0]["page"], 1)
 
     def test_ocr_is_opt_in(self) -> None:
         request = IngestRequest(

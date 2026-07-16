@@ -129,7 +129,7 @@ The username opens `/dashboard`, which aggregates items, exact extracted word co
 
 ## Upload and ingestion data flow
 
-1. The authenticated user drops PDF, EPUB, DOCX, TXT or BibTeX on `/workspace`.
+1. The authenticated user drops PDF, EPUB, DOCX, TXT, WebArchive, DjVu or BibTeX on `/workspace`.
 2. Document files are uploaded directly to `POST /api/intake/documents`; the browser stays in the workspace and reports progress in the bottom HUD.
 3. The API validates type/size, computes SHA-256, deduplicates per owner and writes the original below the user's virtual Wasabi root. Configured library-root identities map to `zzttuntref/libros/`; ordinary users map to `zzttuntref/lseshat/{user}/`. These physical prefixes are not rendered in the sidebar.
 4. One reference, one original artifact, library membership and four gated job rows are committed in PostgreSQL.
@@ -148,6 +148,8 @@ The username opens `/dashboard`, which aggregates items, exact extracted word co
 | `document.md` | `markdown` | Portable text representation used by UI and identification |
 | `chunks.jsonl` | `chunks` | Hierarchical chunks with metadata/evidence |
 | `structure.json` | `structure` | Compact heading tree with `id`, `level`, `title`, `parentId`, `sourceLine` |
+| `document.html` | `html` | Sanitized Reader Mode representation for WebArchive sources |
+| `document.pdf` | `reader-pdf` | PDF reader representation for DjVu sources; the original remains intact |
 | `manifest.json` | transport-only | Source hash, parser provenance and derivative inventory |
 
 Plain text follows a lightweight path without Docling. OCR is opt-in in the Python CLI; the production worker does not yet enable OCR or implement a scanned-document retry policy.

@@ -14,6 +14,8 @@ const mimeExtensions: Record<string, string> = {
   'application/vnd.oasis.opendocument.text': 'odt',
   'application/x-webarchive': 'webarchive',
   'application/webarchive': 'webarchive',
+  'image/vnd.djvu': 'djvu',
+  'image/x-djvu': 'djvu',
 };
 
 export const referenceFileType = (reference: FileReference): string => {

@@ -8,13 +8,15 @@ import { getWasabiBucket, getWasabiClient } from '../../../lib/wasabi';
 import { assertManagedStorageQuota } from '../../../lib/user-accounts';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
-const allowed = new Set(['pdf', 'docx', 'txt', 'epub', 'webarchive']);
+const allowed = new Set(['pdf', 'docx', 'txt', 'epub', 'webarchive', 'djvu', 'djv']);
 const mediaTypes: Record<string, string> = {
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   txt: 'text/plain; charset=utf-8',
   epub: 'application/epub+zip',
   webarchive: 'application/x-webarchive',
+  djvu: 'image/vnd.djvu',
+  djv: 'image/vnd.djvu',
 };
 
 const extension = (name: string) => name.toLowerCase().split('.').pop() || '';
@@ -38,7 +40,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const file = form?.get('file');
   if (!(file instanceof File)) return Response.json({ error: 'No document received.' }, { status: 400 });
   const ext = extension(file.name);
-  if (!allowed.has(ext)) return Response.json({ error: 'Use PDF, DOCX, TXT, EPUB or WEBARCHIVE.' }, { status: 415 });
+  if (!allowed.has(ext)) return Response.json({ error: 'Use PDF, DOCX, TXT, EPUB, WEBARCHIVE or DJVU.' }, { status: 415 });
   if (!file.size || file.size > MAX_UPLOAD_BYTES) {
     return Response.json({ error: 'The document must be between 1 byte and 256 MB.' }, { status: 413 });
   }

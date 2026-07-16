@@ -48,6 +48,7 @@ const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'ow
   && !reference.libraryIds.some((id) => !isInboxLibraryId(id));
 const treeReferenceKind = (reference: ReferenceRow): 'pdf' | 'ebook' | 'text' | 'no-text' => {
   if (reference.format === 'pdf') return 'pdf';
+  if (['djvu', 'djv'].includes(reference.format)) return 'pdf';
   if (['epub', 'mobi', 'azw', 'azw3'].includes(reference.format)) return 'ebook';
   if (reference.format === 'webarchive') return 'text';
   if (reference.hasText || ['txt', 'md', 'rtf'].includes(reference.format)) return 'text';
@@ -296,7 +297,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const active = activities.filter((activity) => activity.state === 'working');
     const latest = activities[activities.length - 1];
     consoleRoot.dataset.state = active.length ? 'working' : latest?.state || 'idle';
-    consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE or BIB anywhere';
+    consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE, DJVU or BIB anywhere';
     consoleCount.textContent = `${active.length} ${active.length === 1 ? 'job' : 'jobs'}`;
     consoleLog.replaceChildren();
     [...activities].reverse().slice(0, 30).forEach((activity) => {
@@ -411,7 +412,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     void copyText(format === 'apa' ? rows.map(toApa).join('\n') : toBetterBibtex(rows), format === 'apa' ? 'APA citation' : 'Better BibTeX');
   };
   const pickAssociatedFile = (referenceId: string) => {
-    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.docx,.txt,.epub,.webarchive';
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.docx,.txt,.epub,.webarchive,.djvu,.djv';
     input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void replaceAssociatedFile(referenceId, file); });
     input.click();
   };
@@ -1213,7 +1214,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
     docControls.appendChild(zoom11Btn);
 
-    if (reference.format === 'pdf') {
+    if (reference.format === 'pdf' || ['djvu', 'djv'].includes(reference.format)) {
       // Pagination Group
       const prevBtn = document.createElement('button');
       prevBtn.type = 'button';
@@ -1367,11 +1368,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     window.dispatchEvent(new CustomEvent('seshat:active-reference-changed', { detail: { referenceId } }));
     element.appendChild(podToolbar(reference, element, panelId));
     const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
-    if (reference.format === 'pdf') {
+    if (reference.format === 'pdf' || ['djvu', 'djv'].includes(reference.format)) {
       body.classList.add('pod-pdf-body'); const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
-      void mountPdfViewer(body, reference.id, reference.title, setSaveState).then((dispose) => {
+      const sourceUrl = reference.format === 'pdf' ? undefined : `/api/library/${encodeURIComponent(reference.id)}/artifact/reader-pdf`;
+      void mountPdfViewer(body, reference.id, reference.title, setSaveState, sourceUrl).then((dispose) => {
         if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
-      }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'PDF viewer unavailable'; });
+      }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'Document viewer unavailable'; });
     } else if (reference.format === 'epub') {
       const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
       void mountEpubReader(body, reference.id, reference.title, setSaveState).then((dispose) => {

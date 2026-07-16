@@ -23,6 +23,7 @@ const mediaType = (filename: string): string => {
   if (/\.docx$/i.test(filename)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (/\.epub$/i.test(filename)) return 'application/epub+zip';
   if (/\.webarchive$/i.test(filename)) return 'application/x-webarchive';
+  if (/\.djvu?$/i.test(filename)) return 'image/vnd.djvu';
   return 'text/plain; charset=utf-8';
 };
 

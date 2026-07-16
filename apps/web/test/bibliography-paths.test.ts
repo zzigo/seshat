@@ -47,3 +47,9 @@ test('maps Safari WebArchive attachments as preserved documents', () => {
   assert.equal(mapped?.filename, 'Signal and Form.webarchive');
   assert.equal(mapped?.relativePath, 'web/Signal and Form.webarchive');
 });
+
+test('maps DjVu attachments as preserved documents', () => {
+  const mapped = mapBibAttachment('/Users/zztt/My Drive/libros/scores/Old Treatise.djvu', { email:'lucianoazzigotti@gmail.com' });
+  assert.equal(mapped?.filename, 'Old Treatise.djvu');
+  assert.equal(mapped?.relativePath, 'scores/Old Treatise.djvu');
+});

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
+from .djvu import extract_djvu
 from .webarchive import extract_webarchive
 
 
@@ -70,13 +71,13 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write(path: Path, content: bytes) -> GeneratedArtifact:
-    path.write_bytes(content)
+def _artifact(path: Path) -> GeneratedArtifact:
     media_type = {
         ".json": "application/json",
         ".jsonl": "application/x-ndjson",
         ".md": "text/markdown",
         ".html": "text/html; charset=utf-8",
+        ".pdf": "application/pdf",
     }.get(path.suffix, "application/octet-stream")
     return GeneratedArtifact(
         kind={
@@ -85,12 +86,18 @@ def _write(path: Path, content: bytes) -> GeneratedArtifact:
             "chunks.jsonl": "chunks",
             "structure.json": "structure",
             "document.html": "html",
+            "document.pdf": "reader-pdf",
         }.get(path.name, "derived"),
         filename=path.name,
         media_type=media_type,
         sha256=_sha256(path),
         size_bytes=path.stat().st_size,
     )
+
+
+def _write(path: Path, content: bytes) -> GeneratedArtifact:
+    path.write_bytes(content)
+    return _artifact(path)
 
 
 def _markdown_structure(markdown: str) -> dict[str, Any]:
@@ -280,13 +287,35 @@ def ingest_document(
     source = request.source_path.resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Document not found: {source}")
-    if source.suffix.lower() not in {".pdf", ".epub", ".docx", ".txt", ".webarchive"}:
-        raise ValueError("Seshat ingestion accepts PDF, EPUB, DOCX, TXT, and WebArchive documents.")
+    if source.suffix.lower() not in {".pdf", ".epub", ".docx", ".txt", ".webarchive", ".djvu", ".djv"}:
+        raise ValueError("Seshat ingestion accepts PDF, EPUB, DOCX, TXT, WebArchive, and DjVu documents.")
 
     output_dir = request.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     html_bytes: bytes | None = None
-    if source.suffix.lower() == ".webarchive":
+    reader_pdf: Path | None = None
+    custom_structure: dict[str, Any] | None = None
+    effective_ocr = request.ocr
+    if source.suffix.lower() in {".djvu", ".djv"}:
+        reader_pdf = output_dir / "document.pdf"
+        extracted = extract_djvu(source, reader_pdf)
+        document_dict = {"schema": "seshat-djvu-reader", **extracted["metadata"]}
+        json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2).encode("utf-8")
+        markdown_bytes = extracted["markdown"].encode("utf-8")
+        chunk_rows = extracted["chunks"]
+        custom_structure = extracted["structure"]
+        effective_ocr = bool(extracted["metadata"].get("ocrApplied"))
+        if not chunk_rows:
+            conversion = (converter or _default_converter(ocr=True)).convert(reader_pdf)
+            document = conversion.document
+            converted_dict = document.export_to_dict()
+            document_dict["ocrDocument"] = converted_dict
+            markdown_bytes = document.export_to_markdown().encode("utf-8")
+            chunk_rows = list((chunker or _default_chunks)(document))
+            custom_structure = _docling_structure(converted_dict, markdown_bytes.decode("utf-8"))
+            effective_ocr = True
+            json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2).encode("utf-8")
+    elif source.suffix.lower() == ".webarchive":
         extracted = extract_webarchive(source)
         document_dict = {"schema": "seshat-webarchive-reader", **extracted["metadata"]}
         json_bytes = json.dumps(document_dict, ensure_ascii=False, indent=2).encode("utf-8")
@@ -312,6 +341,7 @@ def ingest_document(
         for row in chunk_rows
     )
     structure_bytes = json.dumps(
+        custom_structure if custom_structure is not None else
         _docling_structure(document_dict, markdown_bytes.decode("utf-8")) if source.suffix.lower() not in {".txt", ".webarchive"}
         else _markdown_structure(markdown_bytes.decode("utf-8")),
         ensure_ascii=False,
@@ -324,6 +354,7 @@ def ingest_document(
         _write(output_dir / "chunks.jsonl", chunk_bytes),
         _write(output_dir / "structure.json", structure_bytes),
         *(() if html_bytes is None else (_write(output_dir / "document.html", html_bytes),)),
+        *(() if reader_pdf is None else (_artifact(reader_pdf),)),
     )
     timestamp = (now or (lambda: datetime.now(UTC).isoformat()))()
     manifest = IngestManifest(
@@ -332,9 +363,9 @@ def ingest_document(
         original_artifact_id=request.original_artifact_id,
         source_sha256=_sha256(source),
         source_size_bytes=source.stat().st_size,
-        parser="webarchive-reader" if source.suffix.lower() == ".webarchive" else "plain-text" if source.suffix.lower() == ".txt" else "docling",
+        parser="djvulibre" if source.suffix.lower() in {".djvu", ".djv"} else "webarchive-reader" if source.suffix.lower() == ".webarchive" else "plain-text" if source.suffix.lower() == ".txt" else "docling",
         parser_version=request.parser_version,
-        ocr=request.ocr,
+        ocr=effective_ocr,
         created_at=timestamp,
         artifacts=artifacts,
     )

@@ -14,7 +14,6 @@ const {
   description = 'Seshat cultivates bibliographies that understand their documents.',
 } = Astro.props;
 const session = Astro.locals.session as any;
-const account = Astro.locals.account as any;
 const accountAdmin = isSessionAccountAdmin(session);
 ---
 
@@ -52,7 +51,7 @@ const accountAdmin = isSessionAccountAdmin(session);
           <>
             <a href="/dashboard#search" class="identity-action">search</a>
             <a href="/dashboard" class="identity-name">{session.user.name || session.user.email}</a>
-            {account?.status === 'approved' && accountAdmin && <a href="/admin" class="identity-action">admin</a>}
+            {accountAdmin && <a href="/admin" class="identity-action">admin</a>}
             <SignOut><span class="identity-action">sign out</span></SignOut>
           </>
         ) : (

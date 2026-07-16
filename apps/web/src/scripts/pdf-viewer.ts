@@ -26,6 +26,7 @@ export async function mountPdfViewer(
   referenceId: string,
   title: string,
   report: (message: string, tone?: 'ready' | 'saving' | 'error') => void,
+  sourceUrl = `/api/library/${encodeURIComponent(referenceId)}/original`,
 ): Promise<() => void> {
   const shell = document.createElement('div'); shell.className = 'seshat-pdf-shell';
   const viewer = document.createElement('div'); viewer.className = 'seshat-pdf-viewer';
@@ -72,7 +73,7 @@ export async function mountPdfViewer(
   const parent = element.parentElement || element;
   const dialogs = new Set<HTMLDialogElement>();
   const renderTasks = new Set<{ cancel: () => void }>();
-  const loadingTask = getDocument({ url: `/api/library/${referenceId}/original`, withCredentials: true });
+  const loadingTask = getDocument({ url: sourceUrl, withCredentials: true });
   const pdf = await loadingTask.promise;
   if (disposed) { await pdf.destroy(); return () => undefined; }
   const [annotationResponse,readingStateResponse] = await Promise.all([

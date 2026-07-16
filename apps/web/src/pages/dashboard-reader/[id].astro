@@ -19,6 +19,7 @@ const data = {
   hasKokoroNarration: reference.artifacts.some((artifact) => artifact.kind === 'kokoro-audio'),
   hasChirpNarration: reference.artifacts.some((artifact) => artifact.kind === 'chirp-audio'),
 };
+const pdfLike = ['pdf', 'djvu', 'djv'].includes(data.format);
 const serialized = JSON.stringify(data).replace(/</g, '\\u003c');
 const propertyYear = Number((reference.issued as Record<string, unknown> | undefined)?.year) || 0;
 const propertyPersons = contributorSummary(reference.contributors as Parameters<typeof contributorSummary>[0]);
@@ -37,7 +38,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
         <strong title={plainInlineTitle(reference.title)} set:html={safeInlineTitleHtml(reference.title)}></strong>
         <div class="dashboard-reader-document-controls">
           <button type="button" data-reader-zoom title="Fit current page or spread">1:1</button>
-          {data.format === 'pdf' && <>
+          {pdfLike && <>
             <button type="button" data-reader-prev aria-label="Previous page">‹</button>
             <span data-reader-page>1 / —</span>
             <button type="button" data-reader-next aria-label="Next page">›</button>
@@ -93,6 +94,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       let documentThemeDark=theme==='dark';
       type ReaderData={id:string;title:string;format:string;language:string;chirpEnabled:boolean;hasKokoroNarration:boolean;hasChirpNarration:boolean};
       const data:ReaderData=JSON.parse(document.getElementById('dashboard-reader-data')?.textContent||'{}');
+      const pdfLike=['pdf','djvu','djv'].includes(data.format);
       const root=document.querySelector<HTMLElement>('[data-dashboard-reader]')!;
       const surface=root.querySelector<HTMLElement>('[data-reader-surface]')!;
       const status=root.querySelector<HTMLElement>('[data-reader-status]')!;
@@ -124,7 +126,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       window.addEventListener('seshat:request-edit-annotation',((event:CustomEvent<{referenceId?:string;annotationId?:string}>)=>{if(event.detail?.referenceId!==data.id||!event.detail.annotationId)return;void openAnnotations(event.detail.annotationId);}) as EventListener);
       const read=root.querySelector<HTMLButtonElement>('[data-reader-read]')!;
       const stop=root.querySelector<HTMLButtonElement>('[data-reader-stop]')!;
-      let controlsState:ReaderControlsState={format:data.format==='pdf'?'pdf':data.format==='epub'?'epub':'text',chapter:data.format==='epub'?'cap':'',pageLabel:data.format==='pdf'?'1 / —':'',fontScale:1,readLabel:'Read',readState:'idle',hasRendered:data.hasKokoroNarration||data.hasChirpNarration};
+      let controlsState:ReaderControlsState={format:pdfLike?'pdf':data.format==='epub'?'epub':'text',chapter:data.format==='epub'?'cap':'',pageLabel:pdfLike?'1 / —':'',fontScale:1,readLabel:'Read',readState:'idle',hasRendered:data.hasKokoroNarration||data.hasChirpNarration};
       const postState=(partial:Partial<ReaderControlsState>={})=>{controlsState={...controlsState,...partial};window.parent.postMessage({type:READER_STATE_MESSAGE,state:controlsState},window.location.origin);};
       root.addEventListener('seshat:reader-controls',((event:CustomEvent<ReaderControlsState>)=>postState(event.detail||{})) as EventListener);
       readAloud.attach({referenceId:data.id,language:data.language||navigator.language,container:root,button:read,stopButton:stop,report,chirpEnabled:data.chirpEnabled});
@@ -147,8 +149,8 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
           else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));
           return;
         }
-        if(command==='previous-page'){if(data.format==='pdf')movePdf(-1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
-        if(command==='next-page'){if(data.format==='pdf')movePdf(1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
+        if(command==='previous-page'){if(pdfLike)movePdf(-1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
+        if(command==='next-page'){if(pdfLike)movePdf(1);else root.dispatchEvent(new CustomEvent<ReaderCommandDetail>('seshat:reader-command',{detail:{command}}));return;}
         if(command==='zoom-reset'){root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));return;}
         if(command==='toggle-book'){book?.click();return;}
         if(command==='toggle-grid'){grid?.click();return;}
@@ -163,7 +165,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       new MutationObserver(()=>postState({readLabel:read.textContent||'Read',readState:read.dataset.readerState||'idle'})).observe(read,{attributes:true,childList:true,subtree:true,attributeFilter:['data-reader-state']});
       const mount=async()=>{
         void fetch(`/api/library/${encodeURIComponent(data.id)}/reading-state`,{method:'PATCH'});
-        if(data.format==='pdf')await mountPdfViewer(surface,data.id,data.title,report);
+        if(pdfLike)await mountPdfViewer(surface,data.id,data.title,report,data.format==='pdf'?undefined:`/api/library/${encodeURIComponent(data.id)}/artifact/reader-pdf`);
         else if(data.format==='epub')await mountEpubReader(surface,data.id,data.title,report);
         else if(data.format==='webarchive')await mountHtmlReader(surface,data.id,data.title,report);
         else{surface.classList.add('pod-reading-surface');const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/markdown`);if(!response.ok)throw new Error('Extracted text is not available.');const pre=document.createElement('pre');pre.textContent=await response.text();surface.appendChild(pre);}

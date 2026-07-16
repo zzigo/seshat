@@ -94,7 +94,10 @@ const zoteroBeaconState = !zoteroStatus.connected
   <section class="account-dashboard">
     <header class="dashboard-head">
       <div><div class="eyebrow">Personal archive</div><h1>{session.user.name || identity.email}</h1><p>{identity.email}</p></div>
-      <a class="button quiet" href="/workspace">Open workspace →</a>
+      <nav class="dashboard-head-actions">
+        {admin && <a class="button quiet" href="/admin">Admin users</a>}
+        <a class="button quiet" href="/workspace">Open workspace →</a>
+      </nav>
     </header>
 
     <DashboardSearch />
@@ -565,6 +568,7 @@ const zoteroBeaconState = !zoteroStatus.connected
 </Shell>
 
 <style>
+  .dashboard-head-actions{display:flex;align-items:center;gap:14px}@media(max-width:760px){.dashboard-head-actions{width:100%;flex-wrap:wrap}}
   .theme-panel{margin:22px 0}.theme-groups{display:grid;grid-template-columns:1fr 1fr}.theme-groups>section+section{border-left:1px solid var(--ink)}.theme-groups h3{margin:0;padding:10px 16px;border-bottom:1px solid var(--line);color:var(--muted);font:9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}.theme-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.theme-list button{min-height:36px;display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:8px;padding:4px 8px;border:0;border-bottom:1px solid var(--line);color:var(--ink);background:transparent;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:left;cursor:pointer}.theme-list button:hover{background:color-mix(in srgb,var(--green) 8%,transparent)}.theme-list button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.theme-list button>i{position:relative;width:25px;height:18px;border:1px solid var(--theme-ink);background:var(--theme-paper)}.theme-list button>i b{position:absolute;right:3px;bottom:3px;width:7px;height:7px;background:var(--theme-accent)}.theme-list button.is-selected{color:var(--green);background:color-mix(in srgb,var(--green) 11%,transparent)}.theme-list button.is-selected>i{box-shadow:0 0 0 2px var(--gold)}@media(max-width:760px){.theme-groups{grid-template-columns:1fr}.theme-groups>section+section{border-left:0;border-top:1px solid var(--ink)}}
 </style>
 
