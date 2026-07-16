@@ -3448,6 +3448,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         footer.append(cancel,importButton); body.appendChild(footer); setSaveState(`${result.candidates.length} unfiled Wasabi item${result.candidates.length === 1 ? '' : 's'} found`);
       } catch (error) { status.textContent=error instanceof Error ? error.message : 'Folder scan failed'; setSaveState(status.textContent,'error'); }
     };
+    const bulkLinkLibraryFolder = async (library:LibraryNode) => {
+      const dialog=dialogShell(`Bulk link · ${library.name}`);dialog.classList.add('folder-scan-dialog');const body=document.createElement('div');body.className='folder-scan bulk-link-folder';const status=document.createElement('p');status.textContent='Indexing this Wasabi subtree and comparing every nested item inside its own relative folder…';body.appendChild(status);dialog.appendChild(body);setSaveState('previewing recursive Wasabi links…','saving');
+      try{
+        const response=await fetch(`/api/libraries/${encodeURIComponent(library.id)}/bulk-link`,{cache:'no-store'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Bulk-link preview failed.');
+        status.textContent=`${Number(result.matches?.length||0)} safe matches · ${Number(result.ambiguous?.length||0)} ambiguous · ${Number(result.unmatched?.length||0)} unmatched · ${Number(result.alreadyLinked||0)} already linked`;
+        const prefix=document.createElement('code');prefix.textContent=result.prefix;body.appendChild(prefix);
+        const facts=document.createElement('div');facts.className='bulk-link-facts';[['Recursive items',result.total],['Need a file',result.eligible],['Objects inspected',result.objectsInspected],['Safe links',result.matches?.length||0]].forEach(([label,value])=>{const item=document.createElement('span');const strong=document.createElement('strong');strong.textContent=String(value);const small=document.createElement('small');small.textContent=String(label);item.append(strong,small);facts.appendChild(item);});body.appendChild(facts);
+        if(result.truncated){const warning=document.createElement('p');warning.className='bulk-link-warning';warning.textContent='The subtree exceeded 100,000 supported objects. Refine the folder before linking.';body.appendChild(warning);}
+        const list=document.createElement('div');list.className='folder-scan-list';(result.matches||[]).slice(0,200).forEach((match:any)=>{const row=document.createElement('div');const copy=document.createElement('span');copy.textContent=match.title;copy.title=match.title;const file=document.createElement('small');file.textContent=`${match.candidate.filename} · ${match.candidate.score}`;file.title=match.candidate.path;row.append(copy,file);list.appendChild(row);});body.appendChild(list);
+        const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const linkButton=document.createElement('button');linkButton.type='button';linkButton.className='primary';linkButton.textContent=`Link ${result.matches?.length||0} existing objects`;linkButton.disabled=!result.matches?.length||Boolean(result.truncated);
+        linkButton.onclick=async()=>{linkButton.disabled=true;cancel.disabled=true;const queue=[...(result.matches||[])];let cursor=0,linked=0,failed=0;const worker=async()=>{while(cursor<queue.length){const index=cursor++;const match=queue[index];status.textContent=`Linking ${index+1} / ${queue.length} · ${match.title}`;try{await linkWasabiCandidate(match.referenceId,match.candidate,{deferRender:true,follow:false});linked+=1;}catch{failed+=1;}}};await Promise.all(Array.from({length:Math.min(4,queue.length)},()=>worker()));refreshTable();renderTree(search.value);status.textContent=`${linked} linked${failed?` · ${failed} failed`:''} · ambiguous and unmatched items were unchanged`;setSaveState(`${linked} Wasabi objects linked recursively${failed?` · ${failed} failed`:''}`,failed?'error':'ready');cancel.disabled=false;cancel.textContent='Close';linkButton.textContent='Complete';};
+        footer.append(cancel,linkButton);body.appendChild(footer);setSaveState(`${result.matches?.length||0} safe recursive Wasabi links ready to confirm`);
+      }catch(error){status.textContent=error instanceof Error?error.message:'Bulk-link preview failed.';setSaveState(status.textContent,'error');}
+    };
     const deleteLibrary = async (library: LibraryNode) => {
       const kind = library.parentId ? 'folder' : 'library';
       if (!await confirmAction(`Delete ${kind}`, `Delete “${library.name}” and its subfolders? References will remain in the catalog.`, `Delete ${kind}`)) return;
@@ -3587,7 +3601,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const items: Array<{ label: string; danger?: boolean; action: () => void | Promise<void> }> = [
           { label: 'Export as Better BibTeX (.bib)', action: () => exportLibrary(library) },
         ];
-        if (library.access !== 'viewer' && !isInboxLibraryId(library.id)) items.unshift({ label: 'Scan folder for unfiled items', action: () => scanLibraryFolder(library) });
+        if (library.access !== 'viewer' && !isInboxLibraryId(library.id)) items.unshift(
+          { label: 'Bulk link Wasabi files recursively…', action: () => bulkLinkLibraryFolder(library) },
+          { label: 'Scan folder for unfiled items', action: () => scanLibraryFolder(library) },
+        );
         if (library.access !== 'viewer') items.unshift({ label: 'New folder inside', action: () => createFolder(library) });
         if (library.access !== 'viewer' && !library.id.startsWith('inbox:')) items.push(
           { label: `Rename ${library.parentId ? 'folder' : 'library'}…`, action: () => renameLibrary(library) },
