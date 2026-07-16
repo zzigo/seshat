@@ -40,7 +40,7 @@ export const setSessionOwnerAlias = (session: any, ownerKey: string): void => {
 export const isSessionAccountAdmin = (session: any): boolean => {
   const identity = sessionIdentity(session);
   const allowedEmails = String(process.env.SESHAT_ADMIN_EMAILS || '').split(',').map(normalizedEmail).filter(Boolean);
-  const allowedGroups = String(process.env.SESHAT_ADMIN_GROUPS || 'authentik Admins,Seshat Admins').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
+  const allowedGroups = String(process.env.SESHAT_ADMIN_GROUPS || 'Seshat Admins').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
   const groups = Array.isArray(session?.user?.groups) ? session.user.groups.map((value: unknown) => String(value).toLowerCase()) : [];
   return allowedEmails.includes(identity.email) || groups.some((group: string) => allowedGroups.includes(group));
 };

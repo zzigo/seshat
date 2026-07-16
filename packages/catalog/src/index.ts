@@ -655,6 +655,52 @@ const schema = `
     UNIQUE (provider, subject)
   );
   CREATE INDEX IF NOT EXISTS catalog_identities_owner_idx ON catalog_identities (owner_key);
+  CREATE TABLE IF NOT EXISTS catalog_user_accounts (
+    owner_key text PRIMARY KEY,
+    primary_email text NOT NULL,
+    display_name text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','suspended')),
+    institution text NOT NULL DEFAULT 'none' CHECK (institution IN ('none','untref','nmh')),
+    institution_email text,
+    quota_requested boolean NOT NULL DEFAULT false,
+    quota_bytes bigint NOT NULL DEFAULT 0,
+    storage_provider text NOT NULL DEFAULT 'undecided' CHECK (storage_provider IN ('undecided','google-drive','managed-wasabi')),
+    storage_root_name text NOT NULL DEFAULT 'Seshat',
+    onboarding_locale text NOT NULL DEFAULT 'en' CHECK (onboarding_locale IN ('en','es')),
+    onboarding_step integer NOT NULL DEFAULT 0,
+    onboarding_completed_at timestamptz,
+    first_seen_at timestamptz NOT NULL DEFAULT now(),
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    last_login_at timestamptz,
+    approved_at timestamptz,
+    approved_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS catalog_user_accounts_email_idx ON catalog_user_accounts(lower(primary_email));
+  CREATE INDEX IF NOT EXISTS catalog_user_accounts_status_idx ON catalog_user_accounts(status,created_at DESC);
+  CREATE TABLE IF NOT EXISTS catalog_user_activity (
+    owner_key text NOT NULL REFERENCES catalog_user_accounts(owner_key) ON DELETE CASCADE,
+    activity_day date NOT NULL,
+    activity_hour smallint NOT NULL CHECK (activity_hour BETWEEN 0 AND 23),
+    request_count bigint NOT NULL DEFAULT 0,
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,activity_day,activity_hour)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_user_activity_day_idx ON catalog_user_activity(activity_day DESC);
+  CREATE TABLE IF NOT EXISTS catalog_storage_connections (
+    owner_key text NOT NULL REFERENCES catalog_user_accounts(owner_key) ON DELETE CASCADE,
+    provider text NOT NULL CHECK (provider IN ('google-drive','managed-wasabi')),
+    account_label text,
+    credential_ciphertext text,
+    root_id text,
+    root_name text NOT NULL DEFAULT 'Seshat',
+    status text NOT NULL DEFAULT 'disconnected' CHECK (status IN ('disconnected','connected','error')),
+    last_error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,provider)
+  );
   INSERT INTO catalog_libraries (id, owner_key, name, description)
     SELECT 'inbox:' || owner_key, owner_key, 'Inbox', 'Documents awaiting cultivation'
     FROM catalog_references

@@ -1,8 +1,10 @@
 import { defineMiddleware } from 'astro:middleware';
 import { getSession } from 'auth-astro/server';
 import { registerSessionIdentity } from './lib/catalog';
+import { registerSessionAccount } from './lib/user-accounts';
 
-const protectedPaths = ['/workspace', '/dashboard', '/intake', '/library', '/bibliography', '/api/account', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography', '/api/zotero'];
+const protectedPaths = ['/workspace', '/dashboard', '/search', '/admin', '/intake', '/library', '/bibliography', '/api/account', '/api/admin', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography', '/api/zotero', '/api/storage'];
+const onboardingPaths = ['/welcome', '/en/welcome', '/es/welcome', '/pending', '/api/account/onboarding', '/api/storage/google', '/api/zotero/connection'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   let session = null;
@@ -13,7 +15,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   context.locals.session = session;
-  if (session?.user?.email) await registerSessionIdentity(session).catch((error) => console.error('[seshat:identity]', error));
+  let account = null;
+  if (session?.user?.email) {
+    try {
+      const ownerKey = await registerSessionIdentity(session);
+      account = await registerSessionAccount(session, ownerKey);
+    } catch (error) { console.error('[seshat:identity]', error); }
+  }
+  context.locals.account = account;
 
   if (protectedPaths.some((path) => context.url.pathname.startsWith(path)) && !session?.user?.email) {
     if (context.url.pathname.startsWith('/api/')) {
@@ -21,6 +30,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
     const redirect = `${context.url.pathname}${context.url.search}`;
     return context.redirect(`/login?redirect=${encodeURIComponent(redirect)}`);
+  }
+
+  const protectedRequest = protectedPaths.some((path) => context.url.pathname.startsWith(path));
+  const onboardingRequest = onboardingPaths.some((path) => context.url.pathname.startsWith(path));
+  if (session?.user?.email && protectedRequest && !onboardingRequest && account?.status !== 'approved') {
+    if (context.url.pathname.startsWith('/api/')) {
+      return Response.json({ error: account?.status === 'suspended' ? 'account_suspended' : 'account_approval_required' }, { status: 403 });
+    }
+    return context.redirect(account?.status === 'suspended' ? '/pending?state=suspended' : `/${account?.locale || 'en'}/welcome`);
   }
 
   const response = await next();

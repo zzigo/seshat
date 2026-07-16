@@ -5,6 +5,7 @@ import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
 import { storageRootFor } from '../../../lib/bibliography-paths';
 import { getWasabiBucket, getWasabiClient } from '../../../lib/wasabi';
+import { assertManagedStorageQuota } from '../../../lib/user-accounts';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const allowed = new Set(['pdf', 'docx', 'txt', 'epub']);
@@ -45,6 +46,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const ownerKey = ownerKeyFor(email);
   const catalog = getCatalog();
+  try { await assertManagedStorageQuota(ownerKey,file.size); }
+  catch { return Response.json({error:'Your managed storage quota would be exceeded.'},{status:413}); }
   const duplicate = await catalog.findBySha256(ownerKey, sha256);
   if (duplicate) {
     await catalog.addToLibrary(ownerKey, duplicate.id, String(form?.get('libraryId') || '') || undefined);

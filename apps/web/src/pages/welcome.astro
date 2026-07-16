@@ -1,0 +1,3 @@
+---
+return Astro.redirect(`/${String(Astro.request.headers.get('accept-language')||'').toLowerCase().startsWith('es')?'es':'en'}/welcome`);
+---

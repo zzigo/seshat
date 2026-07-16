@@ -1,0 +1,69 @@
+---
+import Shell from '../components/Shell.astro';
+import { isSessionAccountAdmin, sessionIdentity } from '../lib/catalog';
+import { listAdminUsers } from '../lib/user-accounts';
+
+const session = (Astro.locals as any).session;
+if (!isSessionAccountAdmin(session)) return Astro.redirect('/dashboard');
+const users = await listAdminUsers();
+const identity = sessionIdentity(session);
+const number = (value:number) => new Intl.NumberFormat('en').format(value);
+const bytes = (value:number) => value < 1024 ? `${value} B` : value < 1024**2 ? `${(value/1024).toFixed(1)} KB` : value < 1024**3 ? `${(value/1024**2).toFixed(1)} MB` : `${(value/1024**3).toFixed(2)} GB`;
+const date = (value?:string) => value ? new Intl.DateTimeFormat('en',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)) : '—';
+const days = Array.from({length:84},(_,index)=>{ const day=new Date();day.setUTCHours(0,0,0,0);day.setUTCDate(day.getUTCDate()-(83-index));return day.toISOString().slice(0,10); });
+const userViews=users.map(user=>{const usage=new Map(user.activity.map(point=>[point.day,point.requests]));const max=Math.max(1,...user.activity.map(point=>point.requests));return {...user,eligible:user.quotaRequested&&user.institution!=='none',heatmap:days.map(day=>{const count=usage.get(day)||0;return {day,count,level:count?Math.max(1,Math.ceil((count/max)*4)):0};})};});
+---
+
+<Shell title="Users — Seshat admin">
+  <section class="admin-page" data-admin-email={identity.email}>
+    <header class="admin-head">
+      <div><div class="eyebrow">Private administration</div><h1>Users</h1></div>
+      <a href="/dashboard">Dashboard</a>
+    </header>
+    <div class="admin-summary">
+      <span><b>{number(users.length)}</b> accounts</span>
+      <span><b>{number(users.filter(user=>user.status==='pending').length)}</b> pending</span>
+      <span><b>{number(users.reduce((sum,user)=>sum+user.itemCount,0))}</b> items</span>
+      <span><b>{bytes(users.reduce((sum,user)=>sum+user.storageBytes,0))}</b> stored</span>
+    </div>
+    <div class="admin-users">
+      {userViews.map(user => (
+        <article class="admin-user" data-owner={user.ownerKey}>
+          <div class="admin-user-main">
+            <div><h2>{user.name || user.email}</h2><p>{user.email}</p></div>
+            <span class:list={['account-status',user.status]}>{user.status}</span>
+          </div>
+          <dl class="admin-metrics">
+            <div><dt>Last login</dt><dd>{date(user.lastLoginAt)}</dd></div>
+            <div><dt>Last activity</dt><dd>{date(user.lastSeenAt)}</dd></div>
+            <div><dt>Items</dt><dd>{number(user.itemCount)}</dd></div>
+            <div><dt>Size</dt><dd>{bytes(user.storageBytes)}</dd></div>
+            <div><dt>Institution</dt><dd>{user.institution === 'none' ? 'Independent' : user.institution.toUpperCase()}{user.institutionEmail ? ` · ${user.institutionEmail}` : ''}</dd></div>
+            <div><dt>Storage</dt><dd>{user.storageProvider} · {user.storageRootName}</dd></div>
+          </dl>
+          <div class="usage-heatmap" aria-label="84-day usage heatmap">
+            {user.heatmap.map(point => <i data-level={point.level} title={`${point.day} · ${point.count} activity pulses`}></i>)}
+          </div>
+          <div class="admin-actions">
+            {user.status === 'pending' && <button data-account-action="approve" data-quota={user.eligible ? String(10*1024**3) : '0'}>Approve{user.eligible ? ' · 10 GB' : ''}</button>}
+            {user.status === 'approved' && <button data-account-action="suspend">Suspend</button>}
+            {user.status === 'suspended' && <button data-account-action="restore">Restore</button>}
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+  <script>
+    document.querySelector('.admin-users')?.addEventListener('click',async(event)=>{
+      const button=(event.target as HTMLElement).closest<HTMLButtonElement>('[data-account-action]');if(!button)return;
+      const card=button.closest<HTMLElement>('[data-owner]');if(!card)return;
+      button.disabled=true;
+      const response=await fetch(`/api/admin/users/${encodeURIComponent(card.dataset.owner||'')}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:button.dataset.accountAction,quotaBytes:Number(button.dataset.quota||0)})});
+      if(response.ok) location.reload(); else {button.disabled=false;button.textContent='Could not update';}
+    });
+  </script>
+</Shell>
+
+<style>
+  .admin-page{max-width:1180px;margin:0 auto;padding:72px 0 120px}.admin-head{display:flex;align-items:end;justify-content:space-between}.admin-head h1{font-size:clamp(50px,8vw,104px);font-weight:400;line-height:.9;margin:12px 0}.admin-summary{display:flex;gap:28px;flex-wrap:wrap;padding:34px 0 24px;border-bottom:1px solid color-mix(in srgb,var(--ink) 18%,transparent)}.admin-summary b{font-size:24px;font-weight:400}.admin-users{display:grid}.admin-user{padding:30px 0;border-bottom:1px solid color-mix(in srgb,var(--ink) 15%,transparent)}.admin-user-main{display:flex;justify-content:space-between;gap:20px}.admin-user h2{font:400 25px/1.2 Georgia,serif;margin:0}.admin-user p{color:var(--muted);margin:5px 0}.account-status{text-transform:uppercase;letter-spacing:.12em;font-size:11px}.account-status.pending{color:#bd6a21}.account-status.approved{color:var(--accent)}.account-status.suspended{color:#aa3434}.admin-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:25px 0}.admin-metrics div{min-width:0}.admin-metrics dt{font-size:10px;text-transform:uppercase;letter-spacing:.13em;color:var(--muted)}.admin-metrics dd{margin:5px 0 0;overflow-wrap:anywhere}.usage-heatmap{display:grid;grid-template-columns:repeat(28,8px);grid-auto-rows:8px;grid-auto-flow:column;gap:3px;width:max-content;max-width:100%;overflow-x:auto;padding:4px 0}.usage-heatmap i{display:block;background:color-mix(in srgb,var(--ink) 7%,transparent)}.usage-heatmap i[data-level="1"]{background:color-mix(in srgb,var(--accent) 28%,transparent)}.usage-heatmap i[data-level="2"]{background:color-mix(in srgb,var(--accent) 48%,transparent)}.usage-heatmap i[data-level="3"]{background:color-mix(in srgb,var(--accent) 72%,transparent)}.usage-heatmap i[data-level="4"]{background:var(--accent)}.admin-actions{margin-top:22px}.admin-actions button{border:0;border-bottom:1px solid currentColor;background:transparent;color:var(--ink);padding:6px 0;cursor:pointer}.admin-actions button:disabled{opacity:.45}@media(max-width:700px){.admin-page{padding-top:45px}.admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.usage-heatmap{grid-template-columns:repeat(14,8px)}}
+</style>

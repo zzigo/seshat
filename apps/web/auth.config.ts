@@ -52,6 +52,7 @@ export default defineConfig({
   ],
   callbacks: {
     async jwt({ token, account, profile }) {
+      if (account) (token as any).signedInAt = new Date().toISOString();
       if (profile) {
         (token as any).identitySubject = String((profile as any).sub || token.sub || '');
         (token as any).identityProvider = String(account?.provider || 'oidc');
@@ -64,6 +65,7 @@ export default defineConfig({
         (session.user as any).id = String((token as any).identitySubject || token.sub || '');
         (session.user as any).provider = String((token as any).identityProvider || (logtoConfigured ? 'logto' : 'authentik'));
         (session.user as any).groups = Array.isArray((token as any).groups) ? (token as any).groups : [];
+        (session.user as any).signedInAt = String((token as any).signedInAt || '');
       }
       return session;
     },

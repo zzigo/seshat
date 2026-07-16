@@ -3,6 +3,7 @@ import { DeleteObjectsCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
+import { assertManagedStorageQuota } from '../../../../lib/user-accounts';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const allowed = new Set(['pdf', 'docx', 'txt', 'epub']);
@@ -30,6 +31,9 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const ext = extension(file.name);
   if (!allowed.has(ext)) return Response.json({ error: 'Use PDF, DOCX, TXT or EPUB.' }, { status: 415 });
   if (!file.size || file.size > MAX_UPLOAD_BYTES) return Response.json({ error: 'The document must be between 1 byte and 256 MB.' }, { status: 413 });
+  const replacedBytes=reference.artifacts.filter(artifact=>artifact.kind==='original'&&artifact.provider!=='wasabi-linked').reduce((sum,artifact)=>sum+artifact.sizeBytes,0);
+  try { await assertManagedStorageQuota(ownerKey,file.size,replacedBytes); }
+  catch { return Response.json({error:'Your managed storage quota would be exceeded.'},{status:413}); }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const sha256 = createHash('sha256').update(bytes).digest('hex');

@@ -2,8 +2,8 @@
 import { SignIn } from 'auth-astro/components';
 import Shell from '../components/Shell.astro';
 
-const rawRedirect = Astro.url.searchParams.get('redirect') || '/intake';
-const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/intake';
+const rawRedirect = Astro.url.searchParams.get('redirect') || '/dashboard';
+const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/dashboard';
 if ((Astro.locals.session as any)?.user?.email) return Astro.redirect(redirect);
 const origin = process.env.AUTH_URL || process.env.SITE_URL || Astro.url.origin;
 const callbackUrl = `${origin.replace(/\/$/, '')}${redirect}`;
@@ -22,6 +22,11 @@ const oidcName = logtoConfigured ? 'Logto' : 'Authentik';
       <SignIn provider={oidcProvider} options={{ callbackUrl }}>
         <span class="button primary auth-button">Continue with {oidcName}</span>
       </SignIn>
+      {logtoConfigured && (
+        <SignIn provider="logto" options={{ callbackUrl: `${origin.replace(/\/$/, '')}/welcome` }} authParams={{ direct_sign_in:'social:google' }}>
+          <span class="button quiet auth-button">Create a Seshat account with Google</span>
+        </SignIn>
+      )}
       {googleConfigured && (
         <SignIn provider="google" options={{ callbackUrl }}>
           <span class="button quiet auth-button">Continue with Google</span>

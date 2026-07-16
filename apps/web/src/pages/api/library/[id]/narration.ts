@@ -9,6 +9,7 @@ import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { chirpAccessAllowed } from '../../../../lib/chirp-access';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
+import { assertManagedStorageQuota } from '../../../../lib/user-accounts';
 
 const exec = promisify(execFile);
 const safePart = (value: string, fallback: string) => value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
@@ -62,6 +63,8 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
     } else if (!String(request.headers.get('content-type') || '').includes('audio/ogg')) {
       return Response.json({ error:'chirp_audio_must_be_ogg' }, { status:400 });
     }
+    try { await assertManagedStorageQuota(ownerKey,bytes.length); }
+    catch { return Response.json({error:'managed_storage_quota_exceeded'},{status:413}); }
     const bucket = getWasabiBucket();
     const storageRoot = String((reference.source as any)?.wasabiStorageRoot || `${process.env.WASABI_KEY_PREFIX || 'zzttuntref'}/seshat-derived/${ownerKey}`).replace(/\/+$/g, '');
     const offsets=endOffset>startOffset?`-${startOffset}-${endOffset}`:'';
