@@ -1,5 +1,4 @@
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { zoteroStyleAttachmentName } from '@seshat/core';
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -31,19 +30,16 @@ const result = await pool.query(
           r.title,r.contributors,r.issued,r.source
    FROM catalog_artifacts a
    JOIN catalog_references r ON r.id=a.reference_id
-   WHERE a.kind='original' AND a.bucket=$1
-     AND (a.object_key LIKE '%*%' OR COALESCE(r.source->>'originalFilename','') LIKE '%*%')
+   WHERE a.kind='original' AND a.bucket=$1 AND a.object_key LIKE '%*%'
    ORDER BY a.reference_id,a.created_at`,
   [bucket],
 );
 
 const plans = result.rows.map((row) => {
   const currentFilename = String(row.source?.originalFilename || row.object_key.split('/').at(-1) || 'document');
-  const filename = zoteroStyleAttachmentName({
-    contributors: row.contributors || [], issued: row.issued || undefined,
-    title: row.title || 'Untitled reference', currentFilename,
-  });
   const directory = row.object_key.includes('/') ? row.object_key.slice(0, row.object_key.lastIndexOf('/') + 1) : '';
+  const objectFilename = row.object_key.split('/').at(-1) || currentFilename;
+  const filename = objectFilename.replaceAll('*', '_');
   return { ...row, currentFilename, filename, nextKey: `${directory}${filename}` };
 }).filter((row) => row.nextKey !== row.object_key);
 
