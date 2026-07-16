@@ -72,6 +72,12 @@ export const wasabiUnicodePathForms = (value: unknown): string[] => {
   return [...new Set([canonical, canonical.normalize('NFD')])];
 };
 
+/** S3 keys remain case-sensitive, but Zotero collections and macOS paths may not preserve the same casing or Unicode form. */
+export const wasabiPathIdentity = (value: unknown): string => normalizeWasabiRoot(value)
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
+
 export const wasabiKeyWithinRoot = (key: unknown, root: string): boolean => {
   const normalized = normalizeWasabiRoot(key);
   return validWasabiRoot(normalized)

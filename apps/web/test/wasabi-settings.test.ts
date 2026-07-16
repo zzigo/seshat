@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeWasabiRoot, safeWasabiRelativePath, validWasabiRoot, wasabiKeyWithinRoot } from '../src/lib/wasabi-settings';
+import { normalizeWasabiRoot, safeWasabiRelativePath, validWasabiRoot, wasabiKeyWithinRoot, wasabiPathIdentity } from '../src/lib/wasabi-settings';
 
 test('normalizes bucket URLs and separators into an object-key root', () => {
   assert.equal(normalizeWasabiRoot('s3://my-bucket/zzttuntref\\libros/'), 'zzttuntref/libros');
@@ -16,4 +16,8 @@ test('only links keys below the configured library root', () => {
   assert.equal(wasabiKeyWithinRoot('zzttuntref/libros/a/book.pdf', 'zzttuntref/libros'), true);
   assert.equal(wasabiKeyWithinRoot('zzttuntref/elsewhere/book.pdf', 'zzttuntref/libros'), false);
   assert.equal(wasabiKeyWithinRoot('zzttuntref/libros/.seshat/private.txt', 'zzttuntref/libros'), false);
+});
+
+test('matches Wasabi folders across case and macOS Unicode forms', () => {
+  assert.equal(wasabiPathIdentity('Teatro/ACÚSTICA'), wasabiPathIdentity('teatro/acústica'));
 });
