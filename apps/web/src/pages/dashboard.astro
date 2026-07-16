@@ -11,6 +11,7 @@ import { detectEmergence } from '../lib/emergence';
 import { DEFAULT_ZOTERO_BEACON_IDLE_LIMIT } from '../lib/zotero-beacon';
 import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 import { readingProgressPercent } from '../lib/reading-progress';
+import { safeInlineTitleHtml } from '../lib/inline-title';
 
 const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
 const ownerKey = ownerKeyFor(identity.email);
@@ -101,7 +102,7 @@ const zoteroBeaconState = !zoteroStatus.connected
         <header><div><span>Return</span><h2>Recent readings</h2></div><small>last 20</small></header>
         <div class="dashboard-item-list">
           {recentReadings.map((item) => <button type="button" class="dashboard-reading-item" data-dashboard-item={item.id} data-item-title={item.title}>
-            <span><strong>{item.title}</strong><small>{personLine(item.contributors)} · {item.issued?.year ? formatPublicationYear(Number(item.issued.year)) : item.type}</small></span>
+            <span><strong set:html={safeInlineTitleHtml(item.title)}></strong><small>{personLine(item.contributors)} · {item.issued?.year ? formatPublicationYear(Number(item.issued.year)) : item.type}</small></span>
             <progress class="reading-progress-meter" max="100" value={readingProgressPercent(item.location)} aria-label={`${readingProgressPercent(item.location)}% read`}></progress>
             <time datetime={item.readAt}>{new Date(item.readAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</time>
           </button>)}
@@ -123,7 +124,7 @@ const zoteroBeaconState = !zoteroStatus.connected
             </header>
             <div class="bookmark-group-items">
               {group.items.slice(0,8).map((item) => <button type="button" class="dashboard-reading-item" data-dashboard-item={item.id} data-item-title={item.title}>
-                <span><strong>{item.title}</strong><small>{personLine(item.contributors)}{item.issued?.year ? ` · ${formatPublicationYear(Number(item.issued.year))}` : ''}</small></span>
+                <span><strong set:html={safeInlineTitleHtml(item.title)}></strong><small>{personLine(item.contributors)}{item.issued?.year ? ` · ${formatPublicationYear(Number(item.issued.year))}` : ''}</small></span>
               </button>)}
               {!group.items.length && <p>Right-click a recent item to add it here.</p>}
               {group.items.length > 8 && <small class="bookmark-more">+ {group.items.length-8} more</small>}
@@ -138,7 +139,7 @@ const zoteroBeaconState = !zoteroStatus.connected
       <header><div><span>Completed</span><h2>Read items</h2></div><small>last {completedReadings.length}</small></header>
       <div class="completed-reading-list">
         {completedReadings.map((item) => <button type="button" class="dashboard-reading-item completed-reading-item" data-dashboard-item={item.id} data-item-title={item.title}>
-          <span><strong>{item.title}</strong><small>{personLine(item.contributors)}{item.issued?.year ? ` · ${formatPublicationYear(Number(item.issued.year))}` : ''}</small></span>
+          <span><strong set:html={safeInlineTitleHtml(item.title)}></strong><small>{personLine(item.contributors)}{item.issued?.year ? ` · ${formatPublicationYear(Number(item.issued.year))}` : ''}</small></span>
           <time datetime={item.completedAt || item.readAt}>{new Date(item.completedAt || item.readAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</time>
         </button>)}
       </div>
@@ -326,6 +327,7 @@ const zoteroBeaconState = !zoteroStatus.connected
   </section>
 
   <script>
+    import { setInlineTitle } from '../lib/inline-title';
     import { normalizeThemeMode, themePresetForMode } from '../lib/theme-preferences';
     type DashboardGroup={id:string;name:string;color:string;icon:string;itemIds:string[]};
     type EmergenceSignal={phrase:string;firstYear:number;peakYear:number;count:number;itemIds:string[]};
@@ -357,7 +359,7 @@ const zoteroBeaconState = !zoteroStatus.connected
     document.querySelectorAll<HTMLElement>('[data-dashboard-item]').forEach((item)=>{const id=item.dataset.dashboardItem||'',title=item.dataset.itemTitle||'Reader';item.addEventListener('click',()=>openReader(id,title));item.addEventListener('contextmenu',(event)=>openBookmarkMenu(event,id));let timer=0;item.addEventListener('pointerdown',(event)=>{if(event.pointerType==='mouse')return;timer=window.setTimeout(()=>openBookmarkMenu(new MouseEvent('contextmenu',{clientX:event.clientX,clientY:event.clientY}),id),560);});['pointerup','pointercancel','pointermove'].forEach((name)=>item.addEventListener(name,()=>window.clearTimeout(timer)));});
 
     const emergenceResult=document.querySelector<HTMLElement>('[data-emergence-result]');
-    const renderEmergence=(index:number)=>{const signal=readingData.emergenceSignals[index];if(!signal||!emergenceResult)return;emergenceResult.replaceChildren();const intro=document.createElement('p');intro.innerHTML=`<strong>${signal.phrase}</strong><span>First seen ${signal.firstYear<0?`${Math.abs(signal.firstYear)} BCE`:signal.firstYear}; strongest rise around ${signal.peakYear<0?`${Math.abs(signal.peakYear)} BCE`:signal.peakYear}.</span>`;emergenceResult.appendChild(intro);signal.itemIds.slice(0,6).forEach((id)=>{const item=readingData.emergenceItems[id];if(!item)return;const button=document.createElement('button');button.type='button';button.className='dashboard-reading-item';button.innerHTML=`<span><strong></strong><small>${item.year<0?`${Math.abs(item.year)} BCE`:item.year}</small></span>`;button.querySelector('strong')!.textContent=item.title;button.onclick=()=>openReader(item.id,item.title);emergenceResult.appendChild(button);});document.querySelectorAll<HTMLButtonElement>('[data-emergence-signal]').forEach((button)=>button.setAttribute('aria-pressed',String(Number(button.dataset.emergenceSignal)===index)));};
+    const renderEmergence=(index:number)=>{const signal=readingData.emergenceSignals[index];if(!signal||!emergenceResult)return;emergenceResult.replaceChildren();const intro=document.createElement('p');const phrase=document.createElement('strong');phrase.textContent=signal.phrase;const description=document.createElement('span');description.textContent=`First seen ${signal.firstYear<0?`${Math.abs(signal.firstYear)} BCE`:signal.firstYear}; strongest rise around ${signal.peakYear<0?`${Math.abs(signal.peakYear)} BCE`:signal.peakYear}.`;intro.append(phrase,description);emergenceResult.appendChild(intro);signal.itemIds.slice(0,6).forEach((id)=>{const item=readingData.emergenceItems[id];if(!item)return;const button=document.createElement('button');button.type='button';button.className='dashboard-reading-item';const copy=document.createElement('span');const title=document.createElement('strong');setInlineTitle(title,item.title);const year=document.createElement('small');year.textContent=item.year<0?`${Math.abs(item.year)} BCE`:String(item.year);copy.append(title,year);button.appendChild(copy);button.onclick=()=>openReader(item.id,item.title);emergenceResult.appendChild(button);});document.querySelectorAll<HTMLButtonElement>('[data-emergence-signal]').forEach((button)=>button.setAttribute('aria-pressed',String(Number(button.dataset.emergenceSignal)===index)));};
     document.querySelectorAll<HTMLButtonElement>('[data-emergence-signal]').forEach((button)=>button.addEventListener('click',()=>renderEmergence(Number(button.dataset.emergenceSignal))));
     if(readingData.emergenceSignals.length)renderEmergence(0);
 

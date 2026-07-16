@@ -3,6 +3,7 @@ import { contributorSummary, formatPublicationYear } from '@seshat/core';
 import { getCatalog, ownerKeyFor } from '../../lib/catalog';
 import { chirpAccessAllowed } from '../../lib/chirp-access';
 import { referenceFileType } from '../../lib/reference-file';
+import { plainInlineTitle, safeInlineTitleHtml } from '../../lib/inline-title';
 import '../../styles/global.css';
 import '../../styles/workspace.css';
 
@@ -28,12 +29,12 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>{reference.title} — Seshat Reader</title>
+    <title>{plainInlineTitle(reference.title)} — Seshat Reader</title>
   </head>
   <body class="dashboard-reader-body">
     <main class="dashboard-reader document-pod" data-dashboard-reader>
       <header class="pod-toolbar dashboard-reader-toolbar" hidden>
-        <strong title={reference.title}>{reference.title}</strong>
+        <strong title={plainInlineTitle(reference.title)} set:html={safeInlineTitleHtml(reference.title)}></strong>
         <div class="dashboard-reader-document-controls">
           <button type="button" data-reader-zoom title="Fit current page or spread">1:1</button>
           {data.format === 'pdf' && <>
@@ -54,7 +55,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       <aside class="dashboard-reader-properties" data-reader-properties hidden>
         <header><strong>Item information</strong><button type="button" data-reader-properties-close aria-label="Close item information">×</button></header>
         <dl>
-          <div><dt>Title</dt><dd>{reference.title}</dd></div>
+          <div><dt>Title</dt><dd set:html={safeInlineTitleHtml(reference.title)}></dd></div>
           {propertyPersons && <div><dt>Persons</dt><dd>{propertyPersons}</dd></div>}
           <div><dt>Type</dt><dd>{reference.type}</dd></div>
           {propertyYear !== 0 && <div><dt>Year</dt><dd>{formatPublicationYear(propertyYear)}</dd></div>}

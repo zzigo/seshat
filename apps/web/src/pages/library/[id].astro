@@ -4,6 +4,7 @@ import { BIBLATEX_ENTRY_TYPE_OPTIONS, normalizeBibliographicType } from '@seshat
 import Shell from '../../components/Shell.astro';
 import { getCatalog, ownerKeyFor } from '../../lib/catalog';
 import { getWasabiClient } from '../../lib/wasabi';
+import { plainInlineTitle, safeInlineTitleHtml } from '../../lib/inline-title';
 
 const email = String((Astro.locals.session as any)?.user?.email || '');
 const reference = await getCatalog().get(ownerKeyFor(email), Astro.params.id || '');
@@ -58,11 +59,11 @@ const graphNodes = nodesResult.rows;
 const graphEdges = edgesResult.rows;
 ---
 
-<Shell title={`${reference.title} — Seshat`}>
+<Shell title={`${plainInlineTitle(reference.title)} — Seshat`}>
   <div class="catalog-item-page">
   <section class="workspace-head compact record-head">
     <div class="eyebrow">Catalogued document</div>
-    <h1 data-record-title>{reference.title}</h1>
+    <h1 data-record-title set:html={safeInlineTitleHtml(reference.title)}></h1>
     <p>The original is safe. Enrichment advances in explicit, inspectable stages.</p>
     {original && <a class="button quiet" href={`/api/library/${reference.id}/original`} target="_blank">Open original ↗</a>}
   </section>
@@ -384,6 +385,7 @@ const graphEdges = edgesResult.rows;
   </script>
 
   <script>
+    import { setInlineTitle } from '../../lib/inline-title';
     const form = document.querySelector<HTMLFormElement>('[data-metadata-form]');
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -399,7 +401,7 @@ const graphEdges = edgesResult.rows;
         if (!response.ok) throw new Error(result.error || 'The record could not be saved.');
         const title = form.elements.namedItem('title') as HTMLInputElement;
         const heading = document.querySelector<HTMLElement>('[data-record-title]');
-        if (heading) heading.textContent = title.value;
+        if (heading) setInlineTitle(heading,title.value);
         status.value = result.storageRename?.ok === false
           ? result.storageRename.warning
           : result.storageRename?.to

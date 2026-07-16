@@ -1,4 +1,5 @@
 const YEAR_TOKEN = /(?:^|[^\d])([+]?\d{1,4})(?:\s*(CE|AD))?(?=[^\d]|$)/i;
+const FOUR_DIGIT_YEAR_TOKEN = /(?:^|[^\d])([+]?\d{4})(?=[^\d]|$)/;
 const NEGATIVE_YEAR_TOKEN = /(?:^|[^\d])(-\d{1,4})(?=[^\d]|$)/;
 const BCE_YEAR_TOKEN = /(?:^|[^\d])(\d{1,4})\s*(BCE?|BC)(?=[^A-Z]|$)/i;
 
@@ -15,6 +16,14 @@ export const parsePublicationYear = (value: unknown): number | undefined => {
   if (bce) {
     const parsed = Number(bce[1]);
     return Number.isInteger(parsed) && parsed !== 0 ? -Math.abs(parsed) : undefined;
+  }
+  // Zotero accepts full dates in many formats ("May 20, 2021", "20/2021",
+  // "2021-05"). Prefer their unambiguous four-digit year over a preceding
+  // day or month while retaining short ancient years such as 270 below.
+  const fourDigit = text.match(FOUR_DIGIT_YEAR_TOKEN);
+  if (fourDigit) {
+    const parsed = Number(fourDigit[1]);
+    if (Number.isInteger(parsed) && parsed !== 0) return parsed;
   }
   const match = text.match(YEAR_TOKEN);
   if (!match) return undefined;

@@ -15,6 +15,7 @@ import ForceGraph from 'force-graph';
 import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
 import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAloud } from './read-aloud';
 import { chirpVoicesForLanguage } from '../lib/chirp';
+import { plainInlineTitle, setInlineTitle } from '../lib/inline-title';
 
 registerAllModules();
 
@@ -250,7 +251,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const dialogShell = (title: string) => {
     const dialog = document.createElement('dialog'); dialog.className = 'seshat-dialog';
     const header = document.createElement('header');
-    const heading = document.createElement('h2'); heading.textContent = title;
+    const heading = document.createElement('h2'); setInlineTitle(heading,title);
     const close = document.createElement('button'); close.type = 'button'; close.className = 'dialog-close'; close.textContent = '×'; close.setAttribute('aria-label', 'Close');
     close.addEventListener('click', () => dialog.close()); header.append(heading, close); dialog.appendChild(header);
     dialog.addEventListener('close', () => dialog.remove());
@@ -550,7 +551,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       refreshTable();renderTree(search.value);setSaveState(`${linked} linked automatically · ${missing} without match${failed?` · ${failed} failed`:''}`,failed?'error':'ready');return;
     }
     const dialog=dialogShell(`Wasabi candidates · ${editableIds.length} selected items`);dialog.classList.add('candidate-dialog');const body=document.createElement('div');body.className='candidate-search';const summary=document.createElement('p');summary.textContent='Searching selected items in Wasabi…';body.appendChild(summary);dialog.appendChild(body);let found=0;
-    for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');heading.textContent=reference?.title||id;const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{await linkWasabiCandidate(id,candidate);section.dataset.linked='true';heading.textContent=`${reference?.title||id} · linked`;setSaveState('candidate linked; extraction queued');}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
+    for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');setInlineTitle(heading,reference?.title||id);const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{await linkWasabiCandidate(id,candidate);section.dataset.linked='true';setInlineTitle(heading,`${reference?.title||id} · linked`);setSaveState('candidate linked; extraction queued');}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
     summary.textContent=`${found} candidates across ${editableIds.length} selected items`;setSaveState(`${found} candidates found`);
   };
   const duplicateGroupFor = (ids:string[]) => {
@@ -578,7 +579,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     group.forEach((reference)=>{
       const option=document.createElement('label');option.className='duplicate-merge-option';
       const input=document.createElement('input');input.type='radio';input.name='duplicate-survivor';input.value=reference.id;input.checked=reference.id===suggested.id;
-      const copy=document.createElement('span');const title=document.createElement('strong');title.textContent=reference.title||'Untitled';
+      const copy=document.createElement('span');const title=document.createElement('strong');setInlineTitle(title,reference.title||'Untitled');
       const details=document.createElement('small');details.textContent=[reference.contributorsDisplay,reference.year,reference.type,reference.hasOriginal?reference.filename:'no associated file'].filter(Boolean).join(' · ');
       const location=document.createElement('small');location.className='duplicate-merge-location';location.textContent=`Filed in: ${referenceLocationText(reference)}`;location.title=referenceLocationText(reference);
       copy.append(title,details,location);option.append(input,copy);list.appendChild(option);
@@ -616,6 +617,21 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     refreshTable();renderTree(search.value);if(activeReference)renderProperties(activeReference);
     setSaveState(failed?`Case Fix complete · ${completed} updated · ${failed} failed`:`Case Fix complete · ${completed} ${completed===1?'item':'items'} updated`,failed?'error':'ready');
   };
+  type YearRepairPreview={id:string;title:string;currentYear:number|null;suggestion:null|{year:number;provider:string;label:string;evidence:string;confidence:number;originalWorkYear:boolean;url?:string};applyByDefault:boolean;searchedExternal:boolean};
+  const openYearRepair=async(ids:string[])=>{
+    const editable=[...new Set(ids)].filter((id)=>references.get(id)?.access==='owner');if(!editable.length){setSaveState('no editable references selected','error');return;}
+    const dialog=dialogShell(`Repair bibliographic year · ${editable.length} ${editable.length===1?'item':'items'}`);dialog.classList.add('year-repair-dialog');
+    const body=document.createElement('div');body.className='year-repair-body';const status=document.createElement('p');status.textContent='Inspecting stored dates and bibliographic services…';body.appendChild(status);dialog.appendChild(body);setSaveState('checking bibliographic years…','saving');
+    try{
+      const response=await fetch('/api/library/years/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:editable})});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Year repair preview failed');
+      const items=(result.items||[]) as YearRepairPreview[];const proposals=items.filter((item)=>item.suggestion);status.textContent=proposals.length?`${proposals.length} proposed correction${proposals.length===1?'':'s'}. Review the evidence before applying.`:'No supported year corrections were found.';
+      const list=document.createElement('div');list.className='year-repair-list';body.appendChild(list);
+      items.forEach((item)=>{const row=references.get(item.id);const option=document.createElement('label');option.className='year-repair-option';const input=document.createElement('input');input.type='checkbox';input.value=item.id;input.checked=item.applyByDefault;input.disabled=!item.suggestion||!row;const copy=document.createElement('span');const title=document.createElement('strong');setInlineTitle(title,item.title);const years=document.createElement('b');years.textContent=item.suggestion?`${item.currentYear??'—'} → ${item.suggestion.year}`:`${item.currentYear??'—'} · no verified correction`;copy.append(title,years);if(item.suggestion){const evidence=document.createElement('small');evidence.textContent=`${item.suggestion.label} · ${Math.round(item.suggestion.confidence*100)}% · ${item.suggestion.evidence}`;copy.appendChild(evidence);}else{const evidence=document.createElement('small');evidence.textContent=item.searchedExternal?'No sufficiently reliable external match.':'Stored year is internally consistent; ancient dates are preserved.';copy.appendChild(evidence);}option.append(input,copy);list.appendChild(option);});
+      const footer=document.createElement('footer');const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();const apply=document.createElement('button');apply.type='button';apply.className='primary';apply.textContent='Apply selected corrections';apply.disabled=!proposals.length;footer.append(cancel,apply);body.appendChild(footer);
+      apply.onclick=async()=>{const selected=new Set([...list.querySelectorAll<HTMLInputElement>('input:checked')].map((input)=>input.value));const chosen=items.filter((item)=>item.suggestion&&selected.has(item.id));if(!chosen.length){setSaveState('select at least one proposed year','error');return;}apply.disabled=true;cancel.disabled=true;let updated=0,failed=0;for(const item of chosen){const row=references.get(item.id);if(!row||!item.suggestion)continue;const previous=row.year;row.year=item.suggestion.year;try{const saved=await saveReference(row);if(saved.reference)upsertRow(rowFromCatalogReference(saved.reference));updated+=1;}catch(error){row.year=previous;failed+=1;console.error('[seshat:year-repair]',row.id,error);}}dialog.close();refreshTable();renderTree(search.value);if(activeReference)renderProperties(activeReference);setSaveState(`Year repair complete · ${updated} updated${failed?` · ${failed} failed`:''}`,failed?'error':'ready');};
+      setSaveState(`${proposals.length} year correction${proposals.length===1?'':'s'} proposed`);
+    }catch(error){status.textContent=error instanceof Error?error.message:'Year repair preview failed';setSaveState(status.textContent,'error');}
+  };
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
@@ -625,6 +641,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Case Fix${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => caseFixReferences(editableIds) },
+    { label: `Repair bibliographic year…${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => openYearRepair(editableIds) },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}`, shortcut:'A', action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}`, shortcut:'B', action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
@@ -941,6 +958,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
       td.dataset.state = String(value || '').replaceAll(' ', '-');
     };
+    const titleRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      setInlineTitle(td, value);td.title=plainInlineTitle(value);
+    };
     const filedInRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
       Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
       const physicalRow=instance.toPhysicalRow(row);const reference=physicalRow>=0?instance.getSourceDataAtRow(physicalRow) as ReferenceRow|undefined:undefined;const location=reference?referenceLocationText(reference):'';
@@ -948,7 +969,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     type CatalogColumn={key:string;group:string;column:Record<string,unknown>;defaultVisible:boolean};
     const coreColumns:CatalogColumn[]=[
-      {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',width:300}},
+      {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',renderer:titleRenderer,width:300}},
       {key:'persons',group:'Persons',defaultVisible:true,column:{data:'contributorsDisplay',title:'Persons',readOnly:true,className:'contributors-cell',width:260}},
       {key:'filedIn',group:'System',defaultVisible:false,column:{data:'libraryIds',title:'Filed in',readOnly:true,renderer:filedInRenderer,width:280}},
       {key:'year',group:'Date',defaultVisible:true,column:{data:'year',title:'Year',type:'numeric',width:72}},
@@ -1590,7 +1611,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const section=(label:string,open:boolean)=>{const details=document.createElement('details');details.className='graph-sidebar-section';details.open=open;const summary=document.createElement('summary');const text=document.createElement('span');text.textContent=label;const badge=document.createElement('b');summary.append(text,badge);const content=document.createElement('div');content.className='graph-sidebar-content';details.append(summary,content);sidebar.appendChild(details);return{details,summary,content,badge};};
         const infoSection=section('Graph info',true); infoSection.badge.replaceWith(sidebarClose);
         const graphKind=document.createElement('span'); graphKind.className='graph-info-kind'; graphKind.textContent=reference?'Document graph':'Knowledge graph';
-        const graphScope=document.createElement('strong'); graphScope.className='graph-info-scope'; graphScope.textContent=reference?.title||'All references';
+        const graphScope=document.createElement('strong'); graphScope.className='graph-info-scope'; setInlineTitle(graphScope,reference?.title||'All references');
         const count=document.createElement('span'); count.className='graph-info-count'; count.textContent='Loading…';
         infoSection.content.append(graphKind,graphScope,count);
         const controlsSection=section('Controls',true); controlsSection.badge.remove();
@@ -1676,7 +1697,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           button('Reset',()=>{focusId=null;collapsed.clear();searchInput.value='';graphQuery='';update();graph.zoomToFit(350,40);});
           if(!globalGraph){const refreshSources=button('Refresh sources',()=>{void (async()=>{if(!currentGraphReferenceId)return;refreshSources.disabled=true;refreshSources.textContent='Refreshing…';try{const response=await fetch('/api/knowledge-graph/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paperId:currentGraphReferenceId})});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not refresh graph sources.');await loadReferenceGraph(currentGraphReferenceId);refreshSources.textContent=result.warning==='openalex_not_configured'?'Bibliography refreshed':'Sources refreshed';}catch(error){refreshSources.textContent=error instanceof Error?error.message:'Refresh failed';}finally{refreshSources.disabled=false;}})();});}
           const importInput=document.createElement('input');importInput.type='file';importInput.accept='.pdf,application/pdf';importInput.hidden=true;importInput.onchange=()=>{const file=importInput.files?.[0];if(file)void ingestDocument(file);};controls.appendChild(importInput);button('Import PDF',()=>importInput.click());
-          loadReferenceGraph=async(nextReferenceId:string)=>{currentGraphReferenceId=nextReferenceId;const nextReference=references.get(nextReferenceId);count.textContent='Loading…';graphKind.textContent='Document graph';graphScope.textContent=nextReference?.title||'Unknown document';const response=await fetch(`/api/knowledge-graph?paperId=${encodeURIComponent(nextReferenceId)}`,{cache:'no-store'});const next=await response.json();if(!response.ok)throw new Error(next.error||'Could not load graph.');allNodes.splice(0,allNodes.length,...(next.nodes||[]).map((node:any)=>({...node,classification:node.kind||'automatic'})));allLinks.splice(0,allLinks.length,...(next.edges||[]).map((edge:any,index:number)=>({...edge,id:edge.id||`auto-edge:${index}`})));focusId=null;collapsed.clear();inspector.innerHTML=next.focus?.found===false?'<div class="eyebrow">No graph yet</div><p>Resolve or refresh this paper to build connections from its bibliography, citations, and related works.</p>':'<p>Select a paper or association to inspect its evidence.</p>';update();window.requestAnimationFrame(()=>graph.zoomToFit(350,40));};
+          loadReferenceGraph=async(nextReferenceId:string)=>{currentGraphReferenceId=nextReferenceId;const nextReference=references.get(nextReferenceId);count.textContent='Loading…';graphKind.textContent='Document graph';setInlineTitle(graphScope,nextReference?.title||'Unknown document');const response=await fetch(`/api/knowledge-graph?paperId=${encodeURIComponent(nextReferenceId)}`,{cache:'no-store'});const next=await response.json();if(!response.ok)throw new Error(next.error||'Could not load graph.');allNodes.splice(0,allNodes.length,...(next.nodes||[]).map((node:any)=>({...node,classification:node.kind||'automatic'})));allLinks.splice(0,allLinks.length,...(next.edges||[]).map((edge:any,index:number)=>({...edge,id:edge.id||`auto-edge:${index}`})));focusId=null;collapsed.clear();inspector.innerHTML=next.focus?.found===false?'<div class="eyebrow">No graph yet</div><p>Resolve or refresh this paper to build connections from its bibliography, citations, and related works.</p>':'<p>Select a paper or association to inspect its evidence.</p>';update();window.requestAnimationFrame(()=>graph.zoomToFit(350,40));};
           loadGlobalGraph=async(collectionId='')=>{count.textContent='Loading…';const collection=payload.libraries.find((library)=>library.id===collectionId);graphKind.textContent='Knowledge graph';graphScope.textContent=collection?.name||'All references';const query=new URLSearchParams({maximumNodes:'1000'});if(collectionId)query.set('collectionId',collectionId);const response=await fetch(`/api/knowledge-graph?${query}`,{cache:'no-store'});const next=await response.json();if(!response.ok)throw new Error(next.error||'Could not load knowledge graph.');allNodes.splice(0,allNodes.length,...(next.nodes||[]).map((node:any)=>({...node,classification:node.kind||'automatic'})));allLinks.splice(0,allLinks.length,...(next.edges||[]).map((edge:any,index:number)=>({...edge,id:edge.id||`auto-edge:${index}`})));focusId=null;collapsed.clear();inspector.innerHTML=next.focus?.requested&&next.focus?.found===false?'<div class="eyebrow">Empty scope</div><p>This collection has no graph connections yet.</p>':'<p>Select a paper or association to inspect its evidence.</p>';update();window.requestAnimationFrame(()=>graph.zoomToFit(350,40));};
           graphDocumentChange=((event:CustomEvent<{referenceId?:string}>)=>{const nextReferenceId=event.detail?.referenceId;if(nextReferenceId)void loadReferenceGraph(nextReferenceId).catch((error)=>{count.textContent='Graph unavailable';inspector.innerHTML=`<p class="graph-error">${safe(error instanceof Error?error.message:'Could not load graph.')}</p>`;});}) as EventListener;
           if(!globalGraph)window.addEventListener('seshat:active-reference-changed',graphDocumentChange);
@@ -1709,7 +1730,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         titleH2.style.margin = '4px 0 0';
         titleH2.style.fontSize = '15px';
         titleH2.style.fontFamily = 'Georgia, serif';
-        titleH2.textContent = reference?.title || 'All catalogued knowledge';
+        setInlineTitle(titleH2,reference?.title || 'All catalogued knowledge');
         titleDiv.append(titleLabel, titleH2);
 
         const countSpan = document.createElement('span');
@@ -2957,7 +2978,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   api.onDidDrop((event) => {
     const ids=openDragIds(event.nativeEvent); if (!ids.length) return; event.nativeEvent.preventDefault();
     const direction=({top:'above',bottom:'below',left:'left',right:'right',center:'within'} as const)[event.position]; let referencePanel=event.panel || event.group?.activePanel || api.activePanel;
-    ids.forEach((id,index) => { const reference=references.get(id); if (!reference) return; const panel=api.addPanel({ id:`document-drop-${id}-${Date.now()}-${index}`,component:`document:${id}`,title:reference.title,position:referencePanel ? {referencePanel,direction:index === 0 ? direction : 'within'} : undefined }); referencePanel=panel; });
+    ids.forEach((id,index) => { const reference=references.get(id); if (!reference) return; const panel=api.addPanel({ id:`document-drop-${id}-${Date.now()}-${index}`,component:`document:${id}`,title:plainInlineTitle(reference.title),position:referencePanel ? {referencePanel,direction:index === 0 ? direction : 'within'} : undefined }); referencePanel=panel; });
     activeReference=ids[0]; renderProperties(activeReference); setSaveState(`${ids.length} item${ids.length === 1 ? '' : 's'} opened in pods`);
   });
 
@@ -2965,7 +2986,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const existing = api.getPanel(id);
     if (existing) { existing.api.setActive(); return existing; }
     const referencePanel = api.activePanel || api.panels[api.panels.length - 1];
-    return api.addPanel({ id, component, title, position: referencePanel ? { referencePanel, direction } : undefined });
+    return api.addPanel({ id, component, title:plainInlineTitle(title), position: referencePanel ? { referencePanel, direction } : undefined });
   };
 
   function renderProperties(referenceId: string | null) {
@@ -3016,7 +3037,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       if (treeOrder === 'recent') renderTree(search.value);
       if (split&&!phone) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
       const existing = api.getPanel('document-preview');
-      if (existing) { previewRender?.(referenceId); existing.api.setTitle(ref.title); existing.api.setActive(); }
+      if (existing) { previewRender?.(referenceId); existing.api.setTitle(plainInlineTitle(ref.title)); existing.api.setActive(); }
       else addPanel('document-preview', 'document-preview', ref.title, 'right');
       if(phone)maximizePhonePanel('document-preview');
     },
@@ -3438,7 +3459,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       setSaveState(`${rows.length} references exported as Better BibTeX`);
     };
     const appendReference = (reference:ReferenceRow, container:HTMLElement, selectionRows:ReferenceRow[], contextLibraryId:string|null) => {
-      const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title; item.dataset.referenceId = reference.id;
+      const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
       item.classList.toggle('selected', selectedReferences.has(reference.id));
       item.draggable = reference.access !== 'viewer';
       const kind = treeReferenceKind(reference);
@@ -3447,7 +3468,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
       glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
       glyph.setAttribute('aria-label', glyph.title);
-      const title = document.createElement('span'); title.className='tree-reference-title'; title.textContent = reference.title; item.appendChild(glyph);
+      const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
       const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
       if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
       if (isProcessingReference(reference)) {
@@ -3627,7 +3648,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         visibleReferences.push(revealedReference);
       }
       visibleReferences.forEach((reference) => {
-        const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = reference.title; item.dataset.referenceId = reference.id;
+        const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
         item.classList.toggle('selected', selectedReferences.has(reference.id));
         item.draggable = reference.access !== 'viewer';
         const kind = treeReferenceKind(reference);
@@ -3636,7 +3657,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
         glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
         glyph.setAttribute('aria-label', glyph.title);
-        const title = document.createElement('span'); title.className='tree-reference-title'; title.textContent = reference.title; item.appendChild(glyph);
+        const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
         const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
         if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
         if (isProcessingReference(reference)) {
@@ -3958,7 +3979,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const results=document.createElement('div'); results.className='quickfinder-results'; box.append(prompt,mode,results); overlay.appendChild(box); root.appendChild(overlay);
     type FinderResult={title:string;meta:string;snippet?:string;action:()=>void}; let found:FinderResult[]=[]; let selected=0; let timer=0; let request:AbortController|null=null;
     const close=() => { request?.abort(); window.clearTimeout(timer); overlay.remove(); if (quickfinder === overlay) quickfinder=null; };
-    const draw=() => { results.replaceChildren(); if (!found.length) { const empty=document.createElement('p'); empty.className='quickfinder-empty'; empty.textContent=input.value.startsWith('.') ? 'No indexed evidence found.' : 'No matching items.'; results.appendChild(empty); return; } selected=Math.max(0,Math.min(selected,found.length-1)); found.forEach((item,index) => { const button=document.createElement('button'); button.type='button'; button.className='quickfinder-result'; button.classList.toggle('active',index === selected); const copy=document.createElement('span'); const title=document.createElement('strong'); title.textContent=item.title; const meta=document.createElement('small'); meta.textContent=item.meta; copy.append(title,meta); if (item.snippet) { const snippet=document.createElement('p'); snippet.textContent=item.snippet; copy.appendChild(snippet); } const indexLabel=document.createElement('i'); indexLabel.textContent=String(index+1).padStart(2,'0'); button.append(indexLabel,copy); button.addEventListener('mouseenter',() => { if (selected === index) return; selected=index; results.querySelectorAll('.quickfinder-result').forEach((row,rowIndex) => row.classList.toggle('active',rowIndex === selected)); }); button.addEventListener('click',() => {close();item.action();}); results.appendChild(button); }); results.querySelector('.active')?.scrollIntoView({block:'nearest'}); };
+    const draw=() => { results.replaceChildren(); if (!found.length) { const empty=document.createElement('p'); empty.className='quickfinder-empty'; empty.textContent=input.value.startsWith('.') ? 'No indexed evidence found.' : 'No matching items.'; results.appendChild(empty); return; } selected=Math.max(0,Math.min(selected,found.length-1)); found.forEach((item,index) => { const button=document.createElement('button'); button.type='button'; button.className='quickfinder-result'; button.classList.toggle('active',index === selected); const copy=document.createElement('span'); const title=document.createElement('strong'); setInlineTitle(title,item.title); const meta=document.createElement('small'); meta.textContent=item.meta; copy.append(title,meta); if (item.snippet) { const snippet=document.createElement('p'); snippet.textContent=item.snippet; copy.appendChild(snippet); } const indexLabel=document.createElement('i'); indexLabel.textContent=String(index+1).padStart(2,'0'); button.append(indexLabel,copy); button.addEventListener('mouseenter',() => { if (selected === index) return; selected=index; results.querySelectorAll('.quickfinder-result').forEach((row,rowIndex) => row.classList.toggle('active',rowIndex === selected)); }); button.addEventListener('click',() => {close();item.action();}); results.appendChild(button); }); results.querySelector('.active')?.scrollIntoView({block:'nearest'}); };
     const itemSearch=(query:string) => { modeName.textContent='ITEMS'; modeHint.textContent='Enter open · . corpus'; const needle=normalize(query); found=payload.references.map((reference) => { const haystack=normalize([reference.title,reference.contributorsDisplay,reference.citeKey,reference.tags,...reference.keywords].join(' ')); const index=needle ? haystack.indexOf(needle) : 0; let cursor=0; let gaps=0; if (needle && index < 0) { for (const character of needle) { const next=haystack.indexOf(character,cursor); if (next < 0) return null; gaps+=next-cursor; cursor=next+1; } } return { reference,score:index >= 0 ? index : 1000+gaps }; }).filter((value):value is {reference:ReferenceRow;score:number} => Boolean(value)).sort((left,right) => left.score-right.score || left.reference.title.localeCompare(right.reference.title)).slice(0,18).map(({reference}) => ({ title:reference.title,meta:`@${reference.citeKey} · ${reference.contributorsDisplay || reference.fileType}`,action:() => controller.openDocument(reference.id) })); selected=0;draw(); };
     const corpusSearch=async (query:string) => { modeName.textContent='CORPUS · HYBRID'; modeHint.textContent='lexical + semantic + graph'; if (query.length < 2) { found=[];draw();return; } request?.abort(); request=new AbortController(); modeHint.textContent='searching lexical + semantic + graph…'; try { const response=await fetch(`/api/search/corpus?${new URLSearchParams({q:query,mode:'hybrid'})}`,{signal:request.signal}); const data=await response.json(); if (!response.ok) throw new Error(data.error || 'Search failed'); found=(data.items || []).slice(0,24).map((item:any) => ({ title:item.title,meta:[item.locator || item.section || `@${item.citeKey}`,...(item.channels || [])].filter(Boolean).join(' · '),snippet:String(item.snippet || '').replaceAll('‹','').replaceAll('›',''),action:() => { controller.openDocument(item.referenceId); if (item.page) navigatePdfToPage(item.referenceId,item.page); } })); selected=0; modeHint.textContent=`${found.length} fragments · lexical + semantic + graph`;draw(); } catch (error) { if ((error as Error).name === 'AbortError') return; found=[];modeHint.textContent=error instanceof Error ? error.message : 'Search failed';draw(); } };
     const update=() => { const value=input.value; window.clearTimeout(timer); if (value.startsWith('.')) timer=window.setTimeout(() => void corpusSearch(value.slice(1).trim()),180); else {request?.abort();itemSearch(value);} };

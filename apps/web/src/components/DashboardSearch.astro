@@ -16,6 +16,7 @@
 </section>
 
 <script>
+  import { safeInlineTitleHtml, setInlineTitle } from '../lib/inline-title';
   const form = document.querySelector<HTMLFormElement>('[data-search-form]');
   const input = form?.querySelector<HTMLInputElement>('input[name="q"]');
   const modes = [...(form?.querySelectorAll<HTMLInputElement>('input[name="mode"]') || [])];
@@ -43,7 +44,7 @@
     const list = document.createElement('div'); list.className = 'item-search-results';
     items.forEach((item) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'item-search-result';
-      const copy = document.createElement('span'); const title = document.createElement('strong'); title.textContent = String(item.title || 'Untitled');
+      const copy = document.createElement('span'); const title = document.createElement('strong'); setInlineTitle(title,item.title || 'Untitled');
       const meta = document.createElement('small'); meta.textContent = [item.citeKey ? `@${item.citeKey}` : '', item.persons, displayYear(item.year), item.type].filter(Boolean).join(' · ');
       const action = document.createElement('b'); action.textContent = 'Read'; copy.append(title, meta); button.append(copy, action);
       button.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seshat:open-reader', { detail: { id: String(item.id), title: String(item.title || 'Reader') } })));
@@ -78,14 +79,14 @@
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || 'Search failed');
       if (reasoning) {
         status.value = `${payload.sources.length} evidence fragments used · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
-        results.innerHTML = `<article class="corpus-reasoning"><h2>Evidence-grounded reading</h2><div>${esc(payload.answer).replaceAll('\n', '<br />')}</div><ol>${payload.sources.map((source: any) => `<li><a href="/library/${encodeURIComponent(source.referenceId)}">[${source.number}] @${esc(source.citeKey)} · ${esc(source.title)}${source.locator ? ` · ${esc(source.locator)}` : ''}</a></li>`).join('')}</ol></article>`;
+        results.innerHTML = `<article class="corpus-reasoning"><h2>Evidence-grounded reading</h2><div>${esc(payload.answer).replaceAll('\n', '<br />')}</div><ol>${payload.sources.map((source: any) => `<li><a href="/library/${encodeURIComponent(source.referenceId)}">[${source.number}] @${esc(source.citeKey)} · ${safeInlineTitleHtml(source.title)}${source.locator ? ` · ${esc(source.locator)}` : ''}</a></li>`).join('')}</ol></article>`;
         return;
       }
       status.value = `${payload.items.length} evidence fragments · vector ${payload.capabilities.vector ? 'online' : 'deferred'}`;
       const grouped = new Map<string, any[]>(); payload.items.forEach((item: any) => grouped.set(item.referenceId, [...(grouped.get(item.referenceId) || []), item]));
       results.innerHTML = [...grouped.values()].map((items) => {
         const first = items[0]; const occurrences = items.reduce((sum, item) => sum + Number(item.occurrences || 0), 0);
-        return `<article class="corpus-result-group"><header><div><span>@${esc(first.citeKey)}</span><h2><a href="/library/${encodeURIComponent(first.referenceId)}">${esc(first.title)}</a></h2></div><strong>${occurrences || items.length} ${occurrences === 1 ? 'occurrence' : 'occurrences'}</strong></header><ol>${items.map((item) => `<li><a href="/library/${encodeURIComponent(item.referenceId)}${item.page ? `?page=${encodeURIComponent(item.page)}&q=${encodeURIComponent(query)}` : ''}"><b>${esc(item.locator || item.section || `fragment ${item.metadata?.ordinal ?? ''}`)}</b><p>${renderSnippet(item.snippet)}</p><small>${item.channels.map(esc).join(' · ')}</small></a></li>`).join('')}</ol></article>`;
+        return `<article class="corpus-result-group"><header><div><span>@${esc(first.citeKey)}</span><h2><a href="/library/${encodeURIComponent(first.referenceId)}">${safeInlineTitleHtml(first.title)}</a></h2></div><strong>${occurrences || items.length} ${occurrences === 1 ? 'occurrence' : 'occurrences'}</strong></header><ol>${items.map((item) => `<li><a href="/library/${encodeURIComponent(item.referenceId)}${item.page ? `?page=${encodeURIComponent(item.page)}&q=${encodeURIComponent(query)}` : ''}"><b>${esc(item.locator || item.section || `fragment ${item.metadata?.ordinal ?? ''}`)}</b><p>${renderSnippet(item.snippet)}</p><small>${item.channels.map(esc).join(' · ')}</small></a></li>`).join('')}</ol></article>`;
       }).join('') || '<div class="search-empty">No evidence found in the indexed corpus.</div>';
     } catch (error: any) { status.value = error?.message || 'Search failed'; }
   };

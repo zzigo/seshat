@@ -100,6 +100,10 @@ test('parses and validates BCE publication years without a year zero', () => {
   assert.equal(parsePublicationYear('0350-00-00 -350'), -350);
   assert.equal(parsePublicationYear('350 BCE'), -350);
   assert.equal(parsePublicationYear('-350'), -350);
+  assert.equal(parsePublicationYear('May 20, 2021'), 2021);
+  assert.equal(parsePublicationYear('23/1998'), 1998);
+  assert.equal(parsePublicationYear('2018-03'), 2018);
+  assert.equal(parsePublicationYear('270'), 270);
   assert.equal(parsePublicationYear('0'), undefined);
   assert.equal(formatPublicationYear(-350), '350 BCE');
   const report = evaluateReferenceHealth({ ...completeItem, issued: { year: -350 } }, '2026-06-30T00:00:00.000Z');
