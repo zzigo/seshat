@@ -4,7 +4,7 @@ import { getCatalog, ownerKeyFor } from '../../../../../lib/catalog';
 import { buildDocumentStructure } from '../../../../../lib/document-structure';
 import { getWasabiBucket, getWasabiClient } from '../../../../../lib/wasabi';
 
-const allowed = new Set(['markdown', 'structure', 'chunks', 'docling-json', 'html', 'reader-pdf']);
+const allowed = new Set(['markdown', 'structure', 'chunks', 'docling-json', 'html', 'reader-pdf', 'djvu-text']);
 
 export const GET: APIRoute = async ({ locals, params }) => {
   const email = String((locals.session as any)?.user?.email || '');

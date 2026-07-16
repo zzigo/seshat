@@ -150,6 +150,7 @@ The username opens `/dashboard`, which aggregates items, exact extracted word co
 | `structure.json` | `structure` | Compact heading tree with `id`, `level`, `title`, `parentId`, `sourceLine` |
 | `document.html` | `html` | Sanitized Reader Mode representation for WebArchive sources |
 | `document.pdf` | `reader-pdf` | PDF reader representation for DjVu sources; the original remains intact |
+| `djvu-text.json` | `djvu-text` | Native word coordinates used to rebuild a selectable DjVu text layer |
 | `manifest.json` | transport-only | Source hash, parser provenance and derivative inventory |
 
 Plain text follows a lightweight path without Docling. OCR is opt-in in the Python CLI; the production worker does not yet enable OCR or implement a scanned-document retry policy.

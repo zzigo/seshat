@@ -87,6 +87,7 @@ def _artifact(path: Path) -> GeneratedArtifact:
             "structure.json": "structure",
             "document.html": "html",
             "document.pdf": "reader-pdf",
+            "djvu-text.json": "djvu-text",
         }.get(path.name, "derived"),
         filename=path.name,
         media_type=media_type,
@@ -294,6 +295,7 @@ def ingest_document(
     output_dir.mkdir(parents=True, exist_ok=True)
     html_bytes: bytes | None = None
     reader_pdf: Path | None = None
+    djvu_text_bytes: bytes | None = None
     custom_structure: dict[str, Any] | None = None
     effective_ocr = request.ocr
     if source.suffix.lower() in {".djvu", ".djv"}:
@@ -304,6 +306,7 @@ def ingest_document(
         markdown_bytes = extracted["markdown"].encode("utf-8")
         chunk_rows = extracted["chunks"]
         custom_structure = extracted["structure"]
+        djvu_text_bytes = json.dumps(extracted["textLayer"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         effective_ocr = bool(extracted["metadata"].get("ocrApplied"))
         if not chunk_rows:
             conversion = (converter or _default_converter(ocr=True)).convert(reader_pdf)
@@ -355,6 +358,7 @@ def ingest_document(
         _write(output_dir / "structure.json", structure_bytes),
         *(() if html_bytes is None else (_write(output_dir / "document.html", html_bytes),)),
         *(() if reader_pdf is None else (_artifact(reader_pdf),)),
+        *(() if djvu_text_bytes is None else (_write(output_dir / "djvu-text.json", djvu_text_bytes),)),
     )
     timestamp = (now or (lambda: datetime.now(UTC).isoformat()))()
     manifest = IngestManifest(

@@ -9,7 +9,8 @@ The ingestion package converts an ephemeral local PDF, EPUB, document, WebArchiv
 
 Safari WebArchives additionally produce a sanitized `document.html` reader. DjVu files
 keep the original untouched and produce a `document.pdf` reader derivative with a text
-layer when OCRmyPDF is available. DjVuLibre supplies the page conversion and native text.
+layer reconstructed from DjVu's native word coordinates. DjVuLibre supplies the page
+conversion and native text; OCR is a fallback when the source has no hidden text.
 
 Wasabi transport is deliberately outside the parser. A deployment downloads an object into
 a temporary directory, runs this package, uploads derivatives, records their object keys

@@ -165,7 +165,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       new MutationObserver(()=>postState({readLabel:read.textContent||'Read',readState:read.dataset.readerState||'idle'})).observe(read,{attributes:true,childList:true,subtree:true,attributeFilter:['data-reader-state']});
       const mount=async()=>{
         void fetch(`/api/library/${encodeURIComponent(data.id)}/reading-state`,{method:'PATCH'});
-        if(pdfLike)await mountPdfViewer(surface,data.id,data.title,report,data.format==='pdf'?undefined:`/api/library/${encodeURIComponent(data.id)}/artifact/reader-pdf`);
+        if(pdfLike)await mountPdfViewer(surface,data.id,data.title,report,data.format==='pdf'?undefined:`/api/library/${encodeURIComponent(data.id)}/artifact/reader-pdf`,data.format==='pdf'?undefined:`/api/library/${encodeURIComponent(data.id)}/artifact/djvu-text`);
         else if(data.format==='epub')await mountEpubReader(surface,data.id,data.title,report);
         else if(data.format==='webarchive')await mountHtmlReader(surface,data.id,data.title,report);
         else{surface.classList.add('pod-reading-surface');const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/markdown`);if(!response.ok)throw new Error('Extracted text is not available.');const pre=document.createElement('pre');pre.textContent=await response.text();surface.appendChild(pre);}

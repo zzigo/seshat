@@ -1371,7 +1371,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if (reference.format === 'pdf' || ['djvu', 'djv'].includes(reference.format)) {
       body.classList.add('pod-pdf-body'); const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
       const sourceUrl = reference.format === 'pdf' ? undefined : `/api/library/${encodeURIComponent(reference.id)}/artifact/reader-pdf`;
-      void mountPdfViewer(body, reference.id, reference.title, setSaveState, sourceUrl).then((dispose) => {
+      const textOverlayUrl = reference.format === 'pdf' ? undefined : `/api/library/${encodeURIComponent(reference.id)}/artifact/djvu-text`;
+      void mountPdfViewer(body, reference.id, reference.title, setSaveState, sourceUrl, textOverlayUrl).then((dispose) => {
         if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
       }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'Document viewer unavailable'; });
     } else if (reference.format === 'epub') {

@@ -508,6 +508,7 @@ html { max-width: 100%; overflow: hidden; }
 .textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--text-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
 .textLayer .markedContent { display: contents; }
 .textLayer span[role="img"] { user-select: none; cursor: default; }
+.textLayer .djvu-text-word { display:block; }
 .textLayer ::selection { background: rgba(46,168,229,.34); }
 .textLayer br::selection { background: transparent; }
 .textLayer .endOfContent { position: absolute; z-index: 0; inset: 100% 0 0; display: block; user-select: none; cursor: default; }

@@ -20,6 +20,7 @@ type PdfAnchor = {
   sourceKind: 'pdf'; page: number; locator: string;
   rects: Array<{ x: number; y: number; width: number; height: number }>;
 };
+type DjvuTextLayer = { pages?: Array<{ width:number; height:number; words?:Array<{x0:number;y0:number;x1:number;y1:number;text:string}> }> };
 
 export async function mountPdfViewer(
   element: HTMLElement,
@@ -27,6 +28,7 @@ export async function mountPdfViewer(
   title: string,
   report: (message: string, tone?: 'ready' | 'saving' | 'error') => void,
   sourceUrl = `/api/library/${encodeURIComponent(referenceId)}/original`,
+  textOverlayUrl?: string,
 ): Promise<() => void> {
   const shell = document.createElement('div'); shell.className = 'seshat-pdf-shell';
   const viewer = document.createElement('div'); viewer.className = 'seshat-pdf-viewer';
@@ -74,7 +76,10 @@ export async function mountPdfViewer(
   const dialogs = new Set<HTMLDialogElement>();
   const renderTasks = new Set<{ cancel: () => void }>();
   const loadingTask = getDocument({ url: sourceUrl, withCredentials: true });
-  const pdf = await loadingTask.promise;
+  const textOverlayPromise:Promise<DjvuTextLayer|null>=textOverlayUrl
+    ? fetch(textOverlayUrl,{cache:'no-store'}).then((response)=>response.ok?response.json():null).catch(()=>null)
+    : Promise.resolve(null);
+  const [pdf,djvuTextLayer] = await Promise.all([loadingTask.promise,textOverlayPromise]);
   if (disposed) { await pdf.destroy(); return () => undefined; }
   const [annotationResponse,readingStateResponse] = await Promise.all([
     fetch(`/api/library/${referenceId}/annotations`),
@@ -134,8 +139,15 @@ export async function mountPdfViewer(
     const task = page.render({ canvas, canvasContext: context, viewport, transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] });
     renderTasks.add(task); await task.promise.catch(() => undefined); renderTasks.delete(task); if (disposed) return;
     const textLayerElement = pageElement.querySelector<HTMLElement>('.textLayer')!;
-    const textLayer = new TextLayer({ textContentSource: await page.getTextContent(), container: textLayerElement, viewport });
-    await textLayer.render(); renderHighlights(pageElement); pageElement.classList.add('rendered');
+    const overlay=djvuTextLayer?.pages?.[pageNumber-1];
+    if(overlay?.words?.length){
+      textLayerElement.replaceChildren();
+      for(const word of overlay.words){const span=document.createElement('span');span.className='djvu-text-word';span.textContent=`${word.text} `;span.style.left=`${(word.x0/overlay.width)*100}%`;span.style.top=`${((overlay.height-word.y1)/overlay.height)*100}%`;span.style.width=`${((word.x1-word.x0)/overlay.width)*100}%`;span.style.height=`${((word.y1-word.y0)/overlay.height)*100}%`;span.style.setProperty('--font-height',String(((word.y1-word.y0)/overlay.height)*base.height));textLayerElement.appendChild(span);}
+    }else{
+      const textLayer = new TextLayer({ textContentSource: await page.getTextContent(), container: textLayerElement, viewport });
+      await textLayer.render();
+    }
+    renderHighlights(pageElement); pageElement.classList.add('rendered');
     parent.dispatchEvent(new CustomEvent('seshat:pdf-page-rendered',{detail:{page:pageNumber}}));
   };
 

@@ -156,13 +156,15 @@ class IngestPipelineTest(unittest.TestCase):
                     "markdown": "# old-score\n\n## Page 1\n\nFirst page.\n\n## Page 2\n\nSecond page.\n",
                     "chunks": [{"id": 0, "text": "First page.", "metadata": {"page": 1}}],
                     "structure": {"schemaVersion": 2, "sections": [{"id": "page-1", "level": 2, "title": "Page 1", "page": 1}], "blocks": []},
+                    "textLayer": {"schemaVersion": 1, "pages": [{"width": 100, "height": 200, "words": [{"x0": 10, "y0": 20, "x1": 30, "y1": 40, "text": "First"}]}]},
                 }
 
             with patch("seshat_ingest.pipeline.extract_djvu", side_effect=fake_extract):
                 result = ingest_document(IngestRequest("ref:djvu", "artifact:djvu", source, root / "out"))
             self.assertEqual(result.parser, "djvulibre")
-            self.assertEqual(result.artifacts[-1].kind, "reader-pdf")
-            self.assertEqual(result.artifacts[-1].media_type, "application/pdf")
+            self.assertEqual(result.artifacts[-2].kind, "reader-pdf")
+            self.assertEqual(result.artifacts[-2].media_type, "application/pdf")
+            self.assertEqual(result.artifacts[-1].kind, "djvu-text")
             self.assertEqual((root / "out" / "document.pdf").read_bytes(), b"%PDF-1.7 reader")
             structure = json.loads((root / "out" / "structure.json").read_text())
             self.assertEqual(structure["sections"][0]["page"], 1)
