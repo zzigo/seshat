@@ -104,12 +104,16 @@ const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress
   <body class="workspace-body">
     <div class="workspace-app properties-open" data-seshat-workspace>
       <header class="workspace-bar">
-        <a class="workspace-brand" href="/" aria-label="Seshat home"><span>𓋇</span><strong>Seshat</strong></a>
+        <div class="workspace-brand">
+          {zoteroStatus.connected
+            ? <button type="button" class:list={['zotero-sync-wheel',zoteroStatus.syncing&&'is-syncing']} data-zotero-sync data-tooltip={zoteroTooltip} data-syncing={String(zoteroStatus.syncing)} title={zoteroTooltip} aria-label={zoteroTooltip}><span class="zotero-sync-glyph" aria-hidden="true">𓋇</span></button>
+            : <span class="workspace-brand-mark" aria-hidden="true">𓋇</span>}
+          <a href="/dashboard" aria-label="Seshat home"><strong>Seshat</strong></a>
+        </div>
         <nav class="workspace-tools" aria-label="Workspace tools">
           <button type="button" data-open-tool="agent">AI agent</button>
           <button type="button" data-open-tool="graph">Knowledge Graph</button>
           <button type="button" data-open-tool="search">Corpus Search</button>
-          {zoteroStatus.connected && <button type="button" class:list={['zotero-sync-wheel',zoteroStatus.syncing&&'is-syncing']} data-zotero-sync data-tooltip={zoteroTooltip} data-syncing={String(zoteroStatus.syncing)} title={zoteroTooltip} aria-label={zoteroTooltip}><span class="zotero-sync-glyph" aria-hidden="true">𓋇</span></button>}
         </nav>
         <div class="workspace-session">
           <button type="button" data-toggle-theme title="Toggle dark/light theme" style="border:0; background:transparent; font-size:13px; color:var(--muted); cursor:pointer; padding:0 8px;">☼</button>

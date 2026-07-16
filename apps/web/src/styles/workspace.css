@@ -74,13 +74,17 @@ html { max-width: 100%; overflow: hidden; }
 }
 .workspace-bar { width:100%; min-width:0; max-width:100%; display: grid; grid-template-columns: var(--sidebar-width) minmax(210px,1fr) auto auto; align-items: center; overflow:hidden; border: 0; background: var(--chrome); transition: grid-template-columns 0.18s cubic-bezier(0.4, 0, 0.2, 1); }
 .workspace-brand { height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 0; text-decoration: none; font: 14px Georgia,serif; transition: opacity 0.15s ease, width 0.15s ease, padding 0.15s ease; }
-.workspace-brand span { color: var(--gold); font-size: 15px; }
+.workspace-brand > a { color:var(--ink); text-decoration:none; }
+.workspace-brand > a:hover { color:var(--green); }
+.workspace-brand-mark,
+.workspace-brand .zotero-sync-wheel { display:grid; place-items:center; width:20px; min-width:20px; height:100%; padding:0; border:0; color:var(--gold); background:transparent; font:17px/1 Georgia,serif; cursor:default; }
+.workspace-brand .zotero-sync-wheel { cursor:pointer; }
+.workspace-brand .zotero-sync-wheel:hover { color:var(--green-bright); }
 .workspace-context { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0 14px; font: 9px monospace; letter-spacing: .08em; text-transform: uppercase; }
 .workspace-context span { color: var(--muted); }
 .workspace-tools, .workspace-session { min-width:0; display: flex; align-items: center; height: 100%; border: 0; }
 .workspace-tools button, .workspace-session button { height: 100%; padding: 0 8px; border: 0; color: var(--ink); background: transparent; font: 8px monospace; text-transform: uppercase; cursor: pointer; }
 .workspace-tools button:hover { background: rgba(61,122,88,.09); }
-.workspace-tools .zotero-sync-wheel { position:relative; width:34px; min-width:34px; padding:0; color:var(--gold); font:18px/1 Georgia,serif; text-transform:none; }
 .zotero-sync-glyph { display:block; transform-origin:50% 50%; }
 .zotero-sync-wheel.is-syncing .zotero-sync-glyph { animation:zotero-sync-turn 1.15s linear infinite; }
 .zotero-sync-wheel.is-success { color:var(--green-bright); }
@@ -882,8 +886,6 @@ html { max-width: 100%; overflow: hidden; }
     white-space: nowrap !important;
     height: auto !important;
   }
-  .workspace-tools .zotero-sync-wheel { min-width:40px !important; padding:7px 10px !important; font-size:20px !important; }
-
   .workspace-tools button:hover, .workspace-tools button:active {
     background: rgba(61, 122, 88, 0.2) !important;
   }
