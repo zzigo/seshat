@@ -14,6 +14,7 @@
     "test:packages": "npm run test --workspaces --if-present",
     "test:python": "PYTHONPATH=services/ingest python3 -m unittest discover -s services/ingest/test -v",
     "migrate:contributors": "node scripts/migrate-contributors.mjs",
+    "repair:attachment-separators": "node scripts/repair-attachment-separators.mjs",
     "backfill:words": "node scripts/backfill-word-counts.mjs",
     "backfill:retrieval": "node scripts/backfill-retrieval.mjs",
     "backfill:openalex-graphs": "node scripts/backfill-openalex-graphs.mjs",

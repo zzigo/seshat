@@ -28,6 +28,6 @@ export const zoteroStyleAttachmentName = (input: {
   const creator = firstCreator(input.contributors);
   const year = safePart(input.issued?.year).slice(0, 4);
   const title = [...safePart(input.title)].slice(0, 100).join('');
-  const stem = [creator, year, title].filter(Boolean).join('*') || 'Untitled reference';
+  const stem = [creator, year, title].filter(Boolean).join('_') || 'Untitled reference';
   return `${stem}${extension}`;
 };
