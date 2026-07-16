@@ -15,7 +15,16 @@ import {
   normalizeSmartFolderFilters,
   referenceMatchesSmartFolder,
   type BibliographicItem,
+  fixAllCapsCase,
+  isAllCapsText,
 } from '../src/index.js';
+
+test('naturalizes all-caps bibliographic text while preserving acronyms and particles', () => {
+  assert.equal(isAllCapsText('THE PERCEPTION OF AI IN MUSIC'), true);
+  assert.equal(fixAllCapsCase('THE PERCEPTION OF AI IN MUSIC'), 'The Perception of AI in Music');
+  assert.equal(fixAllCapsCase('JUAN DE LA CRUZ'), 'Juan de la Cruz');
+  assert.equal(fixAllCapsCase('Already Natural'), 'Already Natural');
+});
 
 const completeItem: BibliographicItem = {
   id: 'zotero:ABCD1234',

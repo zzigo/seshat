@@ -8,3 +8,4 @@ export * from './scholarly.js';
 export * from './openalex.js';
 export * from './publication-year.js';
 export * from './smart-folders.js';
+export * from './text-case.js';

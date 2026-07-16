@@ -4,7 +4,7 @@ import { adjacentPdfPage } from '../lib/pdf-navigation';
 import type { BaseRenderer } from 'handsontable/renderers';
 import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
-import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, potentialDuplicateFingerprint, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
+import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, fixAllCapsCase, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, potentialDuplicateFingerprint, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
@@ -341,6 +341,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       setSaveState(result.storageRename?.to ? 'saved · Wasabi file renamed' : 'saved', 'ready');
       window.setTimeout(() => setSaveState('ready'), 1500);
     }
+    return result;
   };
 
   const scheduleSave = (row: ReferenceRow) => {
@@ -592,6 +593,29 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const confirmed=await confirmAction('Delete duplicate items',`Permanently delete ${editable.length} selected ${editable.length===1?'item':'items'} and every stored file attached to them?`,'Delete items and files');
     if(confirmed)await deleteReferences(editable);
   };
+  const caseFixFields=new Set(['title','subtitle','titleaddon','shorttitle','journaltitle','booktitle','maintitle','eventtitle','series','institution','organization','school']);
+  const caseFixReferences=async(ids:string[])=>{
+    const rows=[...new Set(ids)].map((id)=>references.get(id)).filter((row):row is ReferenceRow=>Boolean(row&&row.access==='owner'));
+    if(!rows.length){setSaveState('no editable references selected','error');return;}
+    setSaveState(`applying Case Fix to ${rows.length} ${rows.length===1?'item':'items'}…`,'saving');
+    let completed=0,failed=0;
+    for(const row of rows){
+      const previous={...row,contributors:row.contributors.map((person)=>({...person})),bibliographicFields:{...row.bibliographicFields}};
+      row.title=fixAllCapsCase(row.title);
+      row.contributors=row.contributors.map((person)=>({...person,family:person.family?fixAllCapsCase(person.family):person.family,given:person.given?fixAllCapsCase(person.given):person.given,literal:person.literal?fixAllCapsCase(person.literal):person.literal}));
+      row.contributorsDisplay=contributorSummary(row.contributors);
+      row.publisher=fixAllCapsCase(row.publisher);
+      row.publisherPlace=fixAllCapsCase(row.publisherPlace);
+      row.bibliographicFields=Object.fromEntries(Object.entries(row.bibliographicFields).map(([key,value])=>[key,caseFixFields.has(key)?fixAllCapsCase(value):value]));
+      try{
+        const result=await saveReference(row);
+        if(result.reference)upsertRow(rowFromCatalogReference(result.reference));
+        if(result.storageRename?.ok===false)failed+=1;else completed+=1;
+      }catch(error){Object.assign(row,previous);failed+=1;console.error('[seshat:case-fix]',row.id,error);}
+    }
+    refreshTable();renderTree(search.value);if(activeReference)renderProperties(activeReference);
+    setSaveState(failed?`Case Fix complete · ${completed} updated · ${failed} failed`:`Case Fix complete · ${completed} ${completed===1?'item':'items'} updated`,failed?'error':'ready');
+  };
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
@@ -600,6 +624,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     return [
     { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
+    { label: `Case Fix${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => caseFixReferences(editableIds) },
     { label: `Copy APA citation${ids.length > 1 ? `s (${ids.length})` : ''}`, shortcut:'A', action: () => copyReferences(ids, 'apa') },
     { label: `Copy Better BibTeX${ids.length > 1 ? ` (${ids.length})` : ''}`, shortcut:'B', action: () => copyReferences(ids, 'bibtex') },
     { label: 'Upload associated file…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => pickAssociatedFile(editableIds[0]) },
