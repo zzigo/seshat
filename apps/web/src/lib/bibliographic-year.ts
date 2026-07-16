@@ -29,10 +29,14 @@ const explicitDateValues = (reference: YearReference): Array<{ label: string; va
 const hasUnambiguousYear = (value: string): boolean => /-\d{1,4}|\d{1,4}\s*BCE?|(?:^|\D)\d{4}(?:\D|$)/i.test(value);
 
 export const storedYearCandidate = (reference: YearReference): BibliographicYearCandidate | null => {
+  const currentYear = parsePublicationYear(reference.issued?.year);
   for (const item of explicitDateValues(reference)) {
     if (!hasUnambiguousYear(item.value)) continue;
     const year = parsePublicationYear(item.value);
     if (year === undefined) continue;
+    // A secondary import must not displace an already plausible work year.
+    // The known corruption stores a calendar day/month (1-31) as the year.
+    if (currentYear !== undefined && year !== currentYear && !(currentYear > 0 && currentYear <= 31)) continue;
     return {
       year,
       provider: 'source-date',
@@ -70,4 +74,3 @@ export const crossrefPublicationYear = (message: Record<string, any>): number | 
     .filter((year: number) => Number.isInteger(year) && year > 0);
   return years.length ? Math.min(...years) : undefined;
 };
-

@@ -7,8 +7,12 @@ test('recovers the four-digit year from a Zotero full date',()=>{
 });
 
 test('does not classify an intact ancient year as externally repairable',()=>{
-  assert.equal(storedYearCandidate({issued:{year:270,literal:'270'},source:{provider:'zotero'}}),null);
+  assert.equal(storedYearCandidate({issued:{year:270,literal:'0270-01-01'},source:{provider:'zotero'}})?.year,270);
   assert.equal(needsExternalYearEvidence({type:'book',issued:{year:270},identifiers:{}}),false);
+});
+
+test('does not replace a plausible modern year with a conflicting secondary import',()=>{
+  assert.equal(storedYearCandidate({issued:{year:2016},source:{provider:'zotero',bibtex:{year:'2012'}}}),null);
 });
 
 test('requests external evidence for a modern scholarly record with a corrupted short year',()=>{
