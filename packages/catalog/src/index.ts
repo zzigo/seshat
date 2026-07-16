@@ -570,10 +570,16 @@ const schema = `
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   );
-  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS continuous_sync boolean NOT NULL DEFAULT true;
-  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS sync_interval_minutes integer NOT NULL DEFAULT 15;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS continuous_sync boolean NOT NULL DEFAULT false;
+  ALTER TABLE catalog_zotero_connections ALTER COLUMN continuous_sync SET DEFAULT false;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS sync_interval_minutes integer NOT NULL DEFAULT 60;
+  ALTER TABLE catalog_zotero_connections ALTER COLUMN sync_interval_minutes SET DEFAULT 60;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS idle_sync_checks integer NOT NULL DEFAULT 0;
+  ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS continuous_sync_auto_disabled_at timestamptz;
   ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS last_checked_at timestamptz;
   ALTER TABLE catalog_zotero_connections ADD COLUMN IF NOT EXISTS sync_started_at timestamptz;
+  CREATE INDEX IF NOT EXISTS catalog_zotero_connections_due_idx
+    ON catalog_zotero_connections(last_checked_at) WHERE continuous_sync=true;
   CREATE TABLE IF NOT EXISTS catalog_zotero_collections (
     owner_key text NOT NULL,
     zotero_key text NOT NULL,

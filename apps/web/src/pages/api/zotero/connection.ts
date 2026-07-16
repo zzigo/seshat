@@ -25,8 +25,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!validMode(syncMode)) return Response.json({ error: 'invalid_sync_mode' }, { status: 400 });
   const apiKey = String(body?.apiKey || '').trim();
   const analyzeAutomatically = body?.analyzeAutomatically !== false;
-  const continuousSync = body?.continuousSync !== false;
-  const syncIntervalMinutes = Math.max(5, Math.min(1440, Number(body?.syncIntervalMinutes || 15)));
+  const continuousSync = body?.continuousSync === true;
+  const syncIntervalMinutes = Math.max(5, Math.min(1440, Number(body?.syncIntervalMinutes || 60)));
   const ownerKey = ownerKeyFor(identity.email);
   try {
     const status = apiKey

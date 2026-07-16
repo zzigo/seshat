@@ -18,6 +18,8 @@ export interface ZoteroConnectionStatus {
   apiKeyStored?: boolean;
   continuousSync?: boolean;
   syncIntervalMinutes?: number;
+  idleSyncChecks?: number;
+  continuousSyncAutoDisabledAt?: string;
   syncing?: boolean;
 }
 
@@ -58,10 +60,12 @@ const statusFromRow = (row: any): ZoteroConnectionStatus => row ? ({
   lastCheckedAt: row.last_checked_at ? new Date(row.last_checked_at).toISOString() : undefined,
   lastError: row.last_error || undefined,
   apiKeyStored: Boolean(row.api_key_ciphertext),
-  continuousSync: row.continuous_sync !== false,
-  syncIntervalMinutes: Math.max(5, Number(row.sync_interval_minutes || 15)),
+  continuousSync: row.continuous_sync === true,
+  syncIntervalMinutes: Math.max(5, Number(row.sync_interval_minutes || 60)),
+  idleSyncChecks: Math.max(0, Number(row.idle_sync_checks || 0)),
+  continuousSyncAutoDisabledAt: row.continuous_sync_auto_disabled_at ? new Date(row.continuous_sync_auto_disabled_at).toISOString() : undefined,
   syncing: Boolean(row.sync_started_at),
-}) : { connected: false };
+}) : { connected: false, continuousSync: false, syncIntervalMinutes: 60, idleSyncChecks: 0 };
 
 export const getZoteroConnectionStatus = async (ownerKey: string): Promise<ZoteroConnectionStatus> => {
   const catalog = getCatalog(); await catalog.ensureSchema();
@@ -105,9 +109,10 @@ export const saveZoteroConnection = async (input: {
        library_type=excluded.library_type,library_id=excluded.library_id,username=excluded.username,
        api_key_ciphertext=excluded.api_key_ciphertext,sync_mode=excluded.sync_mode,
        analyze_automatically=excluded.analyze_automatically,continuous_sync=excluded.continuous_sync,
-       sync_interval_minutes=excluded.sync_interval_minutes,last_error=NULL,updated_at=now()`,
+       sync_interval_minutes=excluded.sync_interval_minutes,idle_sync_checks=0,
+       continuous_sync_auto_disabled_at=NULL,last_error=NULL,updated_at=now()`,
     [input.ownerKey, String(info.userID), info.username, encryptApiKey(input.apiKey.trim()), input.syncMode, input.analyzeAutomatically,
-      input.continuousSync, Math.max(5, Math.min(1440, Math.floor(input.syncIntervalMinutes || 15)))],
+      input.continuousSync, Math.max(5, Math.min(1440, Math.floor(input.syncIntervalMinutes || 60)))],
   );
   return getZoteroConnectionStatus(input.ownerKey);
 };
@@ -127,9 +132,9 @@ export const updateZoteroConnectionSettings = async (
   const catalog = getCatalog(); await catalog.ensureSchema();
   const result = await catalog.pool.query(
     `UPDATE catalog_zotero_connections SET sync_mode=$2,analyze_automatically=$3,continuous_sync=$4,
-       sync_interval_minutes=$5,updated_at=now()
+       sync_interval_minutes=$5,idle_sync_checks=0,continuous_sync_auto_disabled_at=NULL,updated_at=now()
      WHERE owner_key=$1 RETURNING owner_key`,
-    [ownerKey, syncMode, analyzeAutomatically, continuousSync, Math.max(5, Math.min(1440, Math.floor(syncIntervalMinutes || 15)))],
+    [ownerKey, syncMode, analyzeAutomatically, continuousSync, Math.max(5, Math.min(1440, Math.floor(syncIntervalMinutes || 60)))],
   );
   if (!result.rows[0]) throw new Error('ZOTERO_NOT_CONNECTED');
   return getZoteroConnectionStatus(ownerKey);
@@ -150,7 +155,9 @@ export const updateZoteroSyncState = async (ownerKey: string, input: { libraryVe
   await catalog.pool.query(
     `UPDATE catalog_zotero_connections SET library_version=COALESCE($2,library_version),
        last_synced_at=CASE WHEN $3::text IS NULL THEN now() ELSE last_synced_at END,
-       last_error=$3,updated_at=now() WHERE owner_key=$1`,
+       last_error=$3,idle_sync_checks=CASE WHEN $3::text IS NULL THEN 0 ELSE idle_sync_checks END,
+       continuous_sync_auto_disabled_at=CASE WHEN $3::text IS NULL THEN NULL ELSE continuous_sync_auto_disabled_at END,
+       updated_at=now() WHERE owner_key=$1`,
     [ownerKey, input.libraryVersion ?? null, input.error ?? null],
   );
 };

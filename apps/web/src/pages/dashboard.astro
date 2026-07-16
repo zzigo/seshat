@@ -8,6 +8,7 @@ import { BOOKMARK_GROUP_COLORS, BOOKMARK_GROUP_ICONS } from '../lib/bookmark-gro
 import { chirpAccessAllowed } from '../lib/chirp-access';
 import { chirpMonth, CHIRP_VOICES, DEFAULT_CHIRP_LIMIT, nextChirpRenewal } from '../lib/chirp';
 import { detectEmergence } from '../lib/emergence';
+import { DEFAULT_ZOTERO_BEACON_IDLE_LIMIT } from '../lib/zotero-beacon';
 import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 import { readingProgressPercent } from '../lib/reading-progress';
 
@@ -69,6 +70,21 @@ const themePresets = [
   { id:'graphite', mode:'dark', label:'Graphite', paper:'#161719', ink:'#f2f2f2', accent:'#93a880' },
   { id:'high-dark', mode:'dark', label:'High contrast', paper:'#050505', ink:'#ffffff', accent:'#62d39a' },
 ] as const;
+const zoteroIntervals = [
+  { minutes:5, label:'5 minutes' },
+  { minutes:15, label:'15 minutes' },
+  { minutes:30, label:'30 minutes' },
+  { minutes:60, label:'1 hour' },
+  { minutes:180, label:'3 hours' },
+  { minutes:360, label:'6 hours' },
+  { minutes:720, label:'12 hours' },
+  { minutes:1440, label:'24 hours' },
+] as const;
+const zoteroBeaconState = !zoteroStatus.connected
+  ? 'not connected'
+  : zoteroStatus.continuousSync
+    ? `${zoteroStatus.username} · beacon on · idle ${zoteroStatus.idleSyncChecks || 0}/${DEFAULT_ZOTERO_BEACON_IDLE_LIMIT}`
+    : `${zoteroStatus.username} · ${zoteroStatus.continuousSyncAutoDisabledAt ? 'beacon auto-paused' : 'beacon off'}`;
 ---
 
 <Shell title="Dashboard — Seshat">
@@ -220,7 +236,7 @@ const themePresets = [
     <section class="dashboard-panel zotero-panel dashboard-setup-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)} data-dashboard-setup data-setup-id="zotero">
       <header>
         <div><span>Bibliography bridge</span><h2>Zotero synchronization</h2></div>
-        <div class="setup-panel-actions"><small data-zotero-state>{zoteroStatus.connected ? `${zoteroStatus.username} · ${zoteroStatus.continuousSync === false ? 'connected' : 'continuous sync'}` : 'not connected'}</small><button type="button" data-setup-toggle aria-label="Expand Zotero synchronization" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
+        <div class="setup-panel-actions"><small data-zotero-state>{zoteroBeaconState}</small><button type="button" data-setup-toggle aria-label="Expand Zotero synchronization" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
       </header>
       <form data-zotero-form>
         <label class="zotero-key-field"><span>Zotero API key</span><input type="password" name="apiKey" autocomplete="off" placeholder={zoteroStatus.connected ? 'Leave blank to keep the stored key' : 'Paste a library API key'} /><small class="zotero-credential-state" data-zotero-credential data-stored={String(zoteroStatus.apiKeyStored)}>{zoteroStatus.apiKeyStored ? '● key stored encrypted on the server' : 'No key stored'}</small></label>
@@ -231,9 +247,9 @@ const themePresets = [
         </select></label>
         <label class="zotero-analysis-check"><input type="checkbox" name="analyzeAutomatically" checked={zoteroStatus.analyzeAutomatically !== false} /><span><b>Analyze linked files automatically</b><small>Turn off before a massive first synchronization.</small></span></label>
         <div class="zotero-sync-schedule">
-          <label class="zotero-continuous-check"><input type="checkbox" name="continuousSync" checked={zoteroStatus.continuousSync !== false} /><span><b>Continuous synchronization</b><small>The key remains encrypted on the server; this page does not need to stay open.</small></span></label>
+          <label class="zotero-continuous-check"><input type="checkbox" name="continuousSync" checked={zoteroStatus.continuousSync === true} /><span><b>Zotero beacon · continuous synchronization</b><small>Off by default. It auto-pauses after {DEFAULT_ZOTERO_BEACON_IDLE_LIMIT} successful checks without changes; errors do not count.</small></span></label>
           <label><span>Check Zotero every</span><select name="syncIntervalMinutes">
-            {[5, 15, 30, 60].map((minutes) => <option value={minutes} selected={(zoteroStatus.syncIntervalMinutes || 15) === minutes}>{minutes} minutes</option>)}
+            {zoteroIntervals.map((interval) => <option value={interval.minutes} selected={(zoteroStatus.syncIntervalMinutes || 60) === interval.minutes}>{interval.label}</option>)}
           </select></label>
         </div>
         <div class="zotero-actions">
@@ -462,9 +478,9 @@ const themePresets = [
       const busy=(value:boolean)=>{[...form.querySelectorAll<HTMLButtonElement>('button')].forEach((button)=>button.disabled=value);if(!value){previewButton.disabled=zoteroRoot.dataset.connected!=='true';syncButton.disabled=!previewVersion;}};
       form.addEventListener('submit',async(event)=>{
         event.preventDefault();busy(true);output.value='Verifying Zotero permissions…';
-        const data=new FormData(form);const body={apiKey:String(data.get('apiKey')||''),syncMode:String(data.get('syncMode')||'bidirectional'),analyzeAutomatically:data.get('analyzeAutomatically')==='on',continuousSync:data.get('continuousSync')==='on',syncIntervalMinutes:Number(data.get('syncIntervalMinutes')||15)};
+        const data=new FormData(form);const body={apiKey:String(data.get('apiKey')||''),syncMode:String(data.get('syncMode')||'bidirectional'),analyzeAutomatically:data.get('analyzeAutomatically')==='on',continuousSync:data.get('continuousSync')==='on',syncIntervalMinutes:Number(data.get('syncIntervalMinutes')||60)};
         const response=await fetch('/api/zotero/connection',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));
-        if(response.ok){zoteroRoot.dataset.connected='true';state.textContent=`${result.username} · ${result.continuousSync?'continuous sync':'connected'}`;previewButton.disabled=false;disconnectButton.hidden=false;form.querySelector<HTMLInputElement>('[name=apiKey]')!.value='';credentialState.textContent='● key stored encrypted on the server';credentialState.dataset.stored='true';output.value=result.continuousSync?'Connection saved. Continuous synchronization is active.':'Connection saved. Run Preview before synchronizing.';}
+        if(response.ok){zoteroRoot.dataset.connected='true';state.textContent=`${result.username} · ${result.continuousSync?'beacon on · idle 0/3':'beacon off'}`;previewButton.disabled=false;disconnectButton.hidden=false;form.querySelector<HTMLInputElement>('[name=apiKey]')!.value='';credentialState.textContent='● key stored encrypted on the server';credentialState.dataset.stored='true';output.value=result.continuousSync?'Connection saved. The beacon is active and will auto-pause after three unchanged checks.':'Connection saved. The Zotero beacon is off.';}
         else output.value=result.error||'Zotero connection failed.';busy(false);
       });
       previewButton.addEventListener('click',async()=>{
