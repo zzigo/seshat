@@ -365,6 +365,13 @@ const schema = `
     PRIMARY KEY(provider,month)
   );
 
+  CREATE TABLE IF NOT EXISTS catalog_storage_settings (
+    owner_key text PRIMARY KEY,
+    wasabi_library_root text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+
   CREATE TABLE IF NOT EXISTS catalog_chunks (
     id text PRIMARY KEY,
     reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,

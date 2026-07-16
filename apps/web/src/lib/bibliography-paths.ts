@@ -62,7 +62,7 @@ export const extractBibAttachmentPath = (raw: unknown): string | null => {
   return null;
 };
 
-export const mapBibAttachment = (raw: unknown, identity: SeshatUserIdentity): BibliographyAttachmentPath | null => {
+export const mapBibAttachment = (raw: unknown, identity: SeshatUserIdentity, configuredRoot?: string): BibliographyAttachmentPath | null => {
   const sourcePath = extractBibAttachmentPath(raw);
   if (!sourcePath) return null;
   const normalized = sourcePath.replaceAll('\\', '/');
@@ -73,7 +73,8 @@ export const mapBibAttachment = (raw: unknown, identity: SeshatUserIdentity): Bi
   const filename = segments.at(-1) || '';
   if (!filename || !/\.(?:pdf|docx|epub|txt)$/i.test(filename)) return null;
   const directories = segments.slice(0, -1);
-  const { root, privileged } = storageRootFor(identity);
+  const { root: defaultRoot, privileged } = storageRootFor(identity);
+  const root = String(configuredRoot || defaultRoot).replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
   const relativePath = [...directories, filename].join('/');
   return { sourcePath, relativePath, directories, filename, objectKey: `${root}/${relativePath}`, storageRoot: root, privilegedRoot: privileged };
 };

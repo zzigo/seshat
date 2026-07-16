@@ -12,16 +12,18 @@ import { DEFAULT_ZOTERO_BEACON_IDLE_LIMIT } from '../lib/zotero-beacon';
 import { getZoteroConnectionStatus } from '../lib/zotero-connection';
 import { readingProgressPercent } from '../lib/reading-progress';
 import { safeInlineTitleHtml } from '../lib/inline-title';
+import { getWasabiLibraryRoot } from '../lib/wasabi-settings';
 
 const session = (Astro.locals as any).session; const identity = sessionIdentity(session);
 const ownerKey = ownerKeyFor(identity.email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
-const [stats, recentReadings, completedReadings, bookmarkGroups, emergenceRows, zoteroStatus] = await Promise.all([
+const [stats, recentReadings, completedReadings, bookmarkGroups, emergenceRows, zoteroStatus, wasabiLibraryRoot] = await Promise.all([
   catalog.dashboardStats(ownerKey), catalog.listRecentReadings(ownerKey, 20), catalog.listCompletedReadings(ownerKey, 10), catalog.listBookmarkGroups(ownerKey),
   catalog.pool.query(`SELECT id,title,(issued->>'year')::int AS year FROM catalog_references
     WHERE owner_key=$1 AND (issued->>'year') ~ '^-?[0-9]{1,4}$' ORDER BY updated_at DESC LIMIT 10000`, [ownerKey]),
   getZoteroConnectionStatus(ownerKey),
+  getWasabiLibraryRoot(ownerKey, { email:identity.email, name:String(session.user?.name || '') }),
 ]);
 const emergenceSignals = detectEmergence(emergenceRows.rows.map((row:any) => ({ id: row.id, title: row.title, year: Number(row.year) })));
 const emergenceItems = Object.fromEntries(emergenceRows.rows.map((row:any) => [row.id, { id:row.id, title:row.title, year:Number(row.year) }]));
@@ -232,6 +234,19 @@ const zoteroBeaconState = !zoteroStatus.connected
           </div>
         </section>)}
       </div>
+    </section>
+
+    <section class="dashboard-panel wasabi-panel dashboard-setup-panel" data-wasabi-settings data-dashboard-setup data-setup-id="wasabi">
+      <header>
+        <div><span>Object storage</span><h2>Wasabi synchronization</h2></div>
+        <div class="setup-panel-actions"><small data-wasabi-state>relative library root</small><button type="button" data-setup-toggle aria-label="Expand Wasabi synchronization" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
+      </header>
+      <form data-wasabi-form>
+        <label><span>Wasabi library root</span><input type="text" name="root" value={wasabiLibraryRoot} spellcheck="false" autocomplete="off" /></label>
+        <button class="button primary" type="submit">Save root</button>
+        <p>Every Zotero attachment path is resolved relative to this prefix. Search Candidate starts inside the item’s own folder; browsing links existing objects without copying or moving them.</p>
+        <output data-wasabi-output aria-live="polite"></output>
+      </form>
     </section>
 
     <section class="dashboard-panel zotero-panel dashboard-setup-panel" data-zotero-settings data-connected={String(zoteroStatus.connected)} data-dashboard-setup data-setup-id="zotero">
@@ -506,6 +521,21 @@ const zoteroBeaconState = !zoteroStatus.connected
       });
     }
 
+    const wasabiRoot = document.querySelector<HTMLElement>('[data-wasabi-settings]');
+    if (wasabiRoot) {
+      const form=wasabiRoot.querySelector<HTMLFormElement>('[data-wasabi-form]')!;
+      const output=wasabiRoot.querySelector<HTMLOutputElement>('[data-wasabi-output]')!;
+      const state=wasabiRoot.querySelector<HTMLElement>('[data-wasabi-state]')!;
+      form.addEventListener('submit',async(event)=>{
+        event.preventDefault();const button=form.querySelector<HTMLButtonElement>('button[type=submit]')!;const root=String(new FormData(form).get('root')||'').trim();
+        button.disabled=true;output.value='Saving Wasabi library root…';
+        const response=await fetch('/api/wasabi/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({root})});const result=await response.json().catch(()=>({}));
+        if(response.ok){form.querySelector<HTMLInputElement>('[name=root]')!.value=result.root;state.textContent='root saved';output.value='Saved. New candidate searches now use this relative root.';}
+        else output.value=result.error==='INVALID_WASABI_LIBRARY_ROOT'?'That root is outside your allowed Wasabi prefix.':result.error||'Wasabi root could not be saved.';
+        button.disabled=false;
+      });
+    }
+
     // 1. Recover catalog form
     const recoverForm = document.querySelector<HTMLFormElement>('[data-recover-catalog]');
     recoverForm?.addEventListener('submit', async (event) => {
@@ -549,6 +579,10 @@ const zoteroBeaconState = !zoteroStatus.connected
 
 <style>
   .years-panel{overflow:visible!important}.years-panel>header{gap:16px}.years-head-tools{display:flex;align-items:center;justify-content:flex-end;gap:14px;min-width:0}.years-controls{display:flex;align-items:center;height:31px;border:1px solid var(--line);background:var(--paper)}.years-controls button{width:31px;height:29px;display:grid;place-items:center;padding:0;border:0;border-left:1px solid var(--line);color:var(--ink);background:transparent;cursor:pointer}.years-controls button:first-of-type{border-left:0}.years-controls button:hover{color:var(--green);background:color-mix(in srgb,var(--green) 8%,transparent)}.years-controls button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.years-controls svg{width:15px!important;height:15px!important;min-width:0!important;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:square}.years-controls output{min-width:43px;padding:0 6px;color:var(--muted);font:8px monospace;text-align:center}.years-viewport{width:100%;height:250px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;touch-action:pan-x pan-y;scrollbar-width:thin}.years-viewport>[data-years-svg]{display:block;width:100%;height:250px;min-width:0!important;overflow:visible}.years-panel.is-expanded{position:fixed;inset:16px;z-index:3000;display:grid;grid-template-rows:auto minmax(0,1fr);background:var(--paper);box-shadow:0 18px 70px rgba(0,0,0,.3)}.years-panel.is-expanded .years-viewport{height:100%}.years-timeline-expanded{overflow:hidden}.years-panel text[hidden]{display:none}@media(max-width:760px){.years-panel>header{align-items:flex-start}.years-head-tools{align-items:flex-end;flex-direction:column;gap:6px}.years-controls output{min-width:37px}.years-panel.is-expanded{inset:5px}}
+</style>
+
+<style>
+  .wasabi-panel{margin:22px 0}.wasabi-panel form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:9px;padding:16px}.wasabi-panel label{display:grid;gap:6px;color:var(--muted);font:8px monospace;text-transform:uppercase}.wasabi-panel input{width:100%;height:38px;padding:0 9px;border:1px solid var(--ink);color:var(--ink);background:var(--paper);font:10px monospace}.wasabi-panel p{grid-column:1/-1;margin:0;max-width:90ch;color:var(--muted);font:9px/1.5 monospace}.wasabi-panel output{grid-column:1/-1;min-height:14px;color:var(--green);font:9px/1.4 monospace}@media(max-width:760px){.wasabi-panel form{grid-template-columns:1fr}.wasabi-panel input{min-width:0}}
 </style>
 
 <style>

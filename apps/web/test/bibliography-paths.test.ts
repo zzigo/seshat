@@ -23,3 +23,14 @@ test('understands Zotero attachment metadata and rejects unsupported files', () 
   assert.equal(extractBibAttachmentPath('PDF:/Users/zztt/My Drive/libros/a/b.pdf:application/pdf'), '/Users/zztt/My Drive/libros/a/b.pdf');
   assert.equal(extractBibAttachmentPath('/Users/zztt/My Drive/libros/a/image.png'), null);
 });
+
+test('resolves Zotero relative paths below a user-configured Wasabi library root', () => {
+  const mapped = mapBibAttachment(
+    '/Users/zztt/Zotero/storage/libros/history/Plato_Republic.pdf',
+    { email:'lucianoazzigotti@gmail.com' },
+    'zzttuntref/migrated-zotero',
+  );
+  assert.equal(mapped?.relativePath, 'history/Plato_Republic.pdf');
+  assert.equal(mapped?.objectKey, 'zzttuntref/migrated-zotero/history/Plato_Republic.pdf');
+  assert.equal(mapped?.storageRoot, 'zzttuntref/migrated-zotero');
+});

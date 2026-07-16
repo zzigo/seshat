@@ -494,12 +494,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     renderTree(search.value);setSaveState(`${erased} Google Chirp ${erased===1?'narration':'narrations'} erased`);
   };
   type WasabiCandidate = { key:string; filename:string; path:string; sizeBytes:number; score:number };
-  type WasabiCandidateSearch = { candidates:WasabiCandidate[]; expected?:string; scanned:number };
+  type WasabiCandidateSearch = { candidates:WasabiCandidate[]; expected?:string; folder?:string; root?:string; scanned:number };
+  type WasabiBrowser = { path:string; root:string; directories:Array<{name:string;path:string}>;files:WasabiCandidate[];truncated:boolean };
   const findWasabiCandidates = async (referenceId:string):Promise<WasabiCandidateSearch> => {
-    const response = await fetch(`/api/library/${referenceId}/candidates`, { cache:'no-store' });
+    const query=new URLSearchParams();if(activeLibrary)query.set('libraryId',activeLibrary);const suffix=query.size?`?${query}`:'';
+    const response = await fetch(`/api/library/${referenceId}/candidates${suffix}`, { cache:'no-store' });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Candidate search failed');
-    return { candidates:Array.isArray(result.candidates) ? result.candidates : [], expected:result.expected, scanned:Number(result.scanned || 0) };
+    return { candidates:Array.isArray(result.candidates) ? result.candidates : [], expected:result.expected, folder:result.folder, root:result.root, scanned:Number(result.scanned || 0) };
+  };
+  const browseWasabi = async (referenceId:string,path?:string):Promise<WasabiBrowser> => {
+    const query=new URLSearchParams({mode:'browse'});if(path!==undefined)query.set('path',path);if(activeLibrary)query.set('libraryId',activeLibrary);
+    const response=await fetch(`/api/library/${referenceId}/candidates?${query}`,{cache:'no-store'});const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Wasabi folder could not be opened.');
+    return {path:String(result.path||''),root:String(result.root||''),directories:Array.isArray(result.directories)?result.directories:[],files:Array.isArray(result.files)?result.files:[],truncated:Boolean(result.truncated)};
   };
   const linkWasabiCandidate = async (referenceId:string,candidate:WasabiCandidate,options:{deferRender?:boolean;follow?:boolean}={}) => {
     const linked = await fetch(`/api/library/${referenceId}/candidates`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ key:candidate.key }) });
@@ -515,28 +523,32 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   };
   const searchForCandidate = async (referenceId: string) => {
     const reference = references.get(referenceId); if (!reference) return;
-    const dialog = dialogShell(`Search candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
+    const dialog = dialogShell(`Search Candidate · ${reference.title}`); dialog.classList.add('candidate-dialog');
     const body = document.createElement('div'); body.className = 'candidate-search';
-    const status = document.createElement('p'); status.textContent = 'Searching your Wasabi root…'; body.appendChild(status); dialog.appendChild(body);
+    const tools=document.createElement('div');tools.className='candidate-tools';const filter=document.createElement('input');filter.type='search';filter.placeholder='Filter filenames or paths…';filter.autocomplete='off';filter.setAttribute('aria-label','Filter Wasabi candidates');const browseButton=document.createElement('button');browseButton.type='button';browseButton.className='quiet';browseButton.textContent='Browse Wasabi';tools.append(filter,browseButton);
+    const status = document.createElement('p'); status.textContent = 'Locating the item folder…';const crumbs=document.createElement('nav');crumbs.className='candidate-breadcrumbs';crumbs.hidden=true;const list = document.createElement('div'); list.className = 'candidate-list';body.append(tools,status,crumbs,list); dialog.appendChild(body);
     setSaveState('searching Wasabi candidates…', 'saving');
+    let searchResult:WasabiCandidateSearch|undefined,browser:WasabiBrowser|undefined,mode:'candidates'|'browse'='candidates';
+    const link=async(candidate:WasabiCandidate,row:HTMLButtonElement)=>{row.disabled=true;status.textContent=`Linking ${candidate.filename} without copying…`;try{await linkWasabiCandidate(referenceId,candidate);dialog.close();setSaveState('existing Wasabi object linked; extraction queued');}catch(error){row.disabled=false;status.textContent=error instanceof Error?error.message:'Candidate could not be linked.';}};
+    const matching=(candidate:WasabiCandidate,query:string)=>!query||`${candidate.filename} ${candidate.path}`.toLowerCase().includes(query);
+    const renderCandidates=()=>{
+      mode='candidates';crumbs.hidden=true;browseButton.textContent='Browse Wasabi';list.replaceChildren();const query=filter.value.trim().toLowerCase();const candidates=(searchResult?.candidates||[]).filter((candidate)=>matching(candidate,query));
+      status.textContent=searchResult?.expected?`Expected: ${searchResult.expected} · searched only inside ${searchResult.folder||'/'} · ${searchResult.scanned} objects inspected`:`Folder: ${searchResult?.folder||'/'} · ${searchResult?.scanned||0} objects inspected`;
+      if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent=query?'No candidate matches this filter.':'No plausible candidate was found in this item folder. Browse Wasabi to link an existing object directly.';list.appendChild(empty);}
+      candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';row.title='Link this existing object without copying it';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=`${candidate.path} · ${Math.max(1,Math.round(candidate.sizeBytes/1024))} KB`;copy.append(name,path);row.append(score,copy);row.onclick=()=>void link(candidate,row);list.appendChild(row);});
+    };
+    const renderBrowser=()=>{
+      if(!browser)return;mode='browse';crumbs.hidden=false;browseButton.textContent='Back to candidates';list.replaceChildren();crumbs.replaceChildren();const root=document.createElement('button');root.type='button';root.textContent='ROOT';root.onclick=()=>void openFolder('');crumbs.appendChild(root);let accumulated='';browser.path.split('/').filter(Boolean).forEach((segment)=>{const slash=document.createElement('span');slash.textContent='/';accumulated=accumulated?`${accumulated}/${segment}`:segment;const target=accumulated;const button=document.createElement('button');button.type='button';button.textContent=segment;button.onclick=()=>void openFolder(target);crumbs.append(slash,button);});
+      const query=filter.value.trim().toLowerCase();const directories=browser.directories.filter((item)=>!query||`${item.name} ${item.path}`.toLowerCase().includes(query));const files=browser.files.filter((item)=>matching(item,query));status.textContent=`${browser.root}/${browser.path}${browser.truncated?' · first 1,000 entries':''} · choose a file to link it without copying`;
+      directories.forEach((directory)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option candidate-folder-option';const icon=document.createElement('i');icon.textContent='DIR';const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=directory.name;const path=document.createElement('small');path.textContent=directory.path;copy.append(name,path);row.append(icon,copy);row.onclick=()=>void openFolder(directory.path);list.appendChild(row);});
+      files.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';row.title='Link existing object · no copy';const icon=document.createElement('i');icon.textContent='LINK';const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=`${candidate.path} · ${Math.max(1,Math.round(candidate.sizeBytes/1024))} KB`;copy.append(name,path);row.append(icon,copy);row.onclick=()=>void link(candidate,row);list.appendChild(row);});
+      if(!directories.length&&!files.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent=query?'Nothing in this folder matches the filter.':'This Wasabi folder contains no supported documents.';list.appendChild(empty);}
+    };
+    const openFolder=async(path?:string)=>{status.textContent='Opening Wasabi folder…';list.replaceChildren();try{browser=await browseWasabi(referenceId,path);renderBrowser();}catch(error){status.textContent=error instanceof Error?error.message:'Wasabi folder could not be opened.';}};
+    filter.addEventListener('input',()=>mode==='browse'?renderBrowser():renderCandidates());browseButton.onclick=()=>{filter.value='';if(mode==='browse'){renderCandidates();return;}void openFolder(searchResult?.folder);};
     try {
-      const result = await findWasabiCandidates(referenceId);
-      status.textContent = result.expected ? `Expected: ${result.expected} · ${result.scanned} objects inspected` : `${result.scanned} objects inspected`;
-      const list = document.createElement('div'); list.className = 'candidate-list'; body.appendChild(list);
-      if (!result.candidates?.length) { const empty = document.createElement('p'); empty.className = 'candidate-empty'; empty.textContent = 'No plausible PDF, EPUB, DOCX or TXT candidate was found.'; list.appendChild(empty); }
-      for (const candidate of result.candidates || []) {
-        const row = document.createElement('button'); row.type = 'button'; row.className = 'candidate-option';
-        const score = document.createElement('i'); score.textContent = String(candidate.score);
-        const copy = document.createElement('span'); const name = document.createElement('strong'); name.textContent = candidate.filename;
-        const path = document.createElement('small'); path.textContent = `${candidate.path} · ${Math.max(1, Math.round(candidate.sizeBytes / 1024))} KB`; copy.append(name,path); row.append(score,copy);
-        row.addEventListener('click', async () => {
-          row.disabled = true; status.textContent = `Linking ${candidate.filename}…`;
-          try { await linkWasabiCandidate(referenceId,candidate);dialog.close();setSaveState('candidate linked; extraction queued'); }
-          catch(error){row.disabled=false;status.textContent=error instanceof Error?error.message:'Candidate could not be linked.';}
-        });
-        list.appendChild(row);
-      }
-      setSaveState(`${result.candidates?.length || 0} candidate${result.candidates?.length === 1 ? '' : 's'} found`);
+      searchResult = await findWasabiCandidates(referenceId);renderCandidates();
+      setSaveState(`${searchResult.candidates.length} candidate${searchResult.candidates.length === 1 ? '' : 's'} found in item folder`);
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : 'Candidate search failed'; setSaveState(status.textContent, 'error');
     }
