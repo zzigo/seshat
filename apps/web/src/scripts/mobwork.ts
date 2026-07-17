@@ -6,6 +6,10 @@ type MobileLibrary={id:string;name:string;parentId:string|null;itemCount:number}
 type MobileQuickFolder={id:string;name:string;depth:number;recentCount:number};
 type MobilePayload={libraries:MobileLibrary[];quickFolders?:MobileQuickFolder[]};
 
+function folderAbbreviation(name:string){
+  return Array.from(name.normalize('NFD').replace(/\p{M}/gu,'').replace(/[^\p{L}\p{N}]/gu,'')).slice(0,3).join('').toUpperCase();
+}
+
 const ROW_HEIGHT=72;
 const OVERSCAN=5;
 
@@ -80,7 +84,7 @@ export const mountMobwork=(root:HTMLElement)=>{
   const addCollection=(library:MobileLibrary,depth:number)=>{const button=document.createElement('button');button.type='button';button.style.setProperty('--depth',String(Math.min(7,depth)));const marker=document.createElement('i');const label=document.createElement('span');label.textContent=library.name;const count=document.createElement('small');count.textContent=String(library.itemCount);button.append(marker,label,count);button.addEventListener('click',()=>chooseLibrary(library.id,library.name));collectionList.appendChild(button);(children.get(library.id)||[]).forEach((child)=>addCollection(child,depth+1));};
   const all=document.createElement('button');all.type='button';all.innerHTML='<i></i><span>All references</span><small>∞</small>';all.addEventListener('click',()=>chooseView('all'));collectionList.appendChild(all);(children.get(null)||[]).forEach((library)=>addCollection(library,0));
 
-  (data.quickFolders||[]).forEach((folder,index)=>{const button=document.createElement('button');button.type='button';button.dataset.tone=String(index%6);button.title=`${folder.name} · level ${folder.depth} · ${folder.recentCount} recent`;const icon=document.createElement('i');const label=document.createElement('span');label.textContent=folder.name;button.append(icon,label);button.addEventListener('click',()=>chooseLibrary(folder.id,folder.name));quickFolders.appendChild(button);});
+  (data.quickFolders||[]).forEach((folder,index)=>{const button=document.createElement('button');button.type='button';button.dataset.tone=String(index%6);button.title=`${folder.name} · level ${folder.depth} · ${folder.recentCount} recent`;button.setAttribute('aria-label',folder.name);const icon=document.createElement('i');const label=document.createElement('span');label.textContent=folderAbbreviation(folder.name);button.append(icon,label);button.addEventListener('click',()=>chooseLibrary(folder.id,folder.name));quickFolders.appendChild(button);});
   quickFolders.hidden=!quickFolders.childElementCount;
 
   const themeButton=root.querySelector<HTMLButtonElement>('[data-mobile-theme]')!;
