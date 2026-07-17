@@ -549,7 +549,7 @@ html { max-width: 100%; overflow: hidden; }
 .annotation-workspace { display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--paper); }
 .annotation-index-only { height: 100%; }
 .annotation-index-only .annotation-body { grid-template-columns: minmax(0,1fr); }
-.annotation-index-only .annotation-rail { width: 100%; }
+.annotation-index-only .annotation-rail { width: 100%; grid-template-rows: minmax(0,1fr); }
 .annotation-loading { height: 100%; display: grid; place-items: center; color: var(--muted); font: 11px monospace; text-transform: uppercase; }
 .annotation-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 18px; border-bottom: 1px solid var(--ink); background: var(--chrome); }
 .annotation-head > div:first-child { min-width: 0; }
@@ -570,10 +570,11 @@ html { max-width: 100%; overflow: hidden; }
 .annotation-cards { min-height: 0; overflow: auto; }
 .annotation-cards article { padding: 12px 13px 14px; border-bottom: 1px solid var(--hairline); border-left: 4px solid var(--annotation-color); cursor: pointer; }
 .annotation-cards article:hover, .annotation-cards article.active { background: rgba(61,122,88,.08); }
-.annotation-cards article header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.annotation-cards article header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .annotation-cards article header span { color: var(--ink); font: 8px/1.25 monospace; text-transform: uppercase; }
 .annotation-cards article header small { color: var(--muted); font: 7px monospace; text-transform: uppercase; }
-.annotation-cards blockquote { margin: 10px 0 0; display: -webkit-box; overflow: hidden; font: 13px/1.4 Georgia,serif; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.annotation-card-quote { width: 100%; margin: 0; display: -webkit-box; overflow: hidden; padding: 0; border: 0; color: var(--ink); background: transparent; font: 13px/1.4 Georgia,serif; text-align: left; -webkit-box-orient: vertical; -webkit-line-clamp: 4; cursor: pointer; }
+.annotation-card-quote:hover, .annotation-card-quote:focus-visible { color: var(--green); outline: 0; }
 .annotation-cards p { margin: 8px 0 0; color: var(--muted); font: 10px/1.4 monospace; }
 .annotation-palette { position: fixed; z-index: 2147483647; display: flex; gap: 3px; padding: 5px; border: 1px solid var(--ink); background: #e9e6dc; box-shadow: 5px 8px 24px rgba(23,35,29,.25); }
 .annotation-palette[hidden] { display: none; }
@@ -592,8 +593,12 @@ html { max-width: 100%; overflow: hidden; }
 .annotation-editor-comment { margin:0 -9px!important; padding:0 9px; }
 .annotation-editor-comment textarea { min-height:72px; margin:0; padding:8px 0 7px; border:0; border-bottom:1px solid var(--hairline); background:transparent; outline:0; }
 .annotation-editor-comment textarea:focus { border-bottom-color:var(--green); }
-.annotation-editor-colors { display: grid; grid-template-columns: repeat(4,minmax(45px,1fr)); gap: 4px; }
-.annotation-editor-colors button { height: 35px; display: grid; place-items: center; gap: 1px; padding: 3px; border: 0; border-bottom:1px solid transparent; background: transparent; cursor: pointer; }
+.annotation-editor-color-picker { min-width: 0; display: grid; justify-items: start; gap: 5px; }
+.annotation-current-color { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.annotation-current-color i { width: 16px; height: 16px; border-radius: 50%; background: var(--annotation-color); box-shadow: 0 0 0 1px color-mix(in srgb,var(--ink) 45%,transparent); }
+.annotation-editor-colors { width: min(100%,210px); display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 3px; }
+.annotation-editor-colors[hidden] { display: none; }
+.annotation-editor-colors button { min-width: 0; height: 32px; display: grid; place-items: center; gap: 1px; padding: 2px; border: 0; border-bottom:1px solid transparent; background: transparent; cursor: pointer; }
 .annotation-editor-colors button.selected { border-bottom-color: var(--ink); }
 .annotation-editor-colors i { width: 16px; height: 16px; border-radius: 50%; background: var(--annotation-color); }
 .annotation-editor-colors span { font: 7px monospace; }

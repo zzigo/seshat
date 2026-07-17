@@ -1620,7 +1620,9 @@ export class PostgresCatalog {
     const result = await this.pool.query(
       `SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,state.location,state.updated_at AS read_at
        FROM catalog_reading_state state JOIN catalog_references reference ON reference.id=state.reference_id
-       WHERE state.owner_key=$1 AND reference.owner_key=$1 ORDER BY state.updated_at DESC LIMIT $2`,
+       WHERE state.owner_key=$1 AND reference.owner_key=$1
+         AND NOT (state.location ? 'recentDismissedAt')
+       ORDER BY state.updated_at DESC LIMIT $2`,
       [ownerKey, Math.max(1, Math.min(100, limit))],
     );
     return result.rows.map((row) => ({ id: row.id, title: row.title, type: row.type,
@@ -2225,6 +2227,7 @@ export class PostgresCatalog {
           input.artifact.objectKey, input.artifact.bucket, input.artifact.mimeType,
           input.artifact.sizeBytes, input.artifact.sha256, input.artifact.etag],
       );
+      for (const job of buildInitialJobs(id)) await this.insertJob(client, id, job);
       await client.query(
         `UPDATE catalog_jobs SET
            status=CASE WHEN stage='extract' THEN 'queued' ELSE 'blocked' END,

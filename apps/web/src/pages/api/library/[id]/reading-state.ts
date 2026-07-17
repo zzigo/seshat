@@ -39,7 +39,7 @@ export const PUT: APIRoute = async ({ request, locals, params }) => {
     `INSERT INTO catalog_reading_state(owner_key,reference_id,location,preferences)
      VALUES($1,$2,$3::jsonb,$4::jsonb)
      ON CONFLICT(owner_key,reference_id) DO UPDATE SET
-       location=excluded.location,preferences=excluded.preferences,updated_at=now()`,
+       location=excluded.location - 'recentDismissedAt',preferences=excluded.preferences,updated_at=now()`,
     [context.ownerKey, params.id, JSON.stringify(location), JSON.stringify(preferences)],
   );
   return Response.json({ ok: true });
@@ -51,8 +51,22 @@ export const PATCH: APIRoute = async ({ locals, params }) => {
   await context.catalog.ensureSchema();
   await context.catalog.pool.query(
     `INSERT INTO catalog_reading_state(owner_key,reference_id) VALUES($1,$2)
-     ON CONFLICT(owner_key,reference_id) DO UPDATE SET updated_at=now()`,
+     ON CONFLICT(owner_key,reference_id) DO UPDATE SET
+       location=catalog_reading_state.location - 'recentDismissedAt',updated_at=now()`,
     [context.ownerKey, params.id],
   );
   return Response.json({ ok: true });
+};
+
+export const DELETE: APIRoute = async ({ locals, params }) => {
+  const context = await sessionContext(locals, params.id || '');
+  if (!context) return Response.json({ error: 'not_found' }, { status: 404 });
+  await context.catalog.ensureSchema();
+  const result = await context.catalog.pool.query(
+    `UPDATE catalog_reading_state
+     SET location=jsonb_set(location,'{recentDismissedAt}',to_jsonb(now()::text),true)
+     WHERE owner_key=$1 AND reference_id=$2`,
+    [context.ownerKey, params.id],
+  );
+  return Response.json({ ok: true, dismissed: result.rowCount === 1 });
 };

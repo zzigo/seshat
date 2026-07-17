@@ -65,9 +65,9 @@ export async function mountAnnotationWorkspace(
   const rail = document.createElement('aside'); rail.className = 'annotation-rail';
   const railHead = document.createElement('header'); railHead.innerHTML = '<strong>Annotations</strong><span>Reading marks · click or contextual menu to classify</span>';
   const editorHost = document.createElement('div'); editorHost.className = 'annotation-editor-host'; editorHost.hidden = true;
-  const cards = document.createElement('div'); cards.className = 'annotation-cards'; rail.append(railHead, editorHost, cards);
-  if (options.indexOnly) { element.classList.add('annotation-index-only'); body.appendChild(rail); }
-  else body.append(reading, rail);
+  const cards = document.createElement('div'); cards.className = 'annotation-cards';
+  if (options.indexOnly) { rail.append(cards); element.classList.add('annotation-index-only'); body.appendChild(rail); }
+  else { rail.append(railHead, editorHost, cards); body.append(reading, rail); }
   element.replaceChildren(header, body);
 
   const palette = document.createElement('div'); palette.className = 'annotation-palette'; palette.hidden = true;
@@ -108,17 +108,21 @@ export async function mountAnnotationWorkspace(
       const color = colorFor(annotation); const card = document.createElement('article'); card.style.setProperty('--annotation-color', color.hex);
       card.classList.toggle('active', activeId === annotation.id); card.dataset.annotationId = annotation.id;
       const readingMark = annotation.noteType === 'reading-mark';
+      const quote = document.createElement('button'); quote.type = 'button'; quote.className = 'annotation-card-quote'; quote.textContent = annotation.quote;
       const meta = document.createElement('header'); const category = document.createElement('span'); category.textContent = readingMark ? `READ · ${color.label}` : `${color.sigil} · ${color.label}`;
       const status = document.createElement('small'); status.textContent = annotation.reviewStatus; meta.append(category, status);
-      const quote = document.createElement('blockquote'); quote.textContent = annotation.quote;
-      card.append(meta, quote);
+      card.append(quote, meta);
       if (annotation.note) { const note = document.createElement('p'); note.textContent = annotation.note; card.appendChild(note); }
-      card.addEventListener('click', () => {
+      const toggleEditor = () => {
+        if (activeId === annotation.id && !editorHost.hidden) { closeEditor(); activeId = null; render(); return; }
         activeId = annotation.id; render();
         if (!options.indexOnly) surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         openEditor(annotation);
-      });
-      card.addEventListener('contextmenu', (event) => { event.preventDefault(); activeId = annotation.id; render(); openEditor(annotation); }); cards.appendChild(card);
+      };
+      quote.addEventListener('click', (event) => { event.stopPropagation(); toggleEditor(); });
+      card.addEventListener('contextmenu', (event) => { event.preventDefault(); activeId = annotation.id; render(); openEditor(annotation); });
+      cards.appendChild(card);
+      if (options.indexOnly && activeId === annotation.id) cards.appendChild(editorHost);
     });
     stats.replaceChildren();
     annotationColors.forEach((color) => {
@@ -187,16 +191,22 @@ export async function mountAnnotationWorkspace(
     closeEditor(); editorHost.hidden = false;
     const editor = document.createElement('section'); editor.className = 'annotation-editor annotation-editor-inline';
     const form = document.createElement('form'); const readingMark = annotation?.noteType === 'reading-mark';
-    const head = document.createElement('header'); const title = document.createElement('strong'); title.textContent = readingMark ? 'Classify reading mark' : annotation ? 'Edit annotation' : 'Annotate selection';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label','Close annotation editor'); close.addEventListener('click', closeEditor); head.append(title, close);
     const quote = document.createElement('blockquote'); quote.textContent = annotation?.quote || anchor?.quote || '';
-    const colors = document.createElement('div'); colors.className = 'annotation-editor-colors'; let selected = colorFor(annotation || { color: annotationColors[0].hex });
+    const colorPicker = document.createElement('div'); colorPicker.className = 'annotation-editor-color-picker';
+    const currentColor = document.createElement('button'); currentColor.type = 'button'; currentColor.className = 'annotation-current-color'; currentColor.setAttribute('aria-expanded','false');
+    const currentDot = document.createElement('i'); currentColor.appendChild(currentDot);
+    const colors = document.createElement('div'); colors.className = 'annotation-editor-colors'; colors.hidden = true;
+    let selected = colorFor(annotation || { color: annotationColors[0].hex });
+    const showCurrentColor = () => { currentColor.style.setProperty('--annotation-color',selected.hex); currentColor.title = `Change color · ${selected.label}`; currentColor.setAttribute('aria-label',currentColor.title); editor.style.setProperty('--annotation-color',selected.hex); };
+    showCurrentColor();
+    currentColor.addEventListener('click',()=>{colors.hidden=!colors.hidden;currentColor.setAttribute('aria-expanded',String(!colors.hidden));});
     annotationColors.forEach((color) => {
       const button = document.createElement('button'); button.type = 'button'; button.style.setProperty('--annotation-color', color.hex); button.title = color.label;
       button.classList.toggle('selected', selected.hex === color.hex); button.innerHTML = `<i></i><span>${color.sigil}</span>`;
-      button.addEventListener('click', () => { selected = color; colors.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); }); colors.appendChild(button);
+      button.addEventListener('click', () => { selected = color; colors.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button)); showCurrentColor(); colors.hidden=true; currentColor.setAttribute('aria-expanded','false'); }); colors.appendChild(button);
     });
-    const noteLabel = document.createElement('label'); noteLabel.className = 'annotation-editor-comment'; noteLabel.textContent = 'Comment'; const note = document.createElement('textarea'); note.rows = 4; note.value = annotation?.note || ''; noteLabel.appendChild(note);
+    colorPicker.append(currentColor,colors);
+    const noteLabel = document.createElement('label'); noteLabel.className = 'annotation-editor-comment'; noteLabel.setAttribute('aria-label','Comment'); const note = document.createElement('textarea'); note.rows = 4; note.value = annotation?.note || ''; note.placeholder = 'Write a comment…'; noteLabel.appendChild(note);
     const grid = document.createElement('div'); grid.className = 'annotation-editor-grid';
     const noteType = selectField('Note type', [['','—'],['reading-mark','Reading mark'],['explanatory','Explanatory'],['critical','Critical'],['projective','Projective']], annotation?.noteType || '');
     if (readingMark) { noteType.input.disabled = true; noteType.input.title = 'The reading-mark type is preserved so Read can resume here.'; }
@@ -207,7 +217,8 @@ export async function mountAnnotationWorkspace(
     const actions = document.createElement('footer');
     if (annotation) { const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Delete'; remove.addEventListener('click', () => { void deleteAnnotation(annotation); closeEditor(); }); actions.appendChild(remove); }
     const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary'; save.textContent = 'Save'; actions.appendChild(save);
-    form.append(head, noteLabel, colors, grid, quote, actions); editor.appendChild(form); editorHost.appendChild(editor);
+    if (!options.indexOnly) form.appendChild(quote);
+    form.append(noteLabel, colorPicker, grid, actions); editor.appendChild(form); editorHost.appendChild(editor);
     form.addEventListener('submit', async (event) => {
       event.preventDefault(); const details = { color: selected.hex, category: selected.category, noteType: readingMark ? 'reading-mark' : noteType.input.value || undefined,
         reviewStatus: review.input.value, page: page.input.value ? Number(page.input.value) : undefined, locator: locator.input.value,
