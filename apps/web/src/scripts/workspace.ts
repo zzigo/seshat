@@ -17,6 +17,7 @@ import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
 import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAloud } from './read-aloud';
 import { chirpVoicesForLanguage } from '../lib/chirp';
 import { plainInlineTitle, setInlineTitle } from '../lib/inline-title';
+import { referenceVisualKind } from '../lib/reference-visual';
 
 registerAllModules();
 
@@ -46,14 +47,7 @@ const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
 const isInboxLibraryId = (id: string) => id.startsWith('inbox:');
 const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'owner'
   && !reference.libraryIds.some((id) => !isInboxLibraryId(id));
-const treeReferenceKind = (reference: ReferenceRow): 'pdf' | 'ebook' | 'text' | 'no-text' => {
-  if (reference.format === 'pdf') return 'pdf';
-  if (['djvu', 'djv'].includes(reference.format)) return 'pdf';
-  if (['epub', 'mobi', 'azw', 'azw3'].includes(reference.format)) return 'ebook';
-  if (reference.format === 'webarchive') return 'text';
-  if (reference.hasText || ['txt', 'md', 'rtf'].includes(reference.format)) return 'text';
-  return 'no-text';
-};
+const treeReferenceKind = (reference: ReferenceRow) => referenceVisualKind(reference.format, reference.hasText);
 const referenceState = (reference: any): string => {
   const active = (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued');
   const failed = (reference.jobs || []).find((job:any) => job.status === 'failed');
@@ -1370,9 +1364,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const body = document.createElement('div'); body.className = 'pod-document-body'; element.appendChild(body);
     if (reference.format === 'pdf' || ['djvu', 'djv'].includes(reference.format)) {
       body.classList.add('pod-pdf-body'); const renderId = crypto.randomUUID(); element.dataset.renderId = renderId;
-      const sourceUrl = reference.format === 'pdf' ? undefined : `/api/library/${encodeURIComponent(reference.id)}/artifact/reader-pdf`;
-      const textOverlayUrl = reference.format === 'pdf' ? undefined : `/api/library/${encodeURIComponent(reference.id)}/artifact/djvu-text`;
-      void mountPdfViewer(body, reference.id, reference.title, setSaveState, sourceUrl, textOverlayUrl).then((dispose) => {
+      const isDjVu=['djvu','djv'].includes(reference.format);
+      const sourceUrl = isDjVu ? `/api/library/${encodeURIComponent(reference.id)}/original` : undefined;
+      const textOverlayUrl = isDjVu ? `/api/library/${encodeURIComponent(reference.id)}/artifact/djvu-text` : undefined;
+      void mountPdfViewer(body, reference.id, reference.title, setSaveState, sourceUrl, textOverlayUrl, isDjVu?'djvu':'pdf').then((dispose) => {
         if (element.dataset.renderId !== renderId || !element.isConnected) dispose(); else documentDisposers.set(element, dispose);
       }).catch((error) => { body.textContent = error instanceof Error ? error.message : 'Document viewer unavailable'; });
     } else if (reference.format === 'epub') {
@@ -3511,7 +3506,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
       glyph.classList.toggle('needs-ocr', reference.needsOcr);
       glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
-      glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
+      glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', djvu: 'DjVu', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
       glyph.setAttribute('aria-label', glyph.title);
       const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
       const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
@@ -3703,7 +3698,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
         glyph.classList.toggle('needs-ocr', reference.needsOcr);
         glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
-        glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
+        glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', djvu: 'DjVu', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
         glyph.setAttribute('aria-label', glyph.title);
         const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
         const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);

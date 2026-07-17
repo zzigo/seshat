@@ -4,6 +4,7 @@ import { annotationColors, mountAnnotationWorkspace, type Annotation } from './a
 import { currentPhoneResourceProfile } from '../lib/client-resources';
 import { adjacentPdfPage, pdfPageScrollTop, pdfSpreadStart } from '../lib/pdf-navigation';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
+import { openDjVuDocument, type DjVuTextZone } from '../lib/djvu-document';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 const SIDEBAR_WIDTH_KEY = 'seshat.pdf.annotation-sidebar-width';
@@ -29,6 +30,7 @@ export async function mountPdfViewer(
   report: (message: string, tone?: 'ready' | 'saving' | 'error') => void,
   sourceUrl = `/api/library/${encodeURIComponent(referenceId)}/original`,
   textOverlayUrl?: string,
+  sourceKind: 'pdf' | 'djvu' = 'pdf',
 ): Promise<() => void> {
   const shell = document.createElement('div'); shell.className = 'seshat-pdf-shell';
   const viewer = document.createElement('div'); viewer.className = 'seshat-pdf-viewer';
@@ -65,7 +67,7 @@ export async function mountPdfViewer(
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return; event.preventDefault();
     const current = sidebar.getBoundingClientRect().width || 340; setSidebarWidth(current + (event.key === 'ArrowLeft' ? 20 : -20));
   });
-  const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = 'Loading PDF…';
+  const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = sourceKind === 'djvu' ? 'Loading DjVu…' : 'Loading PDF…';
   pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle, structureToggle); element.replaceChildren(shell);
 
   let annotations: Annotation[] = [];
@@ -75,11 +77,12 @@ export async function mountPdfViewer(
   const parent = element.parentElement || element;
   const dialogs = new Set<HTMLDialogElement>();
   const renderTasks = new Set<{ cancel: () => void }>();
-  const loadingTask = getDocument({ url: sourceUrl, withCredentials: true });
+  const loadingTask = sourceKind === 'pdf' ? getDocument({ url: sourceUrl, withCredentials: true }) : null;
   const textOverlayPromise:Promise<DjvuTextLayer|null>=textOverlayUrl
     ? fetch(textOverlayUrl,{cache:'no-store'}).then((response)=>response.ok?response.json():null).catch(()=>null)
     : Promise.resolve(null);
-  const [pdf,djvuTextLayer] = await Promise.all([loadingTask.promise,textOverlayPromise]);
+  const [loadedDocument,djvuTextLayer] = await Promise.all([sourceKind === 'djvu' ? openDjVuDocument(sourceUrl) : loadingTask!.promise,textOverlayPromise]);
+  const pdf:any=loadedDocument;
   if (disposed) { await pdf.destroy(); return () => undefined; }
   const [annotationResponse,readingStateResponse] = await Promise.all([
     fetch(`/api/library/${referenceId}/annotations`),
@@ -129,6 +132,8 @@ export async function mountPdfViewer(
   }, { root: viewer, rootMargin: phoneResourceProfile ? '240px 0px' : '800px 0px' });
 
   const renderPage = async (pageElement: HTMLElement) => {
+    if(pageElement.dataset.rendering==='true')return;pageElement.dataset.rendering='true';
+    try{
     const pageNumber = Number(pageElement.dataset.page); const page = await pdf.getPage(pageNumber); if (disposed) return;
     const viewport = page.getViewport({ scale: Number(pageElement.dataset.scale) });
     pageElement.style.width = `${viewport.width}px`; pageElement.style.height = `${viewport.height}px`;
@@ -139,16 +144,21 @@ export async function mountPdfViewer(
     const task = page.render({ canvas, canvasContext: context, viewport, transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] });
     renderTasks.add(task); await task.promise.catch(() => undefined); renderTasks.delete(task); if (disposed) return;
     const textLayerElement = pageElement.querySelector<HTMLElement>('.textLayer')!;
+    const nativeZones = sourceKind === 'djvu' && typeof page.getDjVuTextZones === 'function' ? page.getDjVuTextZones() as DjVuTextZone[] : [];
     const overlay=djvuTextLayer?.pages?.[pageNumber-1];
     if(overlay?.words?.length){
       textLayerElement.replaceChildren();
       for(const word of overlay.words){const span=document.createElement('span');span.className='djvu-text-word';span.textContent=`${word.text} `;span.style.left=`${(word.x0/overlay.width)*100}%`;span.style.top=`${((overlay.height-word.y1)/overlay.height)*100}%`;span.style.width=`${((word.x1-word.x0)/overlay.width)*100}%`;span.style.height=`${((word.y1-word.y0)/overlay.height)*100}%`;span.style.setProperty('--font-height',String(((word.y1-word.y0)/overlay.height)*base.height));textLayerElement.appendChild(span);}
-    }else{
+    }else if(nativeZones.length){
+      textLayerElement.replaceChildren();
+      for(const zone of nativeZones){const span=document.createElement('span');span.className='djvu-text-word';span.textContent=zone.text;span.style.left=`${(zone.x/base.width)*100}%`;span.style.top=`${(zone.y/base.height)*100}%`;span.style.width=`${(zone.width/base.width)*100}%`;span.style.height=`${(zone.height/base.height)*100}%`;span.style.setProperty('--font-height',String((zone.height/base.height)*base.height));textLayerElement.appendChild(span);}
+    }else if(sourceKind === 'pdf'){
       const textLayer = new TextLayer({ textContentSource: await page.getTextContent(), container: textLayerElement, viewport });
       await textLayer.render();
     }
     renderHighlights(pageElement); pageElement.classList.add('rendered');
     parent.dispatchEvent(new CustomEvent('seshat:pdf-page-rendered',{detail:{page:pageNumber}}));
+    }finally{delete pageElement.dataset.rendering;}
   };
 
   const firstPage = await pdf.getPage(1); const base = firstPage.getViewport({ scale: 1 });
@@ -389,6 +399,14 @@ export async function mountPdfViewer(
   const total = pdf.numPages;
   const savedPage=Math.max(1,Math.min(total,Math.floor(Number(pendingPage||readingLocation.lastPage||readingLocation.page||1))));
   let currentPage = savedPage;
+  const releaseDistantDjVuPages=(center:number)=>{
+    if(sourceKind!=='djvu')return;const radius=phoneResourceProfile?2:5;
+    pages.querySelectorAll<HTMLElement>('.seshat-pdf-page.rendered').forEach((pageElement)=>{
+      if(Math.abs(Number(pageElement.dataset.page)-center)<=radius||pageElement.dataset.rendering==='true')return;
+      const canvas=pageElement.querySelector<HTMLCanvasElement>('canvas');if(canvas){canvas.width=1;canvas.height=1;}
+      pageElement.querySelector<HTMLElement>('.textLayer')?.replaceChildren();pageElement.classList.remove('rendered');observer.observe(pageElement);
+    });
+  };
   const writeReadingState=()=>{
     readingLocation=updateReadingLocation(readingLocation,{format:'pdf',page:currentPage,lastPage:currentPage,totalPages:total});
     return fetch(`/api/library/${referenceId}/reading-state`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({location:readingLocation,preferences:readingPreferences}),keepalive:true}).catch(()=>undefined);
@@ -424,6 +442,7 @@ export async function mountPdfViewer(
       if(!readingPersistReady&&savedPage>1&&pageNum!==savedPage)return;
       currentPage = pageNum;
       announcePage(pageNum);
+      releaseDistantDjVuPages(pageNum);
     }
   }, { root: viewer, threshold: 0.15 });
 

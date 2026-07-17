@@ -358,8 +358,9 @@ html { max-width: 100%; overflow: hidden; }
 .tree-reference { gap: 7px; min-height: 25px; padding: 3px 9px; color: #4f5952; font: 11px/1.2 monospace; touch-action: manipulation; }
 .tree-reference-title { min-width:0; flex:1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-reference-glyph { position: relative; flex: 0 0 auto; display: inline-block; box-sizing: border-box; border: 1px solid currentColor; }
-.tree-reference-glyph.is-pdf, .tree-reference-glyph.is-ebook { width: 11px; height: 13px; }
+.tree-reference-glyph.is-pdf, .tree-reference-glyph.is-djvu, .tree-reference-glyph.is-ebook { width: 11px; height: 13px; }
 .tree-reference-glyph.is-pdf { color: var(--gold); background: color-mix(in srgb, var(--gold) 16%, transparent); box-shadow: inset 0 0 0 2px var(--paper); }
+.tree-reference-glyph.is-djvu { color: #a06d91; background: color-mix(in srgb, #a06d91 19%, transparent); box-shadow: inset 0 0 0 2px var(--paper); }
 .tree-reference-glyph.is-ebook { color: var(--green); background: color-mix(in srgb, var(--green) 20%, transparent); }
 .tree-reference-glyph.is-ebook::after { content: ''; position: absolute; top: 2px; bottom: 2px; left: 3px; border-left: 1px solid currentColor; }
 .tree-reference-glyph.is-text { width: 8px; height: 10px; color: #597da4; background: repeating-linear-gradient(to bottom, transparent 0 2px, currentColor 2px 3px); }

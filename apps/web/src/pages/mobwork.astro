@@ -6,13 +6,52 @@ import '../styles/mobwork.css';
 
 const email = String((Astro.locals.session as any)?.user?.email || '').trim().toLowerCase();
 const catalog = getCatalog();
-const libraries = await catalog.listLibraries(ownerKeyFor(email));
+const ownerKey = ownerKeyFor(email);
+const libraries = await catalog.listLibraries(ownerKey);
+const quickFolderResult = await catalog.pool.query(
+  `WITH RECURSIVE tree AS (
+     SELECT id,parent_id,1 AS depth FROM catalog_libraries
+     WHERE owner_key=$1 AND parent_id IS NULL
+     UNION ALL
+     SELECT child.id,child.parent_id,parent.depth+1 FROM catalog_libraries child
+     JOIN tree parent ON child.parent_id=parent.id WHERE child.owner_key=$1
+   ), recent_membership AS (
+     SELECT state.reference_id,state.updated_at AS read_at,membership.library_id
+     FROM catalog_reading_state state
+     JOIN catalog_references reference ON reference.id=state.reference_id AND reference.owner_key=$1
+     JOIN catalog_library_items membership ON membership.reference_id=reference.id
+     WHERE state.owner_key=$1 AND NOT (state.location ? 'recentDismissedAt')
+     ORDER BY state.updated_at DESC LIMIT 300
+   ), ancestors(reference_id,read_at,library_id) AS (
+     SELECT reference_id,read_at,library_id FROM recent_membership
+     UNION
+     SELECT ancestor.reference_id,ancestor.read_at,current.parent_id
+     FROM ancestors ancestor JOIN catalog_libraries current ON current.id=ancestor.library_id
+     WHERE current.parent_id IS NOT NULL
+   )
+   SELECT library.id,library.name,tree.depth,MAX(ancestor.read_at) AS last_read_at,
+     COUNT(DISTINCT ancestor.reference_id)::int AS recent_count
+   FROM ancestors ancestor
+   JOIN tree ON tree.id=ancestor.library_id
+   JOIN catalog_libraries library ON library.id=ancestor.library_id
+   WHERE tree.depth BETWEEN 1 AND 2 AND library.id NOT LIKE 'inbox:%'
+   GROUP BY library.id,library.name,tree.depth
+   ORDER BY MAX(ancestor.read_at) DESC,COUNT(DISTINCT ancestor.reference_id) DESC,library.name
+   LIMIT 7`,
+  [ownerKey],
+);
 const payload = JSON.stringify({
   libraries: libraries.map((library) => ({
     id: library.id,
     name: library.name,
     parentId: library.parentId || null,
     itemCount: library.itemCount,
+  })),
+  quickFolders: quickFolderResult.rows.map((folder) => ({
+    id: folder.id,
+    name: folder.name,
+    depth: Number(folder.depth),
+    recentCount: Number(folder.recent_count),
   })),
 }).replace(/</g, '\\u003c');
 ---
@@ -41,7 +80,10 @@ const payload = JSON.stringify({
       <header class="mobwork-head">
         <a href="/dashboard" class="mobwork-brand" aria-label="Seshat dashboard"><span aria-hidden="true">𓋇</span><strong>Seshat</strong></a>
         <div class="mobwork-lab"><strong>Mobwork</strong><small>compact laboratory</small></div>
-        <button type="button" class="mobwork-scope-button" data-open-collections aria-label="Choose collection"><span data-scope-label>Recent</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+        <div class="mobwork-head-actions">
+          <button type="button" class="mobwork-theme" data-mobile-theme aria-label="Switch to dark theme" title="Light / dark theme"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.2"/><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M15.8 4.2l-1.4 1.4M5.6 14.4l-1.4 1.4"/></svg></button>
+          <button type="button" class="mobwork-scope-button" data-open-collections aria-label="Choose collection"><span data-scope-label>Recent</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+        </div>
       </header>
 
       <section class="mobwork-search" aria-label="Find references">
@@ -54,6 +96,7 @@ const payload = JSON.stringify({
           <button type="button" data-mobile-view="recent" aria-pressed="true">Recent</button>
           <button type="button" data-mobile-view="all" aria-pressed="false">All references</button>
         </nav>
+        <nav class="mobwork-quick-folders" data-quick-folders aria-label="Recent folders"></nav>
       </section>
 
       <main class="mobwork-results">
