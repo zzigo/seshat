@@ -1,0 +1,51 @@
+---
+import '../styles/global.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Opening workspace — Seshat</title>
+    <script>
+      import { normalizeWorkspacePreference, resolveWorkspaceDestination } from '../lib/workspace-entry';
+
+      const preferenceKey = 'seshat-workspace-mode';
+      const requested = new URLSearchParams(window.location.search).get('mode');
+      const explicitPreference = normalizeWorkspacePreference(requested);
+      let savedPreference = explicitPreference;
+      try {
+        if (requested === 'auto') localStorage.removeItem(preferenceKey);
+        else if (explicitPreference) localStorage.setItem(preferenceKey, explicitPreference);
+        savedPreference = normalizeWorkspacePreference(localStorage.getItem(preferenceKey));
+      } catch {
+        // Storage can be unavailable in strict private-browser modes; routing still works for this visit.
+      }
+      const destination = resolveWorkspaceDestination({
+        preference: savedPreference,
+        coarsePointer: window.matchMedia('(pointer: coarse)').matches,
+        viewportWidth: window.innerWidth,
+      });
+      window.location.replace(destination);
+    </script>
+    <style>
+      html,body{min-height:100%;margin:0;background:var(--paper);color:var(--ink)}
+      body{display:grid;place-items:center;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+      main{display:grid;justify-items:center;gap:10px}.mark{color:var(--gold);font:32px/1 Georgia,serif}
+      nav{display:flex;gap:12px}a{color:var(--green);text-decoration:none}
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="mark" aria-hidden="true">𓋇</span>
+      <span>Opening the appropriate workspace…</span>
+      <nav aria-label="Choose workspace version">
+        <a href="/workspace">Desktop version</a>
+        <a href="/mobwork">Mobile version</a>
+      </nav>
+    </main>
+  </body>
+</html>

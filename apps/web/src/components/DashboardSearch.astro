@@ -1,7 +1,7 @@
 <section class="dashboard-search" id="search" aria-label="Search archive">
   <form class="corpus-search-form" data-search-form data-search-kind="items">
     <input name="q" type="search" minlength="1" maxlength="300" autocomplete="off" placeholder="Search titles, persons, citekeys or tags…" aria-label="Search archive" />
-    <button type="submit">Search</button>
+    <button type="submit" class="button quiet">Search</button>
     <button type="submit" name="intent" value="reason" class="secondary corpus-only" hidden>Reason with evidence</button>
     <div class="search-modes" aria-label="Retrieval mode">
       <label><input type="radio" name="mode" value="items" checked /> items</label>
@@ -108,7 +108,7 @@
   .dashboard-search{margin:8px 0 30px}
   .dashboard-search :global(.corpus-search-form){border:0;background:transparent}
   .dashboard-search :global(.corpus-search-form>input){padding-left:0;border-bottom:1px solid var(--hairline)}
-  .dashboard-search :global(.corpus-search-form>button){border:0}
+  .dashboard-search :global(.corpus-search-form>button.button.quiet){min-width:auto;border:1px solid var(--line);color:var(--ink);background:transparent;font:650 13px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:0;text-transform:none}
   .dashboard-search :global(.corpus-search-form>button.secondary){border:0}
   .dashboard-search :global(.search-modes){padding-left:0;border:0}
   .dashboard-search :global(.search-modes input){width:9px;height:9px;margin:0;appearance:none;border:1px solid var(--gold);border-radius:0;background:transparent}
