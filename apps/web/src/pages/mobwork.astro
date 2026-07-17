@@ -34,7 +34,9 @@ const quickFolderResult = await catalog.pool.query(
    FROM ancestors ancestor
    JOIN tree ON tree.id=ancestor.library_id
    JOIN catalog_libraries library ON library.id=ancestor.library_id
-   WHERE tree.depth BETWEEN 1 AND 2 AND library.id NOT LIKE 'inbox:%'
+   WHERE tree.depth BETWEEN 1 AND 2
+     AND library.id NOT LIKE 'inbox:%'
+     AND LOWER(TRIM(library.name)) NOT IN ('zotero','inbox','all references')
    GROUP BY library.id,library.name,tree.depth
    ORDER BY MAX(ancestor.read_at) DESC,COUNT(DISTINCT ancestor.reference_id) DESC,library.name
    LIMIT 7`,
