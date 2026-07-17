@@ -3,7 +3,7 @@ import { getSession } from 'auth-astro/server';
 import { registerSessionIdentity } from './lib/catalog';
 import { registerSessionAccount } from './lib/user-accounts';
 
-const protectedPaths = ['/workspace', '/dashboard', '/search', '/admin', '/intake', '/library', '/bibliography', '/api/account', '/api/admin', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography', '/api/zotero', '/api/storage'];
+const protectedPaths = ['/workspace', '/mobwork', '/dashboard', '/search', '/admin', '/intake', '/library', '/bibliography', '/api/account', '/api/admin', '/api/intake', '/api/library', '/api/libraries', '/api/bibliography', '/api/zotero', '/api/storage'];
 const onboardingPaths = ['/welcome', '/en/welcome', '/es/welcome', '/pending', '/api/account/onboarding', '/api/storage/google', '/api/zotero/connection'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -42,7 +42,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   const response = await next();
-  if (context.url.pathname === '/workspace') {
+  if (context.url.pathname === '/workspace' || context.url.pathname === '/mobwork') {
     response.headers.set('Content-Security-Policy', [
       "default-src 'self'",
       "script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com",

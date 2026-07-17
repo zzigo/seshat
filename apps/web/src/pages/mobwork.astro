@@ -1,0 +1,91 @@
+---
+import ReaderModal from '../components/ReaderModal.astro';
+import { getCatalog, ownerKeyFor } from '../lib/catalog';
+import '../styles/global.css';
+import '../styles/mobwork.css';
+
+const email = String((Astro.locals.session as any)?.user?.email || '').trim().toLowerCase();
+const catalog = getCatalog();
+const libraries = await catalog.listLibraries(ownerKeyFor(email));
+const payload = JSON.stringify({
+  libraries: libraries.map((library) => ({
+    id: library.id,
+    name: library.name,
+    parentId: library.parentId || null,
+    itemCount: library.itemCount,
+  })),
+}).replace(/</g, '\\u003c');
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Mobwork laboratory — Seshat</title>
+    <script is:inline>
+      const theme = localStorage.getItem('seshat-theme') || 'light';
+      const preset = localStorage.getItem(`seshat-theme-${theme}-preset`) || localStorage.getItem('seshat-theme-preset') || (theme === 'dark' ? 'ink' : 'papyrus');
+      document.documentElement.setAttribute('data-theme',theme);
+      document.documentElement.setAttribute('data-theme-preset',preset);
+      document.documentElement.classList.toggle('dark-theme',theme === 'dark');
+    </script>
+  </head>
+  <body class="mobwork-body">
+    <div class="mobwork-app" data-mobwork>
+      <header class="mobwork-head">
+        <a href="/dashboard" class="mobwork-brand" aria-label="Seshat dashboard"><span aria-hidden="true">𓋇</span><strong>Seshat</strong></a>
+        <div class="mobwork-lab"><strong>Mobwork</strong><small>compact laboratory</small></div>
+        <button type="button" class="mobwork-scope-button" data-open-collections aria-label="Choose collection"><span data-scope-label>Recent</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+      </header>
+
+      <section class="mobwork-search" aria-label="Find references">
+        <form data-mobile-search>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+          <input type="search" name="q" autocomplete="off" autocapitalize="none" placeholder="Title, person, publisher…" aria-label="Search references" />
+          <button type="button" data-clear-search aria-label="Clear search" hidden>×</button>
+        </form>
+        <nav class="mobwork-views" aria-label="Reference view">
+          <button type="button" data-mobile-view="recent" aria-pressed="true">Recent</button>
+          <button type="button" data-mobile-view="all" aria-pressed="false">All references</button>
+        </nav>
+      </section>
+
+      <main class="mobwork-results">
+        <div class="mobwork-result-head"><strong data-result-title>Recent readings</strong><output data-result-status>loading…</output></div>
+        <div class="mobwork-list" data-mobile-list role="list" aria-label="References" tabindex="0">
+          <div class="mobwork-list-spacer" data-list-spacer><div class="mobwork-list-window" data-list-window></div></div>
+          <div class="mobwork-loading" data-mobile-loading><span></span><small>Loading references</small></div>
+          <div class="mobwork-empty" data-mobile-empty hidden><strong>No references here</strong><small>Choose another collection or change the search.</small></div>
+        </div>
+      </main>
+
+      <nav class="mobwork-nav" aria-label="Mobwork navigation">
+        <button type="button" data-mobile-view="recent" aria-label="Recent readings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8"/></svg><span>Recent</span></button>
+        <button type="button" data-open-collections aria-label="Collections"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></svg><span>Collections</span></button>
+        <button type="button" data-focus-search aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><span>Search</span></button>
+        <a href="/dashboard" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Home</span></a>
+      </nav>
+    </div>
+
+    <dialog class="mobwork-collections" data-collection-sheet>
+      <section>
+        <header><div><small>Scope</small><strong>Collections</strong></div><button type="button" data-close-collections aria-label="Close collections">×</button></header>
+        <div class="mobwork-collection-list" data-collection-list></div>
+      </section>
+    </dialog>
+
+    <script is:inline type="application/json" id="mobwork-data" set:html={payload}></script>
+    <ReaderModal />
+    <script>
+      import { mountMobwork } from '../scripts/mobwork';
+      const root=document.querySelector<HTMLElement>('[data-mobwork]');
+      if(root)mountMobwork(root);
+    </script>
+  </body>
+</html>
