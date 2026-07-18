@@ -1,5 +1,6 @@
 import { setInlineTitle } from '../lib/inline-title';
 import { referenceVisualKind } from '../lib/reference-visual';
+import { autoLinkFirstWasabiCandidate, openWasabiCandidateDialog } from '../lib/wasabi-candidate-ui';
 
 type MobileItem={id:string;title:string;type:string;persons:string;year:number|null;language:string;format:string;sizeBytes:number;progress:number;readAt:string|null;updatedAt:string};
 type MobileLibrary={id:string;name:string;parentId:string|null;itemCount:number};
@@ -40,6 +41,17 @@ export const mountMobwork=(root:HTMLElement)=>{
     status.value=isLoading&&!items.length?'loading…':`${items.length}${hasMore?'+':''} loaded`;
   };
 
+  const mountWasabiSwipe=(shell:HTMLElement,row:HTMLButtonElement,item:MobileItem)=>{
+    const reveal=132;let pointerId=-1,startX=0,startY=0,offset=0,horizontal=false,wasOpen=false;
+    const close=()=>{shell.dataset.actionsOpen='false';row.style.transition='transform .18s ease';row.style.transform='';};
+    shell.querySelector('[data-wasabi-action="auto"]')?.addEventListener('click',(event)=>{event.stopPropagation();close();void autoLinkFirstWasabiCandidate({referenceId:item.id,title:item.title});});
+    shell.querySelector('[data-wasabi-action="list"]')?.addEventListener('click',(event)=>{event.stopPropagation();close();void openWasabiCandidateDialog({referenceId:item.id,title:item.title});});
+    shell.addEventListener('pointerdown',(event)=>{if(event.pointerType==='mouse'||(event.target as HTMLElement).closest('[data-wasabi-action]'))return;pointerId=event.pointerId;startX=event.clientX;startY=event.clientY;wasOpen=shell.dataset.actionsOpen==='true';offset=wasOpen?reveal:0;horizontal=false;row.style.transition='none';});
+    shell.addEventListener('pointermove',(event)=>{if(event.pointerId!==pointerId)return;const dx=event.clientX-startX,dy=event.clientY-startY;if(!horizontal&&Math.abs(dx)>10&&Math.abs(dx)>Math.abs(dy)*1.2)horizontal=true;if(!horizontal)return;event.preventDefault();offset=Math.max(0,Math.min(reveal,(wasOpen?reveal:0)+dx));row.style.transform=`translateX(${offset}px)`;});
+    const finish=(event:PointerEvent)=>{if(event.pointerId!==pointerId)return;row.style.transition='transform .18s ease';if(horizontal&&offset>54){shell.dataset.actionsOpen='true';row.dataset.swipeConsumed='true';row.style.transform=`translateX(${reveal}px)`;}else close();pointerId=-1;horizontal=false;};
+    shell.addEventListener('pointerup',finish);shell.addEventListener('pointercancel',()=>{close();pointerId=-1;horizontal=false;});
+  };
+
   const renderWindow=()=>{
     const viewport=Math.max(1,list.clientHeight);
     const start=Math.max(0,Math.floor(list.scrollTop/ROW_HEIGHT)-OVERSCAN);
@@ -49,12 +61,16 @@ export const mountMobwork=(root:HTMLElement)=>{
     windowHost.replaceChildren();
     for(let index=start;index<end;index+=1){
       const item=items[index];
+      const shell=document.createElement('div');shell.className='mobwork-row-shell';shell.dataset.referenceId=item.id;
+      const actions=document.createElement('div');actions.className='mobwork-row-actions';actions.ariaLabel='Wasabi link actions';
+      const auto=document.createElement('button');auto.type='button';auto.dataset.wasabiAction='auto';auto.ariaLabel='Auto-link first Wasabi candidate';auto.innerHTML='<strong>W+</strong><small>Auto</small>';
+      const candidates=document.createElement('button');candidates.type='button';candidates.dataset.wasabiAction='list';candidates.ariaLabel='Show Wasabi candidates';candidates.innerHTML='<strong>W</strong><small>List</small>';actions.append(auto,candidates);
       const row=document.createElement('button');row.type='button';row.className='mobwork-row';row.setAttribute('role','listitem');row.dataset.referenceId=item.id;
       const format=document.createElement('span');format.className='mobwork-row-format';format.title=(item.format||item.type||'Document').toUpperCase();const glyph=document.createElement('i');glyph.className=`tree-reference-glyph is-${referenceVisualKind(item.format)}`;format.appendChild(glyph);
       const copy=document.createElement('span');copy.className='mobwork-row-copy';const title=document.createElement('strong');setInlineTitle(title,item.title);const meta=document.createElement('small');meta.textContent=[item.persons,item.year?String(item.year):'',item.language].filter(Boolean).join(' · ');copy.append(title,meta);
       const facts=document.createElement('span');facts.className='mobwork-row-facts';const size=document.createElement('small');size.textContent=byteLabel(item.sizeBytes);const arrow=document.createElement('span');arrow.textContent='›';facts.append(size,arrow);
       if(item.progress>0){const meter=document.createElement('i');meter.style.setProperty('--progress',`${Math.max(0,Math.min(100,item.progress))}%`);copy.appendChild(meter);}
-      row.append(format,copy,facts);row.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('seshat:open-reader',{detail:{id:item.id,title:item.title}})));windowHost.appendChild(row);
+      row.append(format,copy,facts);row.addEventListener('click',(event)=>{if(row.dataset.swipeConsumed==='true'){event.preventDefault();row.dataset.swipeConsumed='false';return;}window.dispatchEvent(new CustomEvent('seshat:open-reader',{detail:{id:item.id,title:item.title}}));});shell.append(actions,row);mountWasabiSwipe(shell,row,item);windowHost.appendChild(shell);
     }
     status.value=isLoading&&!items.length?'loading…':`${items.length}${hasMore?'+':''} loaded · ${end-start} in DOM`;
   };

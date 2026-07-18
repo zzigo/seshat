@@ -12,6 +12,7 @@ export type ReaderCommandName =
   | 'toggle-book'
   | 'toggle-grid'
   | 'read'
+  | 'read-settings'
   | 'play-rendered'
   | 'open-original';
 
@@ -37,3 +38,4 @@ export type ReaderPlayFromDetail = {
 
 export const READER_COMMAND_MESSAGE = 'seshat:reader-command';
 export const READER_STATE_MESSAGE = 'seshat:reader-state';
+export const READER_VOICE_LONG_PRESS_MS = 2000;

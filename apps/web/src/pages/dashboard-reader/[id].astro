@@ -142,6 +142,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       book?.addEventListener('click',()=>{double=!double;if(double&&mosaic){mosaic=false;grid?.classList.remove('active');root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:false}}));}book.classList.toggle('active',double);book.textContent=double?'1 page':'Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:double}}));});
       grid?.addEventListener('click',()=>{mosaic=!mosaic;if(mosaic&&double){double=false;book?.classList.remove('active');if(book)book.textContent='Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:false}}));}grid.classList.toggle('active',mosaic);root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:mosaic}}));});
       const runCommand=(command:ReaderCommandDetail['command'])=>{
+        if(command==='read-settings'){readAloud.openVoices();return;}
         if(command==='read'){read.click();return;}
         if(command==='previous-section'||command==='next-section'){
           const delta=command==='previous-section'?-1:1;

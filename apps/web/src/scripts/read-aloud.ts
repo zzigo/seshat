@@ -2,7 +2,7 @@ import { browserSpeech, browserSpeechChunks, normalizeBrowserSpeechText } from '
 import { billableCharacterCount, chirpVoicesForLanguage } from '../lib/chirp';
 import { currentPhoneResourceProfile } from '../lib/client-resources';
 import { bestReadingSpanRun, readingPartIndexAtProgress } from '../lib/read-tracking';
-import type { ReaderPlayFromDetail } from '../lib/reader-controls';
+import { READER_VOICE_LONG_PRESS_MS, type ReaderPlayFromDetail } from '../lib/reader-controls';
 
 type ReaderEngine = 'native' | 'kokoro' | 'chirp' | 'rendered';
 type ReaderState = 'idle' | 'loading' | 'reading' | 'paused';
@@ -90,17 +90,19 @@ class ReadAloudController{
   constructor(){if(typeof document==='undefined')return;document.addEventListener('keydown',(event)=>{const target=event.target as HTMLElement|null;if(target?.matches('input,textarea,select,[contenteditable="true"]')||event.metaKey||event.ctrlKey||event.altKey)return;if(event.key.toLowerCase()==='m'&&this.current&&this.state!=='idle'){event.preventDefault();void this.mark();}});}
   attach(mount:ReaderMount){
     if(this.mount&&this.mount.referenceId!==mount.referenceId&&this.state!=='idle')this.stop();this.mount=mount;let timer=0,long=false;
+    let startX=0,startY=0;
     const open=(event?:Event)=>{event?.preventDefault();long=true;this.openVoices();};
-    const down=(event:PointerEvent)=>{if(event.pointerType==='mouse')return;long=false;timer=window.setTimeout(()=>open(event),560);};
+    const down=(event:PointerEvent)=>{if(event.button!==0)return;long=false;startX=event.clientX;startY=event.clientY;timer=window.setTimeout(()=>open(event),READER_VOICE_LONG_PRESS_MS);};
     const clear=()=>{window.clearTimeout(timer);};
+    const move=(event:PointerEvent)=>{if(Math.hypot(event.clientX-startX,event.clientY-startY)>12)clear();};
     const position=(event:PointerEvent)=>{if(event.pointerType==='mouse'&&event.button!==0)return;void this.offerPlayFrom(event,mount);};
     const rendered=(event:Event)=>{const provider=(event as CustomEvent<{provider?:NarrationProvider}>).detail?.provider==='chirp'?'chirp':'kokoro';this.mount=mount;void this.playRendered(provider);};
     const playFromEvent=(event:Event)=>{this.mount=mount;void this.playFromQuote((event as CustomEvent<ReaderPlayFromDetail>).detail);};
     const pageRendered=()=>{if(this.mount?.referenceId===mount.referenceId&&this.current&&this.state!=='idle')window.requestAnimationFrame(()=>this.current&&this.trackPdfSentence(this.current));};
-    mount.button.addEventListener('pointerdown',down);mount.button.addEventListener('pointerup',clear);mount.button.addEventListener('pointercancel',clear);mount.button.addEventListener('pointermove',clear);
+    mount.button.addEventListener('pointerdown',down);mount.button.addEventListener('pointerup',clear);mount.button.addEventListener('pointercancel',clear);mount.button.addEventListener('pointermove',move);
     mount.button.addEventListener('click',(event)=>{if(long){long=false;return;}this.mount=mount;if(event.shiftKey){this.openVoices();return;}void this.toggle();});
     mount.stopButton?.addEventListener('click',()=>{this.mount=mount;this.stop();mount.report('reading stopped');});mount.container.addEventListener('pointerup',position);mount.container.addEventListener('seshat:play-rendered',rendered);mount.container.addEventListener('seshat:reader-play-from',playFromEvent);mount.container.addEventListener('seshat:pdf-page-rendered',pageRendered);
-    mount.button.title='Read aloud · Shift-click or long press for voices · M marks the current sentence';this.paintButton();
+    mount.button.title='Read aloud · Shift-click or hold 2 seconds for voices · M marks the current sentence';this.paintButton();
     return()=>{clear();mount.container.removeEventListener('pointerup',position);mount.container.removeEventListener('seshat:play-rendered',rendered);mount.container.removeEventListener('seshat:reader-play-from',playFromEvent);mount.container.removeEventListener('seshat:pdf-page-rendered',pageRendered);this.playTooltip?.remove();this.playTooltip=null;if(this.mount?.button===mount.button&&this.state==='idle')this.mount=null;};
   }
   paintButton(){if(!this.mount)return;const labels:Record<ReaderState,string>={idle:'Read',loading:'Loading…',reading:'Pause',paused:'Resume'};this.mount.button.textContent=labels[this.state];this.mount.button.dataset.readerState=this.state;if(this.mount.stopButton)this.mount.stopButton.hidden=this.state==='idle';const caption=this.mount.container.querySelector<HTMLElement>('.read-aloud-caption');if(caption){const settings=readSettings();const speed=caption.querySelector<HTMLOutputElement>('[data-reader-speed]');if(speed)speed.value=`${settings.rate.toFixed(2)}×`;const transport=caption.querySelector<HTMLButtonElement>('[data-reader-transport]');if(transport){const stopped=this.state==='idle';transport.innerHTML=readerIcon(stopped?'play':'stop');transport.dataset.transportState=stopped?'play':'stop';transport.ariaLabel=stopped?'Play narration':'Stop narration';transport.title=transport.ariaLabel;}}}
