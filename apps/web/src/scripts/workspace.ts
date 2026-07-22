@@ -21,13 +21,14 @@ import { referenceVisualKind } from '../lib/reference-visual';
 import { buildCollectionDestinationTree, referenceIdsFromDragData, REFERENCE_MOVE_DRAG_MIME, REFERENCE_OPEN_DRAG_MIME, REFERENCE_SINGLE_DRAG_MIME } from '../lib/workspace-move';
 import { buildInboxAudit, type InboxAuditKind } from '../lib/inbox-audit';
 import { GRAPH_LAYOUT_DEFAULTS, graphLabelCollisionRadius, graphLabelPlacement, shortGraphPaperTitle, wrapGraphLabel } from '../lib/graph-visual';
+import { lastReadTimestamp, sortRecentlyRead } from '../lib/recently-read';
 
 registerAllModules();
 
 type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
-  publisher: string; publisherPlace: string; url: string; dateAdded: string;
+  publisher: string; publisherPlace: string; url: string; dateAdded: string; lastReadAt: string;
   sourceProvider: string; zoteroMapped: boolean;
   bibliographicFields: Record<string,string>;
   sizeBytes: number;
@@ -86,6 +87,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
   dateAdded: reference.createdAt || '',
+  lastReadAt: reference.lastReadAt || '',
   sourceProvider: String(reference.sourceProvider ?? reference.source?.provider ?? ''),
   zoteroMapped: Boolean(reference.zoteroMapped ?? reference.source?.zoteroData),
   sizeBytes: Number((reference.artifacts || []).find((artifact:any) => artifact.kind === 'original')?.sizeBytes || 0),
@@ -140,7 +142,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
   let activeSmartFolder: string | null = null;
-  let activeVirtualFolder: 'duplicates' | 'inbox-audit' | null = null;
+  let activeVirtualFolder: 'duplicates' | 'inbox-audit' | 'recently-read' | null = null;
   let inboxAuditScope: 'all' | 'possible' | 'bibtex' | 'uploads' | 'local' = 'all';
   let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
@@ -244,6 +246,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         return priority(leftAudit?.kind)-priority(rightAudit?.kind)||normalize(left.title).localeCompare(normalize(right.title));
       });
     }
+    if (activeVirtualFolder === 'recently-read') rows = sortRecentlyRead(rows);
     return rows;
   };
   // Handsontable invokes renderers and `cells()` many times. Keep the current
@@ -264,6 +267,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         ? `${visibleCatalogRows.length} duplicate items · ${groups} groups`
         : activeVirtualFolder==='inbox-audit'
           ? `${visibleCatalogRows.length} audit items · ${inboxAuditState.counts.possible} possible Zotero matches`
+        : activeVirtualFolder==='recently-read'
+          ? `${visibleCatalogRows.length} read items · newest first`
         : `${visibleCatalogRows.length} / ${payload.references.length}`;
     }
   };
@@ -1054,6 +1059,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const physicalRow=instance.toPhysicalRow(row);const reference=physicalRow>=0?instance.getSourceDataAtRow(physicalRow) as ReferenceRow|undefined:undefined;const audit=reference?inboxAuditState.byId.get(reference.id):undefined;
       td.textContent=audit?.label||'';td.title=audit?.candidateTitle?`${audit.label} · ${audit.candidateTitle}`:audit?.label||'';td.classList.add('inbox-audit-cell');td.dataset.auditKind=audit?.kind||'';
     };
+    const lastReadRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      const timestamp=lastReadTimestamp(value);td.textContent=timestamp?new Date(timestamp).toLocaleString():'';td.title=td.textContent;td.classList.add('last-read-cell');
+    };
     type CatalogColumn={key:string;group:string;column:Record<string,unknown>;defaultVisible:boolean};
     const coreColumns:CatalogColumn[]=[
       {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',renderer:titleRenderer,width:300}},
@@ -1070,6 +1079,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       {key:'tags',group:'Description',defaultVisible:true,column:{data:'tags',title:'Tags',width:190}},
       {key:'citeKey',group:'Identity',defaultVisible:true,column:{data:'citeKey',title:'Citekey',width:160}},
       {key:'dateAdded',group:'System',defaultVisible:true,column:{data:'dateAdded',title:'Date added',readOnly:true,width:190}},
+      {key:'lastReadAt',group:'System',defaultVisible:false,column:{data:'lastReadAt',title:'Last Read',readOnly:true,renderer:lastReadRenderer,width:190}},
       {key:'abstract',group:'Description',defaultVisible:true,column:{data:'abstract',title:'Abstract',width:320}},
       {key:'fileType',group:'System',defaultVisible:true,column:{data:'fileType',title:'File',readOnly:true,renderer:fileRenderer,width:72}},
       {key:'status',group:'System',defaultVisible:true,column:{data:'status',title:'State',readOnly:true,renderer:stateRenderer,width:130}},
@@ -1167,7 +1177,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
     const filedInColumnIndex=catalogColumns.findIndex((item)=>item.key==='filedIn');
     const inboxAuditColumnIndex=catalogColumns.findIndex((item)=>item.key==='inboxAudit');
-    syncCatalogContextColumns=()=>{if(!catalogTable)return;const hidden=catalogTable.getPlugin('hiddenColumns');if(filedInColumnIndex>=0){if(activeVirtualFolder==='duplicates'||visibleColumns.has('filedIn'))hidden.showColumn(filedInColumnIndex);else hidden.hideColumn(filedInColumnIndex);}if(inboxAuditColumnIndex>=0){if(activeVirtualFolder==='inbox-audit'||visibleColumns.has('inboxAudit'))hidden.showColumn(inboxAuditColumnIndex);else hidden.hideColumn(inboxAuditColumnIndex);}catalogTable.render();};
+    const lastReadColumnIndex=catalogColumns.findIndex((item)=>item.key==='lastReadAt');
+    syncCatalogContextColumns=()=>{if(!catalogTable)return;const hidden=catalogTable.getPlugin('hiddenColumns');if(filedInColumnIndex>=0){if(activeVirtualFolder==='duplicates'||visibleColumns.has('filedIn'))hidden.showColumn(filedInColumnIndex);else hidden.hideColumn(filedInColumnIndex);}if(inboxAuditColumnIndex>=0){if(activeVirtualFolder==='inbox-audit'||visibleColumns.has('inboxAudit'))hidden.showColumn(inboxAuditColumnIndex);else hidden.hideColumn(inboxAuditColumnIndex);}if(lastReadColumnIndex>=0){if(activeVirtualFolder==='recently-read'||visibleColumns.has('lastReadAt'))hidden.showColumn(lastReadColumnIndex);else hidden.hideColumn(lastReadColumnIndex);}catalogTable.render();};
     syncCatalogContextColumns();
     resizeObserver = new ResizeObserver(([entry]) => {
       const nextHeight = Math.floor(entry.contentRect.height);
@@ -3134,7 +3145,11 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       activeReference = referenceId; const ref = references.get(referenceId); if (!ref) return; renderProperties(referenceId); if(!phone)root.classList.add('properties-open');
       lastRead[referenceId] = Date.now();
       window.localStorage.setItem(TREE_LAST_READ_KEY, JSON.stringify(lastRead));
+      ref.lastReadAt = new Date(lastRead[referenceId]).toISOString();
+      void fetch(`/api/library/${encodeURIComponent(referenceId)}/reading-state`,{method:'PATCH'}).catch(()=>undefined);
+      const recentlyReadTotal=root.querySelector<HTMLElement>('.recently-read-folder-node b');if(recentlyReadTotal)recentlyReadTotal.textContent=String(payload.references.filter((item)=>lastReadTimestamp(item.lastReadAt)>0).length);
       if (treeOrder === 'recent') renderTree(search.value);
+      if (activeVirtualFolder === 'recently-read') { refreshTable();renderTree(search.value); }
       if (split&&!phone) { addPanel(`document-split-${referenceId}-${Date.now()}`, `document:${referenceId}`, ref.title, 'right'); return; }
       const existing = api.getPanel('document-preview');
       if (existing) { previewRender?.(referenceId); existing.api.setTitle(plainInlineTitle(ref.title)); existing.api.setActive(); }
@@ -3854,7 +3869,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       treeRevealReferenceId = null;
       return;
     }
-    children().forEach((library) => appendLibrary(library, tree));
+    const recentlyReadCount=payload.references.filter((reference)=>lastReadTimestamp(reference.lastReadAt)>0).length;
+    const appendRecentlyRead=()=>{const button=document.createElement('button');button.type='button';button.className='smart-folder-node virtual-folder-node recently-read-folder-node';button.classList.toggle('active',activeVirtualFolder==='recently-read');button.title=`Recently Read · ${recentlyReadCount} items · newest first`;
+      const icon=document.createElement('span');icon.className='smart-folder-icon';icon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><circle cx="9" cy="8" r="2.7"/><path d="M9 6.4v1.8l1.3.8"/></svg>';
+      const label=document.createElement('span');label.textContent='Recently Read';const total=document.createElement('b');total.textContent=String(recentlyReadCount);button.append(icon,label,total);button.addEventListener('click',()=>{activeLibrary=null;activeSmartFolder=null;activeVirtualFolder='recently-read';activeKeyword=null;refreshTable();renderTree(search.value);renderKeywordCloud();controller.openCatalog();});tree.appendChild(button);};
+    let recentAppended=false;
+    children().forEach((library) => {appendLibrary(library, tree);if(isInboxLibraryId(library.id)){appendRecentlyRead();recentAppended=true;}});
+    if(!recentAppended)appendRecentlyRead();
     const smartSection=document.createElement('section');smartSection.className='smart-folder-section';
     const smartHeader=document.createElement('header');const smartTitle=document.createElement('span');smartTitle.textContent='Smart folders';
     const addSmart=document.createElement('button');addSmart.type='button';addSmart.textContent='＋';addSmart.title='New smart folder';addSmart.setAttribute('aria-label','New smart folder');addSmart.addEventListener('click',()=>openSmartFolderEditor());smartHeader.append(smartTitle,addSmart);smartSection.appendChild(smartHeader);

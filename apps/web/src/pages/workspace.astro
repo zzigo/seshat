@@ -19,13 +19,21 @@ const ownerKey = ownerKeyFor(email);
 const chirpEnabled = chirpAccessAllowed(email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
-const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus, zoteroMappingRows] = await Promise.all([
+const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus, zoteroMappingRows, readingStateRows] = await Promise.all([
   catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey), catalog.listSmartFolders(ownerKey),
   catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
   getZoteroConnectionStatus(ownerKey),
   catalog.pool.query('SELECT reference_id FROM catalog_zotero_items WHERE owner_key=$1', [ownerKey]),
+  catalog.pool.query(
+    `SELECT state.reference_id,state.updated_at AS read_at
+     FROM catalog_reading_state state
+     JOIN catalog_references reference ON reference.id=state.reference_id AND reference.owner_key=$1
+     WHERE state.owner_key=$1 AND NOT (state.location ? 'recentDismissedAt')
+     ORDER BY state.updated_at DESC`, [ownerKey],
+  ),
 ]);
 const zoteroReferenceIds = new Set(zoteroMappingRows.rows.map((row:any) => String(row.reference_id)));
+const readAtByReference = new Map(readingStateRows.rows.map((row:any) => [String(row.reference_id),new Date(row.read_at).toISOString()]));
 const keywordList = (source: any): string[] => {
   const raw = source?.keywords ?? source?.bibtex?.keywords ?? [];
   return [...new Set((Array.isArray(raw) ? raw : String(raw || '').split(/[,;\n]+/)).map((value) => String(value).trim()).filter(Boolean))];
@@ -64,6 +72,7 @@ const payload = {
     fileType: referenceFileType(reference).toUpperCase() || '—',
     filename: String((reference.source as any).originalFilename || reference.title),
     dateAdded: reference.createdAt,
+    lastReadAt: readAtByReference.get(reference.id) || '',
     sourceProvider: String((reference.source as any)?.provider || ''),
     zoteroMapped: zoteroReferenceIds.has(reference.id),
     sizeBytes: reference.artifacts.find((artifact) => artifact.kind === 'original')?.sizeBytes || 0,
