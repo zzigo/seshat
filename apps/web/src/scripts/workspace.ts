@@ -23,12 +23,13 @@ import { buildInboxAudit, type InboxAuditKind } from '../lib/inbox-audit';
 import { GRAPH_LAYOUT_DEFAULTS, graphLabelCollisionRadius, graphLabelPlacement, shortGraphPaperTitle, wrapGraphLabel } from '../lib/graph-visual';
 import { lastReadTimestamp, sortRecentlyRead } from '../lib/recently-read';
 import { normalizeGraphKeyword, referencesSharingKeyword } from '../lib/graph-discovery';
+import { catalogKeywordFacets, referenceMatchesCatalogFacet } from '../lib/keyword-facets';
 
 registerAllModules();
 
 type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
-  isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
+  isbn: string; language: string; tags: string; tagList: string[]; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string; lastReadAt: string;
   sourceProvider: string; zoteroMapped: boolean;
   bibliographicFields: Record<string,string>;
@@ -49,6 +50,7 @@ const TREE_STATE_KEY = 'seshat.workspace.tree.v1';
 const TREE_ORDER_KEY = 'seshat.workspace.tree-order.v1';
 const TREE_LAST_READ_KEY = 'seshat.workspace.last-read.v1';
 const GRAPH_SIDEBAR_KEY = 'seshat.workspace.graph-sidebar.v1';
+const KEYWORD_POD_HEIGHT_KEY = 'seshat.workspace.keyword-pod-height.v1';
 const readPayload = (): WorkspacePayload => JSON.parse(document.getElementById('seshat-workspace-data')?.textContent || '{"references":[],"libraries":[]}');
 const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
 const isInboxLibraryId = (id: string) => id.startsWith('inbox:');
@@ -78,6 +80,7 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   isbn: (reference.identifiers?.isbn || []).join('; '),
   language: reference.language || '',
   tags: (reference.tags || []).join(', '),
+  tagList: (reference.tags || []).map(String),
   keywords: Array.isArray(reference.source?.keywords) ? reference.source.keywords.map(String) : String(reference.source?.bibtex?.keywords || '').split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean),
   abstract: reference.abstract || '',
   publisher: reference.publisher || '',
@@ -132,6 +135,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const keywordFilter = root.querySelector<HTMLInputElement>('[data-keyword-filter]');
   const keywordCloud = root.querySelector<HTMLElement>('[data-keyword-cloud]');
   const keywordCount = root.querySelector<HTMLElement>('[data-keyword-count]');
+  const keywordPod = root.querySelector<HTMLDetailsElement>('[data-keyword-pod]');
+  const keywordPodResizer = root.querySelector<HTMLElement>('[data-keyword-pod-resizer]');
   const propertiesContent = root.querySelector<HTMLElement>('[data-properties-content]');
   const narrationProgress=root.querySelector<HTMLElement>('[data-narration-progress]');const narrationProgressLabel=root.querySelector<HTMLElement>('[data-narration-progress-label]');const narrationProgressValue=root.querySelector<HTMLElement>('[data-narration-progress-value]');const narrationProgressBar=root.querySelector<HTMLProgressElement>('[data-narration-progress-bar]');let narrationProgressTimer=0;
   if (!host || !tree || !search || !saveState || !consoleRoot || !consoleCurrent || !consoleCount || !consoleDrawer || !consoleLog || !consoleToggle) return;
@@ -226,7 +231,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     let rows = payload.references.filter((reference) => (!activeLibrary
       || (isInboxLibraryId(activeLibrary) ? isUnfiledReference(reference) : Boolean(activeBranch && belongsToLibraryBranch(reference.libraryIds, activeBranch))))
       && (!smartFolder || referenceMatchesSmartFolder(reference, smartFolder.filters))
-      && (!activeKeyword || reference.keywords.includes(activeKeyword))
+      && (!activeKeyword || referenceMatchesCatalogFacet(reference, activeKeyword))
       && (!query || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename, reference.status, referenceLocationText(reference)]
         .some((value) => normalize(value).includes(query))));
     if (activeVirtualFolder === 'duplicates') {
@@ -3297,15 +3302,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   ];
   function renderKeywordCloud() {
     if (!keywordCloud) return;
-    const query = normalize(keywordFilter?.value || ''); const counts = new Map<string,number>();
-    payload.references.forEach((reference) => reference.keywords.forEach((keyword) => counts.set(keyword,(counts.get(keyword) || 0) + 1)));
-    keywordCount && (keywordCount.textContent = String(counts.size)); keywordCloud.replaceChildren();
-    [...counts].filter(([keyword]) => !query || normalize(keyword).includes(query)).sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0])).forEach(([keyword,count]) => {
-      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'keyword-chip'; chip.classList.toggle('active',activeKeyword === keyword); chip.title = `${count} item${count === 1 ? '' : 's'} · right-click to edit`;
+    const query = normalize(keywordFilter?.value || ''); const facets = catalogKeywordFacets(payload.references);
+    keywordCount && (keywordCount.textContent = String(facets.length)); keywordCloud.replaceChildren();
+    facets.filter(({ label }) => !query || normalize(label).includes(query)).forEach(({ label:keyword,count,fromKeyword,fromTag }) => {
+      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'keyword-chip'; chip.classList.toggle('active',activeKeyword === keyword);
+      chip.classList.toggle('is-tag',fromTag); chip.classList.toggle('is-keyword',fromKeyword); chip.title = `${count} item${count === 1 ? '' : 's'} · ${fromKeyword && fromTag ? 'keyword + tag' : fromTag ? 'tag' : 'keyword'}${fromKeyword ? ' · right-click to edit' : ''}`;
       const color = payload.keywordStyles[keyword]; if (color) { const dot = document.createElement('i'); dot.className = 'keyword-dot'; dot.style.setProperty('--keyword-color',color); chip.appendChild(dot); }
       const label = document.createElement('span'); label.textContent = keyword; const total = document.createElement('small'); total.textContent = String(count); chip.append(label,total);
       chip.addEventListener('click',() => { activeKeyword = activeKeyword === keyword ? null : keyword; refreshTable(); renderTree(search?.value || ''); renderKeywordCloud(); });
-      chip.addEventListener('contextmenu',(event) => openContextMenu(event,keywordMenuItems(keyword)));
+      if (fromKeyword) chip.addEventListener('contextmenu',(event) => openContextMenu(event,keywordMenuItems(keyword)));
       keywordCloud.appendChild(chip);
     });
   }
@@ -4144,8 +4149,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const openHelp = () => {
     const dialog = dialogShell('Seshat help'); dialog.classList.add('workspace-help-dialog'); const body = document.createElement('div'); body.className = 'workspace-help';
     const addSection = (title: string, lines: string[]) => { const section = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = title; const list = document.createElement('ol'); lines.forEach((line) => { const item = document.createElement('li'); item.textContent = line; list.appendChild(item); }); section.append(heading,list); body.appendChild(section); };
-    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','Rendered narrations have a blue ▶ in the collection sidebar and a ▶ OGG control in the document toolbar.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','Use the Keywords cloud for Zotero/BibTeX keywords. Dashboard tags are general descriptive labels generated or edited independently.']);
-    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','W — search Wasabi candidates for selected items','Shift W — link the first Wasabi match automatically','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt — reveal the open item in sidebar and Catalog','Alt L — locate selected item in its collection','Sidebar ↑ / ↓ — previous / next visible item','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','Ctrl ↑ — unfold current collection','Ctrl ↓ — fold current collection','Ctrl Shift ↑ — fold all collections','Ctrl Shift ↓ — unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF 1 fit page/spread, g grid, b book']);
+    addSection('First steps',['Drop PDF, EPUB, DOCX, TXT or BIB files anywhere in the workspace.','Review a BIB preview, then create its collection tree and link existing Wasabi files.','Select an item to inspect properties; changing Entry type immediately selects its standard BibLaTeX fields.','Right-click a Catalog column header to show fields by group or change the sticky Title / Persons columns.','Double-click an item to read. Use Read for speech; Shift-click or long-press it to choose browser/Microsoft or Kokoro voices.','Rendered narrations have a blue ▶ in the collection sidebar and a ▶ OGG control in the document toolbar.','While speech is active, press M to save a durable reading mark.','Use GRAPH in an item toolbar for that document; use Knowledge Graph in the main bar for all references or one collection.','The Keywords cloud combines BibTeX keywords with Zotero tags; a # marks tag-only entries. Drag its upper edge to resize it.']);
+    addSection('Shortcuts',['R — read / pause / resume','Shift R — read voice and engine settings','Ctrl ` — toggle Activity / OpenAlex console','W — search Wasabi candidates for selected items','Shift W — link the first Wasabi match automatically','⌘ ; — open Dashboard','⌘ Backspace — delete selected items','Alt — reveal the open item in sidebar and Catalog','Alt L — locate selected item in its collection','Sidebar ↑ / ↓ — previous / next visible item','g c — search Wasabi candidate','⌘ \\ — toggle collection sidebar','⌘ ⇧ \\ — reading / analysis view','Ctrl ↑ — unfold current collection','Ctrl ↓ — fold current collection','Ctrl Shift ↑ — fold all collections','Ctrl Shift ↓ — unfold all collections','y a / y b — copy APA / BibTeX','Reader: ← / → previous / next; 0 beginning; G end; PDF 1 fit page/spread, g grid, b book']);
     const bibliographyTypes=document.createElement('details');bibliographyTypes.className='help-bibliography-types';const bibliographySummary=document.createElement('summary');bibliographySummary.textContent='BibLaTeX entry types';const bibliographyIntro=document.createElement('p');bibliographyIntro.textContent='Type is controlled across Catalog and Item properties. Standard BibTeX types are supplemented by BibLaTeX/Biber media types and two explicit Seshat conventions.';const bibliographyList=document.createElement('div');BIBLATEX_ENTRY_TYPE_OPTIONS.forEach((entryType)=>{const row=document.createElement('div');const name=document.createElement('code');name.textContent=`@${entryType.value}`;const description=document.createElement('span');description.textContent=entryType.description;const target=document.createElement('small');target.textContent=entryType.value===entryType.biblatex?entryType.family:`exports @${entryType.biblatex}`;row.append(name,description,target);bibliographyList.appendChild(row);});bibliographyTypes.append(bibliographySummary,bibliographyIntro,bibliographyList);body.appendChild(bibliographyTypes);
     const technology = document.createElement('section'); const heading = document.createElement('h3'); heading.textContent = 'Applied technologies'; technology.appendChild(heading);
     const rows: Array<[string,string,string]> = [['Wasabi object storage','stable','Production-ready'],['Docling document extraction','stable','Production-ready'],['RapidOCR · ONNX Runtime','beta','Integrated, under broader validation'],['PostgreSQL catalog','stable','Production-ready'],['Qdrant semantic retrieval','beta','Integrated, under broader validation'],['Kokoro local TTS','beta','Local browser inference with Web Speech fallback'],['Knowledge graph','experimental','Active exploration'],['AI agent','planned','Planned capability']];
@@ -4247,13 +4252,24 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   });
   window.addEventListener('blur',()=>{altLocateArmed=false;});
 
-  const toggleActivityConsole=() => {
-    const expanded = consoleDrawer.hidden;
-    consoleDrawer.hidden = !expanded;
-    consoleToggle.setAttribute('aria-expanded', String(expanded));
+  const setActivityConsoleOpen=(open:boolean) => {
+    consoleRoot.hidden=!open; consoleDrawer.hidden=!open;
+    consoleToggle.setAttribute('aria-expanded',String(open));
+    if(open)window.requestAnimationFrame(()=>{consoleDrawer.scrollTop=consoleDrawer.scrollHeight;});
   };
+  const toggleActivityConsole=() => setActivityConsoleOpen(consoleRoot.hidden);
+  setActivityConsoleOpen(false);
   consoleToggle.addEventListener('click',toggleActivityConsole);
-  window.addEventListener('keydown',(event)=>{const target=event.target instanceof HTMLElement?event.target:null;const editing=target?.matches('input, textarea, select, [contenteditable="true"]');if(!editing&&event.altKey&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&event.key.toLowerCase()==='f'){event.preventDefault();toggleActivityConsole();}});
+  window.addEventListener('keydown',(event)=>{const target=event.target instanceof HTMLElement?event.target:null;const editing=target?.matches('input, textarea, select, [contenteditable="true"]');if(!editing&&event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.shiftKey&&event.code==='Backquote'){event.preventDefault();toggleActivityConsole();}});
+
+  const clampKeywordPodHeight=(value:number)=>Math.max(96,Math.min(Math.round(value),Math.max(96,Math.round((root.querySelector<HTMLElement>('.workspace-sidebar')?.clientHeight||420)*.72))));
+  const setKeywordPodHeight=(value:number,persist=true)=>{if(!keywordPod)return;const height=clampKeywordPodHeight(value);keywordPod.style.setProperty('--keyword-pod-height',`${height}px`);keywordPodResizer?.setAttribute('aria-valuenow',String(height));if(persist)window.localStorage.setItem(KEYWORD_POD_HEIGHT_KEY,String(height));};
+  if(keywordPod&&keywordPodResizer){
+    setKeywordPodHeight(Number(window.localStorage.getItem(KEYWORD_POD_HEIGHT_KEY))||210,false);
+    keywordPodResizer.addEventListener('pointerdown',(event)=>{if(!keywordPod.open)return;event.preventDefault();keywordPodResizer.setPointerCapture(event.pointerId);root.classList.add('resizing-keywords');const bottom=keywordPod.getBoundingClientRect().bottom;const move=(moveEvent:PointerEvent)=>setKeywordPodHeight(bottom-moveEvent.clientY);const stop=(stopEvent:PointerEvent)=>{root.classList.remove('resizing-keywords');keywordPodResizer.releasePointerCapture(stopEvent.pointerId);keywordPodResizer.removeEventListener('pointermove',move);keywordPodResizer.removeEventListener('pointerup',stop);keywordPodResizer.removeEventListener('pointercancel',stop);};keywordPodResizer.addEventListener('pointermove',move);keywordPodResizer.addEventListener('pointerup',stop);keywordPodResizer.addEventListener('pointercancel',stop);});
+    keywordPodResizer.addEventListener('keydown',(event)=>{if(event.key!=='ArrowUp'&&event.key!=='ArrowDown')return;event.preventDefault();setKeywordPodHeight(keywordPod.getBoundingClientRect().height+(event.key==='ArrowUp'?16:-16));});
+    window.addEventListener('resize',()=>setKeywordPodHeight(keywordPod.getBoundingClientRect().height,false));
+  }
 
   let treeSearchTimer=0;
   search.addEventListener('input', () => {

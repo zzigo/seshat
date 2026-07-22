@@ -62,6 +62,7 @@ const payload = {
     isbn: ((reference.identifiers.isbn as string[] | undefined) || []).join('; '),
     language: reference.language || '',
     tags: reference.tags.join(', '),
+    tagList: reference.tags,
     keywords: keywordList(reference.source),
     abstract: reference.abstract || '',
     publisher: reference.publisher || '',
@@ -154,8 +155,9 @@ const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress
             <button type="button" data-collapse-sidebar class="sidebar-collapse-button" title="Collapse sidebar" aria-label="Collapse sidebar">&lt;</button>
           </div>
           <div class="library-tree" data-library-tree></div>
-          <details class="keyword-pod" open>
+          <details class="keyword-pod" open data-keyword-pod>
             <summary>Keywords <span data-keyword-count>0</span></summary>
+            <div class="keyword-pod-resizer" data-keyword-pod-resizer role="separator" aria-orientation="horizontal" aria-label="Resize Keywords section" tabindex="0"></div>
             <input type="search" placeholder="Filter keywords…" data-keyword-filter aria-label="Filter keywords" />
             <div class="keyword-cloud" data-keyword-cloud></div>
           </details>
@@ -167,8 +169,8 @@ const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress
           <div data-properties-content></div>
         </aside>
       </div>
-      <footer class="workspace-console" data-workspace-console>
-        <button type="button" class="console-toggle" data-console-toggle aria-expanded="false" title="Activity console · Alt+F"><span class="console-pulse">●</span><strong>Activity / OpenAlex</strong></button>
+      <footer class="workspace-console" data-workspace-console hidden>
+        <button type="button" class="console-toggle" data-console-toggle aria-expanded="false" title="Hide Activity console · Ctrl+`"><span class="console-pulse">●</span><strong>Activity / OpenAlex</strong></button>
         <div class="console-current" data-console-current>Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE, DJVU or BIB anywhere</div>
         <span class="console-count" data-console-count>0 jobs</span>
         <div class="console-drawer" data-console-drawer hidden><ol data-console-log></ol></div>
