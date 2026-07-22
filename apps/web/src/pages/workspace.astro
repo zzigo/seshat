@@ -132,6 +132,9 @@ const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress
         <div class="workspace-session">
           <a class="workspace-version-link" href="/work?mode=mobile" title="Use the mobile workspace">mobile</a>
           <button type="button" data-toggle-theme title="Toggle dark/light theme" style="border:0; background:transparent; font-size:13px; color:var(--muted); cursor:pointer; padding:0 8px;">☼</button>
+          <button type="button" class="workspace-console-button" data-workspace-console-button title="Activity / OpenAlex console · Shift+C" aria-label="Toggle Activity and OpenAlex console" aria-expanded="false">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="3.5" width="13" height="11" rx="1.5"></rect><path d="m5.5 7 2 2-2 2M9.5 11h3"></path></svg>
+          </button>
           <button type="button" data-workspace-help title="Help and shortcuts" aria-label="Help and shortcuts">?</button>
           <button type="button" data-toggle-fullscreen title="Toggle Fullscreen Mode" style="border:0; background:transparent; font-size:11px; color:var(--muted); cursor:pointer; padding:0 6px;">⛶</button>
           <span data-save-state>ready</span>
@@ -170,7 +173,7 @@ const zoteroTooltip = zoteroStatus.syncing ? 'Zotero synchronization in progress
         </aside>
       </div>
       <footer class="workspace-console" data-workspace-console hidden>
-        <button type="button" class="console-toggle" data-console-toggle aria-expanded="false" title="Hide Activity console · Ctrl+`"><span class="console-pulse">●</span><strong>Activity / OpenAlex</strong></button>
+        <button type="button" class="console-toggle" data-console-toggle aria-expanded="false" title="Hide Activity console · Shift+C"><span class="console-pulse">●</span><strong>Activity / OpenAlex</strong></button>
         <div class="console-current" data-console-current>Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE, DJVU or BIB anywhere</div>
         <span class="console-count" data-console-count>0 jobs</span>
         <div class="console-drawer" data-console-drawer hidden><ol data-console-log></ol></div>
