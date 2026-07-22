@@ -787,6 +787,28 @@ html { max-width: 100%; overflow: hidden; }
 .catalog-delete { width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; color: #8b3628; background: transparent; font: 17px/1 monospace; cursor: pointer; opacity: .45; }
 .catalog-delete:hover { opacity: 1; background: rgba(139,54,40,.08); }
 
+/* Handsontable mounts column-filter menus outside the catalog pod, so its
+   link and checkbox labels cannot reliably inherit the active Seshat theme. */
+.handsontable.htDropdownMenu .htFiltersMenuValue,
+.handsontable.htDropdownMenu .htUISelectAll a,
+.handsontable.htDropdownMenu .htUIClearAll a,
+.handsontable.htDropdownMenu .htUIMultipleSelectHot td,
+.handsontable.htDropdownMenu .htUIMultipleSelectHot .htItemWrapper {
+  color: var(--ink) !important;
+}
+.handsontable.htDropdownMenu .htUIMultipleSelectSearch input {
+  color: var(--ink) !important;
+  caret-color: var(--ink);
+}
+.handsontable.htDropdownMenu .htUIMultipleSelectSearch input::placeholder {
+  color: var(--muted) !important;
+  opacity: 1;
+}
+.handsontable.htDropdownMenu .htUISelectAll a:hover,
+.handsontable.htDropdownMenu .htUIClearAll a:hover {
+  color: var(--green-bright) !important;
+}
+
 @media (max-width: 760px) {
   .workspace-bar { grid-template-columns: 52px minmax(0,1fr); }
   .workspace-brand { padding: 0 13px; }
