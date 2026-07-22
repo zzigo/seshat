@@ -19,6 +19,8 @@ import { chirpVoicesForLanguage } from '../lib/chirp';
 import { plainInlineTitle, setInlineTitle } from '../lib/inline-title';
 import { referenceVisualKind } from '../lib/reference-visual';
 import { buildCollectionDestinationTree, referenceIdsFromDragData, REFERENCE_MOVE_DRAG_MIME, REFERENCE_OPEN_DRAG_MIME, REFERENCE_SINGLE_DRAG_MIME } from '../lib/workspace-move';
+import { buildInboxAudit, type InboxAuditKind } from '../lib/inbox-audit';
+import { GRAPH_LAYOUT_DEFAULTS, graphLabelCollisionRadius, graphLabelPlacement, shortGraphPaperTitle, wrapGraphLabel } from '../lib/graph-visual';
 
 registerAllModules();
 
@@ -26,6 +28,7 @@ type ReferenceRow = {
   id: string; citeKey: string; type: string; title: string; contributors: Contributor[]; contributorsDisplay: string; year: number | string;
   isbn: string; language: string; tags: string; keywords: string[]; abstract: string; format: string; fileType: string; filename: string;
   publisher: string; publisherPlace: string; url: string; dateAdded: string;
+  sourceProvider: string; zoteroMapped: boolean;
   bibliographicFields: Record<string,string>;
   sizeBytes: number;
   libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
@@ -83,6 +86,8 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   fileType: referenceFileType(reference).toUpperCase() || '—',
   filename: String(reference.source?.originalFilename || reference.title),
   dateAdded: reference.createdAt || '',
+  sourceProvider: String(reference.sourceProvider ?? reference.source?.provider ?? ''),
+  zoteroMapped: Boolean(reference.zoteroMapped ?? reference.source?.zoteroData),
   sizeBytes: Number((reference.artifacts || []).find((artifact:any) => artifact.kind === 'original')?.sizeBytes || 0),
   libraryIds: reference.libraryIds || [],
   status: referenceState(reference),
@@ -135,7 +140,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let catalogFilterStatus: HTMLElement | null = null;
   let activeLibrary: string | null = null;
   let activeSmartFolder: string | null = null;
-  let activeVirtualFolder: 'duplicates' | null = null;
+  let activeVirtualFolder: 'duplicates' | 'inbox-audit' | null = null;
+  let inboxAuditScope: 'all' | 'possible' | 'bibtex' | 'uploads' | 'local' = 'all';
   let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
@@ -181,6 +187,23 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     groups.forEach(([fingerprint,rows]) => rows.forEach((row) => fingerprints.set(row.id,fingerprint)));
     return { groups, fingerprints, ids:new Set(fingerprints.keys()) };
   };
+  const createInboxAuditSnapshot = () => buildInboxAudit(payload.references.map((reference) => ({
+    id: reference.id,
+    title: reference.title,
+    year: reference.year,
+    sourceProvider: reference.sourceProvider,
+    zoteroMapped: reference.zoteroMapped,
+    unfiled: isUnfiledReference(reference),
+  })));
+  let inboxAuditState = createInboxAuditSnapshot();
+  const refreshInboxAudit = () => { inboxAuditState = createInboxAuditSnapshot(); };
+  const inboxAuditKindsForScope = (): Set<InboxAuditKind> | null => {
+    if (inboxAuditScope === 'possible') return new Set(['possible-zotero-match']);
+    if (inboxAuditScope === 'bibtex') return new Set(['legacy-bibtex']);
+    if (inboxAuditScope === 'uploads') return new Set(['manual-upload']);
+    if (inboxAuditScope === 'local') return new Set(['local-only']);
+    return null;
+  };
   const libraryPath = (libraryId:string) => {
     const parts:string[]=[];const visited=new Set<string>();let current=payload.libraries.find((library)=>library.id===libraryId);
     while(current&&!visited.has(current.id)){visited.add(current.id);parts.unshift(current.name);current=current.parentId?payload.libraries.find((library)=>library.id===current!.parentId):undefined;}
@@ -210,6 +233,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         return leftKey.localeCompare(rightKey)||normalize(left.title).localeCompare(normalize(right.title))||left.id.localeCompare(right.id);
       });
     }
+    if (activeVirtualFolder === 'inbox-audit') {
+      const kinds = inboxAuditKindsForScope();
+      rows = rows.filter((reference) => {
+        const audit = inboxAuditState.byId.get(reference.id);
+        return Boolean(audit && (!kinds || kinds.has(audit.kind)));
+      }).sort((left,right) => {
+        const leftAudit=inboxAuditState.byId.get(left.id),rightAudit=inboxAuditState.byId.get(right.id);
+        const priority=(kind?:InboxAuditKind)=>kind==='possible-zotero-match'?0:kind==='legacy-bibtex'?1:kind==='manual-upload'?2:3;
+        return priority(leftAudit?.kind)-priority(rightAudit?.kind)||normalize(left.title).localeCompare(normalize(right.title));
+      });
+    }
     return rows;
   };
   // Handsontable invokes renderers and `cells()` many times. Keep the current
@@ -220,6 +254,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if (!transfer || !ids.length) return;const unique=[...new Set(ids)];transfer.effectAllowed='copyMove';transfer.setData(REFERENCE_OPEN_DRAG_MIME,JSON.stringify(unique));transfer.setData(REFERENCE_MOVE_DRAG_MIME,JSON.stringify(unique));transfer.setData(REFERENCE_SINGLE_DRAG_MIME,unique[0]);transfer.setData('text/plain',unique[0]);
   };
   const refreshTable = () => {
+    refreshInboxAudit();
     visibleCatalogRows = computeFilteredRows();
     catalogTable?.loadData(visibleCatalogRows);
     syncCatalogContextColumns?.();
@@ -227,6 +262,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const groups=activeVirtualFolder==='duplicates'?duplicateSnapshot().groups.length:0;
       catalogFilterStatus.textContent = activeVirtualFolder==='duplicates'
         ? `${visibleCatalogRows.length} duplicate items · ${groups} groups`
+        : activeVirtualFolder==='inbox-audit'
+          ? `${visibleCatalogRows.length} audit items · ${inboxAuditState.counts.possible} possible Zotero matches`
         : `${visibleCatalogRows.length} / ${payload.references.length}`;
     }
   };
@@ -675,10 +712,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
+    const inboxContext = Boolean((requestedCollectionId && isInboxLibraryId(requestedCollectionId))
+      || (activeVirtualFolder === 'inbox-audit' && editableIds.length && editableIds.every((id) => isUnfiledReference(references.get(id)!))));
+    const auditCandidate = editableIds.length === 1 ? inboxAuditState.byId.get(editableIds[0])?.candidateId : undefined;
     const removableIds = requestedCollectionId && !isInboxLibraryId(requestedCollectionId) && collection?.access !== 'viewer'
       ? editableIds.filter((id) => references.get(id)?.libraryIds.includes(requestedCollectionId)) : [];
     return [
     { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
+    ...(auditCandidate ? [{ label: 'Locate possible Zotero match', action: () => locateReference(auditCandidate) }] : []),
     { label: `Move selected item${editableIds.length===1?'':`s (${editableIds.length})`}…`, disabled:!editableIds.length,searchable:true,searchPlaceholder:'Filter collections…',children:moveDestinationItems(editableIds) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Case Fix${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => caseFixReferences(editableIds) },
@@ -700,7 +741,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Refresh graph (OpenAlex)${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'refresh-graph') },
     { label: `AI summarize${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'summarize') },
     { label: `Extract entities & relationships${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => runReferenceAction(editableIds, 'relate') },
-    { label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds,requestedCollectionId) },
+    ...(inboxContext ? [{ label: `Remove from Inbox / file in…${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled:!editableIds.length,searchable:true,searchPlaceholder:'Choose destination collection…',children:moveDestinationItems(editableIds).filter((item)=>item.label!=='Inbox / Unfiled') }] : [{ label: `Remove from collection${removableIds.length > 1 ? ` (${removableIds.length})` : ''}`, disabled: !removableIds.length, action: () => removeReferencesFromCollection(removableIds,requestedCollectionId) }]),
     { label: `Delete item and files${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, danger: true, action: () => activeVirtualFolder==='duplicates'?deleteDuplicateSelection(editableIds):deleteReferences(editableIds) },
     ];
   };
@@ -1008,11 +1049,17 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const physicalRow=instance.toPhysicalRow(row);const reference=physicalRow>=0?instance.getSourceDataAtRow(physicalRow) as ReferenceRow|undefined:undefined;const location=reference?referenceLocationText(reference):'';
       td.textContent=location;td.title=location;td.classList.add('filed-in-cell');
     };
+    const inboxAuditRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
+      Handsontable.renderers.TextRenderer(instance, td, row, column, prop, value, cellProperties);
+      const physicalRow=instance.toPhysicalRow(row);const reference=physicalRow>=0?instance.getSourceDataAtRow(physicalRow) as ReferenceRow|undefined:undefined;const audit=reference?inboxAuditState.byId.get(reference.id):undefined;
+      td.textContent=audit?.label||'';td.title=audit?.candidateTitle?`${audit.label} · ${audit.candidateTitle}`:audit?.label||'';td.classList.add('inbox-audit-cell');td.dataset.auditKind=audit?.kind||'';
+    };
     type CatalogColumn={key:string;group:string;column:Record<string,unknown>;defaultVisible:boolean};
     const coreColumns:CatalogColumn[]=[
       {key:'title',group:'Identity',defaultVisible:true,column:{data:'title',title:'Title',renderer:titleRenderer,width:300}},
       {key:'persons',group:'Persons',defaultVisible:true,column:{data:'contributorsDisplay',title:'Persons',readOnly:true,className:'contributors-cell',width:260}},
       {key:'filedIn',group:'System',defaultVisible:false,column:{data:'libraryIds',title:'Filed in',readOnly:true,renderer:filedInRenderer,width:280}},
+      {key:'inboxAudit',group:'System',defaultVisible:false,column:{data:'id',title:'Audit',readOnly:true,renderer:inboxAuditRenderer,width:270}},
       {key:'year',group:'Date',defaultVisible:true,column:{data:'year',title:'Year',type:'numeric',width:72}},
       {key:'entryType',group:'Identity',defaultVisible:true,column:{data:'type',title:'Entry type',type:'dropdown',source:[...BIBLATEX_ENTRY_TYPE_VALUES],strict:true,allowInvalid:false,width:150}},
       {key:'publisher',group:'Publication',defaultVisible:true,column:{data:'publisher',title:'Publisher',width:210}},
@@ -1119,7 +1166,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       },
     });
     const filedInColumnIndex=catalogColumns.findIndex((item)=>item.key==='filedIn');
-    syncCatalogContextColumns=()=>{if(!catalogTable||filedInColumnIndex<0)return;const hidden=catalogTable.getPlugin('hiddenColumns');if(activeVirtualFolder==='duplicates'||visibleColumns.has('filedIn'))hidden.showColumn(filedInColumnIndex);else hidden.hideColumn(filedInColumnIndex);catalogTable.render();};
+    const inboxAuditColumnIndex=catalogColumns.findIndex((item)=>item.key==='inboxAudit');
+    syncCatalogContextColumns=()=>{if(!catalogTable)return;const hidden=catalogTable.getPlugin('hiddenColumns');if(filedInColumnIndex>=0){if(activeVirtualFolder==='duplicates'||visibleColumns.has('filedIn'))hidden.showColumn(filedInColumnIndex);else hidden.hideColumn(filedInColumnIndex);}if(inboxAuditColumnIndex>=0){if(activeVirtualFolder==='inbox-audit'||visibleColumns.has('inboxAudit'))hidden.showColumn(inboxAuditColumnIndex);else hidden.hideColumn(inboxAuditColumnIndex);}catalogTable.render();};
     syncCatalogContextColumns();
     resizeObserver = new ResizeObserver(([entry]) => {
       const nextHeight = Math.floor(entry.contentRect.height);
@@ -1692,10 +1740,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const paperKinds=new Set(['paper','work','document','publication','article','ebook']);
           const conceptKinds=new Set(['concept','topic','relatedconcept']);
           const nodeKind=(node:any)=>normalize(node.kind||node.classification).replaceAll('_','-');
-          let degreeCache=new Map<string,number>();let repulsion=440;let linkDistance=90;
-          const refreshDegrees=()=>{degreeCache=new Map<string,number>();allLinks.forEach((link:any)=>{const source=sourceId(link),target=targetId(link);degreeCache.set(source,(degreeCache.get(source)||0)+1);degreeCache.set(target,(degreeCache.get(target)||0)+1);});};
+          let degreeCache=new Map<string,number>();let neighborCache=new Map<string,string[]>();let nodeCache=new Map<string,any>();let repulsion:number=GRAPH_LAYOUT_DEFAULTS.repulsion;let linkDistance:number=GRAPH_LAYOUT_DEFAULTS.distance;
+          const refreshDegrees=()=>{degreeCache=new Map<string,number>();neighborCache=new Map<string,string[]>();nodeCache=new Map(allNodes.map((node:any)=>[String(node.id),node]));allLinks.forEach((link:any)=>{const source=sourceId(link),target=targetId(link);degreeCache.set(source,(degreeCache.get(source)||0)+1);degreeCache.set(target,(degreeCache.get(target)||0)+1);neighborCache.set(source,[...(neighborCache.get(source)||[]),target]);neighborCache.set(target,[...(neighborCache.get(target)||[]),source]);});};
           const nodeRelevance=(node:any)=>Math.log1p(Number(node.properties?.citedByCount||0))+Math.sqrt(degreeCache.get(String(node.id))||0)+Number(node.properties?.score||0)*2;
-          const applyLayout=()=>{if(!graph)return;graph.d3Force('charge')?.strength((node:any)=>-Math.min(1800,repulsion+nodeRelevance(node)*22));graph.d3Force('link')?.distance((link:any)=>Math.max(40,linkDistance-Number(link.weight||0)*12));graph.d3Force('collide',forceCollide((node:any)=>Math.max(13,6+nodeRelevance(node))).strength(.8));if(layoutMode==='concepts'){graph.d3Force('y',forceY((node:any)=>conceptKinds.has(nodeKind(node))?-100:paperKinds.has(nodeKind(node))?90:220).strength((node:any)=>conceptKinds.has(nodeKind(node))?.28:.1));graph.d3Force('radial',forceRadial((node:any)=>conceptKinds.has(nodeKind(node))?Math.max(20,170-nodeRelevance(node)*10):paperKinds.has(nodeKind(node))?250:360,0,0).strength(.09));}else{graph.d3Force('radial',null);graph.d3Force('y',forceY((node:any)=>paperKinds.has(nodeKind(node))?-Math.min(170,nodeRelevance(node)*18):conceptKinds.has(nodeKind(node))?110:210).strength(.08));}graph.d3ReheatSimulation();};
+          const nodeRadius=(node:any)=>Math.max(4,Math.min(18,Number(node.properties?.radius)||5+nodeRelevance(node)*.45));
+          const nodeDisplayLabel=(node:any)=>{const full=String(node.label||'');return globalGraph&&paperKinds.has(nodeKind(node))?shortGraphPaperTitle(full):full;};
+          const nodeLabelLines=(node:any)=>wrapGraphLabel(nodeDisplayLabel(node),24,3);
+          const applyLayout=()=>{if(!graph)return;graph.d3Force('charge')?.strength((node:any)=>-Math.min(GRAPH_LAYOUT_DEFAULTS.maximumRepulsion,repulsion+nodeRelevance(node)*28));graph.d3Force('link')?.distance((link:any)=>Math.max(70,linkDistance-Number(link.weight||0)*12));const collision:any=forceCollide((node:any)=>graphLabelCollisionRadius(nodeLabelLines(node),nodeRadius(node)));graph.d3Force('collide',collision.strength(1).iterations(2));if(layoutMode==='concepts'){graph.d3Force('y',forceY((node:any)=>conceptKinds.has(nodeKind(node))?-100:paperKinds.has(nodeKind(node))?90:220).strength((node:any)=>conceptKinds.has(nodeKind(node))?.28:.1));graph.d3Force('radial',forceRadial((node:any)=>conceptKinds.has(nodeKind(node))?Math.max(20,170-nodeRelevance(node)*10):paperKinds.has(nodeKind(node))?250:360,0,0).strength(.09));}else{graph.d3Force('radial',null);graph.d3Force('y',forceY((node:any)=>paperKinds.has(nodeKind(node))?-Math.min(170,nodeRelevance(node)*18):conceptKinds.has(nodeKind(node))?110:210).strength(.08));}graph.d3ReheatSimulation();};
           const visibleData = () => {
             let nodes = allNodes.filter((node:any) => (!(node.kind in enabled) || enabled[node.kind]) && (!graphQuery || normalize(node.label).includes(graphQuery))); const allowed = new Set(nodes.map((node:any) => String(node.id)));
             let links = allLinks.filter((link:any) => (enabledEdges[String(link.relation || link.kind)] ?? true) && Number(link.weight || 0) >= minimumWeight && allowed.has(sourceId(link)) && allowed.has(targetId(link)) && !collapsed.has(sourceId(link)) && !collapsed.has(targetId(link)));
@@ -1717,15 +1768,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const renderConceptNode=(node:any)=>{selectionSection.details.open=true;const nodeId=String(node.id);const paperIds=new Set<string>();allLinks.forEach((link:any)=>{if(sourceId(link)===nodeId)paperIds.add(targetId(link));if(targetId(link)===nodeId)paperIds.add(sourceId(link));});const papers=allNodes.filter((candidate:any)=>paperIds.has(String(candidate.id))&&paperKinds.has(nodeKind(candidate))).sort((left:any,right:any)=>nodeRelevance(right)-nodeRelevance(left));inspector.innerHTML=`<div class="eyebrow">Concept</div><h3>${safe(node.label)}</h3><p>${papers.length} connected paper${papers.length===1?'':'s'}</p>`;const list=document.createElement('div');list.className='graph-concept-papers';papers.forEach((paper:any)=>{const control=document.createElement('button');control.type='button';control.textContent=String(paper.label||'Untitled paper');control.title=String(paper.label||'');control.onclick=()=>{focusId=String(paper.id);neighborDepth=Math.max(1,neighborDepth);update();void renderPaper(paper);};list.appendChild(control);});inspector.appendChild(list);};
           const nodeColor=(node:any)=>{const kind=normalizedNodeKind(node);if(['concept','topic','relatedconcept'].includes(kind))return'#b07a3c';if(['person','author','editor','composer','performer'].includes(kind))return'#4f8265';if(['paper','work','document','publication','article','ebook'].includes(kind))return'#657c9f';if(['institution','organization','publisher','venue','journal'].includes(kind))return'#8b628d';if(['place','location','geographicregion'].includes(kind))return'#b35f58';if(['collection'].includes(kind))return'#d1a73b';if(['method','instrument','system'].includes(kind))return'#4d8c93';return'#7f837d';};
           const polygon=(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,sides:number,rotation=-Math.PI/2)=>{for(let index=0;index<sides;index+=1){const angle=rotation+(index*Math.PI*2)/sides;const px=x+Math.cos(angle)*radius,py=y+Math.sin(angle)*radius;if(index===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);}ctx.closePath();};
-          const shortPaperTitle=(value:string)=>{const words=value.trim().split(/\s+/);return words.length>5?`${words.slice(0,5).join(' ')}…`:value;};
-          const wrapLabel=(value:string,maximum=30)=>{const lines:string[]=[];for(const word of value.split(/\s+/)){const current=lines.at(-1);if(!current||current.length+word.length+1>maximum)lines.push(word.slice(0,maximum));else lines[lines.length-1]=`${current} ${word}`;}return lines.slice(0,3);};
-          const drawNode=(node:any,ctx:CanvasRenderingContext2D,scale:number)=>{const x=Number(node.x)||0,y=Number(node.y)||0,kind=normalizedNodeKind(node),radius=Math.max(4,Math.min(18,Number(node.properties?.radius)||5+nodeRelevance(node)*.45));ctx.save();ctx.beginPath();if(['concept','topic','relatedconcept'].includes(kind))ctx.rect(x-radius,y-radius,radius*2,radius*2);else if(['paper','work','document','publication','article','ebook'].includes(kind))polygon(ctx,x,y,radius*1.25,4,0);else if(['institution','organization','publisher','venue','journal'].includes(kind))polygon(ctx,x,y,radius*1.15,6);else if(['place','location','geographicregion'].includes(kind))polygon(ctx,x,y,radius*1.2,3);else if(['method','instrument','system'].includes(kind))polygon(ctx,x,y,radius*1.15,5);else ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle=nodeColor(node);ctx.fill();ctx.lineWidth=Math.max(.7,1/scale);ctx.strokeStyle='rgba(20,30,25,.72)';ctx.stroke();if(kind==='collection'){ctx.beginPath();ctx.arc(x,y,radius*.55,0,Math.PI*2);ctx.stroke();}const full=String(node.label||'');const display=globalGraph&&paperKinds.has(kind)?shortPaperTitle(full):full;const lines=wrapLabel(display,30);ctx.font=`${Math.max(8,11/scale)}px ui-monospace`;ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()||'#263129';lines.forEach((line,index)=>ctx.fillText(line,x+radius+3,y+3+index*Math.max(10,12/scale)));ctx.restore();};
+          const drawNode=(node:any,ctx:CanvasRenderingContext2D,scale:number)=>{const x=Number(node.x)||0,y=Number(node.y)||0,kind=normalizedNodeKind(node),radius=nodeRadius(node);ctx.save();ctx.beginPath();if(['concept','topic','relatedconcept'].includes(kind))ctx.rect(x-radius,y-radius,radius*2,radius*2);else if(['paper','work','document','publication','article','ebook'].includes(kind))polygon(ctx,x,y,radius*1.25,4,0);else if(['institution','organization','publisher','venue','journal'].includes(kind))polygon(ctx,x,y,radius*1.15,6);else if(['place','location','geographicregion'].includes(kind))polygon(ctx,x,y,radius*1.2,3);else if(['method','instrument','system'].includes(kind))polygon(ctx,x,y,radius*1.15,5);else ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle=nodeColor(node);ctx.fill();ctx.lineWidth=Math.max(.7,1/Math.max(scale,.2));ctx.strokeStyle='rgba(20,30,25,.72)';ctx.stroke();if(kind==='collection'){ctx.beginPath();ctx.arc(x,y,radius*.55,0,Math.PI*2);ctx.stroke();}const lines=nodeLabelLines(node);if(!lines.length){ctx.restore();return;}let vectorX=0,vectorY=0;for(const neighborId of neighborCache.get(String(node.id))||[]){const neighbor=nodeCache.get(neighborId);if(!neighbor)continue;const dx=Number(neighbor.x)-x,dy=Number(neighbor.y)-y,length=Math.hypot(dx,dy)||1;vectorX+=dx/length;vectorY+=dy/length;}const placement=graphLabelPlacement(vectorX,vectorY);const fontSize=Math.max(7,Math.min(11,10/Math.max(.75,scale)));const lineHeight=fontSize*1.18,paddingX=Math.max(2,3/Math.max(.75,scale)),paddingY=Math.max(2,2.5/Math.max(.75,scale));ctx.font=`500 ${fontSize}px "Helvetica Neue",Helvetica,Arial,sans-serif`;const width=Math.max(...lines.map((line)=>ctx.measureText(line).width))+paddingX*2,height=lines.length*lineHeight+paddingY*2,gap=Math.max(4,5/Math.max(.75,scale));let boxX=x-width/2,boxY=y+radius+gap;if(placement==='above')boxY=y-radius-gap-height;else if(placement==='left'){boxX=x-radius-gap-width;boxY=y-height/2;}else if(placement==='right'){boxX=x+radius+gap;boxY=y-height/2;}const styles=getComputedStyle(document.documentElement),paper=styles.getPropertyValue('--paper').trim()||'#f1efe6',ink=styles.getPropertyValue('--ink').trim()||'#263129',line=styles.getPropertyValue('--line').trim()||'rgba(20,30,25,.22)';ctx.globalAlpha=.94;ctx.fillStyle=paper;ctx.fillRect(boxX,boxY,width,height);ctx.globalAlpha=1;ctx.strokeStyle=line;ctx.lineWidth=Math.max(.45,.7/Math.max(scale,.3));ctx.strokeRect(boxX,boxY,width,height);ctx.fillStyle=ink;ctx.textAlign='center';ctx.textBaseline='middle';lines.forEach((text,index)=>ctx.fillText(text,boxX+width/2,boxY+paddingY+lineHeight*(index+.5)));ctx.restore();};
           graph = new ForceGraph(stage)
             .backgroundColor('rgba(0,0,0,0)')
             .nodeId('id')
             .nodeLabel((node:any)=>String(node.label||''))
             .nodeRelSize(5)
             .linkColor(()=>'rgba(110,120,115,.34)')
+            .linkWidth((link:any)=>Math.max(.35,Math.min(1.2,.4+Number(link.weight||0)*.35)))
             .linkDirectionalArrowLength((link:any)=>String(link.relation||link.kind)==='cites'?3:0)
             .linkDirectionalArrowRelPos(1)
             .nodeCanvasObjectMode(()=>'replace')
@@ -1734,8 +1784,8 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
             .onLinkClick(async(link:any)=>{const edgeId=String(link.id||'');if(!edgeId)return;selectionSection.details.open=true;inspector.innerHTML='<p>Loading evidence…</p>';const response=await fetch(`/api/knowledge-graph/association?edgeId=${encodeURIComponent(edgeId)}`);const data=await response.json();if(!response.ok){inspector.innerHTML=`<p class="graph-error">${safe(data.error||'Evidence unavailable.')}</p>`;return;}const edge=data.association,evidence=edge.properties?.evidence||{},provenance=edge.properties?.provenance||{};inspector.innerHTML=`<div class="eyebrow">Association evidence</div><h3>${safe(edge.sourceLabel)} → ${safe(edge.targetLabel)}</h3><dl><dt>Relation</dt><dd>${safe(edge.kind)}</dd><dt>Weight</dt><dd>${Number(edge.weight).toFixed(3)}</dd><dt>Method</dt><dd>${safe(evidence.method||'—')}</dd><dt>Count</dt><dd>${safe(evidence.count??'—')}</dd><dt>Source</dt><dd>${safe(provenance.source||'—')}</dd><dt>Generated</dt><dd>${safe(provenance.generatedAt||edge.createdAt||'—')}</dd></dl>${evidence.description?`<p>${safe(evidence.description)}</p>`:''}`;});
           graph.graphData({nodes:allNodes,links:allLinks});
           applyLayout();
-          slider('Repulsion',30,1800,440,10,(value) => { repulsion=value;applyLayout(); });
-          slider('Distance',20,480,90,5,(value) => { linkDistance=value;applyLayout(); });
+          slider('Repulsion',100,GRAPH_LAYOUT_DEFAULTS.maximumRepulsion,GRAPH_LAYOUT_DEFAULTS.repulsion,25,(value) => { repulsion=value;applyLayout(); });
+          slider('Distance',40,GRAPH_LAYOUT_DEFAULTS.maximumDistance,GRAPH_LAYOUT_DEFAULTS.distance,4,(value) => { linkDistance=value;applyLayout(); });
           slider('Gravity',0,.5,.08,.01,(value) => { graph.d3Force('center')?.strength?.(value); graph.d3ReheatSimulation(); });
           slider('Inertia',.1,.9,.4,.05,(value) => { graph.d3VelocityDecay(value); graph.d3ReheatSimulation(); });
           slider('Neighbors',0,4,0,1,(value) => { neighborDepth=value; update(); });
@@ -3280,6 +3330,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let lastTreeTap:{referenceId:string;time:number;x:number;y:number}|null=null;
   const renderTree = (query = '') => {
+    refreshInboxAudit();
     tree.replaceChildren();
     const normalizedQuery = normalize(query);
     const alphabetical = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
@@ -3823,6 +3874,20 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     duplicateButton.addEventListener('click',()=>{activeLibrary=null;activeSmartFolder=null;activeVirtualFolder='duplicates';activeKeyword=null;refreshTable();renderTree(search.value);renderKeywordCloud();controller.openCatalog();});
     duplicateButton.addEventListener('contextmenu',(event)=>{const ids=selectedIds();openContextMenu(event,[{label:'Merge selected duplicate group…',disabled:duplicateGroupFor(ids).length<2,action:()=>openDuplicateMerge(ids)},{label:`Delete selected items and files${ids.length>1?` (${ids.length})`:''}…`,disabled:!ids.length,danger:true,action:()=>deleteDuplicateSelection(ids)}]);});
     smartSection.appendChild(duplicateButton);
+    const auditState=inboxAuditState;
+    const auditButton=document.createElement('button');auditButton.type='button';auditButton.className='smart-folder-node virtual-folder-node inbox-audit-folder-node';auditButton.classList.toggle('active',activeVirtualFolder==='inbox-audit');auditButton.title=`Inbox Audit · ${auditState.counts.possible} possible Zotero matches · ${auditState.counts.bibtex} legacy BibTeX · ${auditState.counts.uploads} uploads`;
+    const auditIcon=document.createElement('span');auditIcon.className='smart-folder-icon';auditIcon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><circle cx="8" cy="7.5" r="2.3"/><path d="m9.7 9.2 2 2"/></svg>';
+    const auditLabel=document.createElement('span');auditLabel.textContent='Inbox Audit';const auditTotal=document.createElement('b');auditTotal.textContent=String(auditState.counts.all);auditButton.append(auditIcon,auditLabel,auditTotal);
+    const activateInboxAudit=(scope:typeof inboxAuditScope='all')=>{activeLibrary=null;activeSmartFolder=null;activeVirtualFolder='inbox-audit';activeKeyword=null;inboxAuditScope=scope;refreshTable();renderTree(search.value);renderKeywordCloud();controller.openCatalog();};
+    auditButton.addEventListener('click',()=>activateInboxAudit('all'));
+    auditButton.addEventListener('contextmenu',(event)=>openContextMenu(event,[
+      {label:`All Inbox audit items (${auditState.counts.all})`,checked:inboxAuditScope==='all',action:()=>activateInboxAudit('all')},
+      {label:`Possible Zotero matches (${auditState.counts.possible})`,checked:inboxAuditScope==='possible',action:()=>activateInboxAudit('possible')},
+      {label:`Legacy BibTeX (${auditState.counts.bibtex})`,checked:inboxAuditScope==='bibtex',action:()=>activateInboxAudit('bibtex')},
+      {label:`Manual uploads (${auditState.counts.uploads})`,checked:inboxAuditScope==='uploads',action:()=>activateInboxAudit('uploads')},
+      {label:`Other local items (${auditState.counts.local})`,checked:inboxAuditScope==='local',action:()=>activateInboxAudit('local')},
+    ]));
+    smartSection.appendChild(auditButton);
     tree.appendChild(smartSection);
     treeRevealReferenceId = null;
   };
