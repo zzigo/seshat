@@ -31,6 +31,6 @@ export const POST:APIRoute=async({request,locals,params})=>{
     const [result]=await client.synthesizeSpeech({input:{text},voice:{languageCode:voice.id.slice(0,5),name:voice.id},audioConfig:{audioEncoding:'OGG_OPUS',speakingRate:rate}});
     const content=typeof result.audioContent==='string'?Buffer.from(result.audioContent,'base64'):Buffer.from(result.audioContent||[]);
     if(!content.length)throw new Error('EMPTY_CHIRP_AUDIO');
-    return new Response(content,{headers:{'Content-Type':'audio/ogg; codecs=opus','Cache-Control':'private, no-store','X-Seshat-TTS-Characters':String(characters),'X-Seshat-TTS-Used':String(used),'X-Seshat-TTS-Remaining':String(Math.max(0,limit-used)),'X-Seshat-TTS-Warning':String(used>=warning)}});
+    return new Response(content,{headers:{'Content-Type':'audio/ogg; codecs=opus','Cache-Control':'private, no-store','X-Seshat-TTS-Rate':String(rate),'X-Seshat-TTS-Characters':String(characters),'X-Seshat-TTS-Used':String(used),'X-Seshat-TTS-Remaining':String(Math.max(0,limit-used)),'X-Seshat-TTS-Warning':String(used>=warning)}});
   }catch(error){await catalog.releaseTtsCharacters(CHIRP_PROVIDER,month,characters);console.error('[seshat:chirp]',error);return Response.json({error:'Google Chirp could not synthesize this text.'},{status:502});}
 };

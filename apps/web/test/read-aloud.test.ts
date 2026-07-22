@@ -46,7 +46,8 @@ test('counts Chirp usage by Unicode characters and renews on the next UTC month'
 test('steps reader speed by quarters within safe playback bounds', () => {
   assert.equal(steppedReaderRate(1,.25),1.25);
   assert.equal(steppedReaderRate(.5,-.25),.5);
-  assert.equal(steppedReaderRate(2,.25),2);
+  assert.equal(steppedReaderRate(2,.25),2.25);
+  assert.equal(steppedReaderRate(3,.25),3);
 });
 
 test('samples chapter labels across the full timeline', () => {

@@ -38,5 +38,13 @@ test('changes speed without tearing down and restarting the reader',()=>{
   assert.match(adjustment,/this\.paintButton\(\)/);
   assert.doesNotMatch(adjustment,/this\.stop\(|this\.start\(/);
   assert.match(script,/rate:readSettings\(\)\.rate/);
-  assert.match(script,/activeEngine==='rendered'&&this\.audio\)this\.audio\.playbackRate=next/);
+  assert.match(adjustment,/activeEngine==='chirp'\?next\/Math\.max\(\.25,this\.audioSourceRate\):next/);
+  assert.match(script,/audio\.preservesPitch=true/);
+  assert.match(script,/rate\.max='3'/);
+});
+
+test('starts Chirp with one phrase while prefetching normal reading blocks',()=>{
+  assert.match(script,/chunk=this\.cloudChunk\(cursor,true\)/);
+  assert.match(script,/const next=this\.cloudChunk\(cursor\)/);
+  assert.match(script,/preparing first phrase/);
 });
