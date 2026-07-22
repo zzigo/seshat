@@ -24,6 +24,12 @@ test('keeps raw OpenAlex traffic in a resizable scrolling console', () => {
   assert.match(styles,/\.console-drawer\s*\{[^}]*overflow:auto/);
 });
 
+test('clears only the visible Activity console history', () => {
+  assert.match(page,/data-console-clear[^>]*>Clear<\/button>/);
+  assert.match(script,/consoleClear\?\.addEventListener\('click',\(\)=>\{activities\.splice\(0,activities\.length\);renderActivities\(\);\}\)/);
+  assert.match(styles,/\.console-clear\s*\{/);
+});
+
 test('renders Help in one column with a borderless shortcut table', () => {
   assert.match(script,/className='help-shortcut-table'/);
   assert.match(styles,/\.workspace-help\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/);

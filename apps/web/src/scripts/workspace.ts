@@ -155,6 +155,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const consoleDrawer = root.querySelector<HTMLElement>('[data-console-drawer]');
   const consoleLog = root.querySelector<HTMLOListElement>('[data-console-log]');
   const consoleToggle = root.querySelector<HTMLButtonElement>('[data-console-toggle]');
+  const consoleClear = root.querySelector<HTMLButtonElement>('[data-console-clear]');
   const consoleResizeHandle = root.querySelector<HTMLElement>('[data-console-resize-handle]');
   const consoleHeaderToggle = root.querySelector<HTMLButtonElement>('[data-workspace-console-button]');
   const keywordFilter = root.querySelector<HTMLInputElement>('[data-keyword-filter]');
@@ -370,6 +371,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     consoleRoot.dataset.state = active.length ? 'working' : latest?.state || 'idle';
     consoleCurrent.textContent = latest?.message || 'Ready · drop PDF, DOCX, TXT, EPUB, WEBARCHIVE, DJVU or BIB anywhere';
     consoleCount.textContent = `${active.length} ${active.length === 1 ? 'job' : 'jobs'}`;
+    if(consoleClear)consoleClear.disabled=activities.length===0;
     consoleLog.replaceChildren();
     ordered.slice(-300).forEach((activity) => {
       const item = document.createElement('li'); item.dataset.state = activity.state;
@@ -3450,7 +3452,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const query = normalize(keywordFilter?.value || ''); const facets = catalogKeywordFacets(payload.references);
     keywordCount && (keywordCount.textContent = String(facets.length)); keywordCloud.replaceChildren();
     facets.filter(({ label }) => !query || normalize(label).includes(query)).forEach(({ label:keyword,count,fromKeyword,fromTag }) => {
-      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'keyword-chip'; chip.classList.toggle('active',activeKeyword === keyword);
+      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'keyword-chip'; chip.classList.toggle('active',activeKeyword === keyword);chip.setAttribute('aria-pressed',String(activeKeyword===keyword));
       chip.classList.toggle('is-tag',fromTag); chip.classList.toggle('is-keyword',fromKeyword); chip.title = `${count} item${count === 1 ? '' : 's'} · ${fromKeyword && fromTag ? 'keyword + tag' : fromTag ? 'tag' : 'keyword'}${fromKeyword ? ' · right-click to edit' : ''}`;
       const color = payload.keywordStyles[keyword]; if (color) { const dot = document.createElement('i'); dot.className = 'keyword-dot'; dot.style.setProperty('--keyword-color',color); chip.appendChild(dot); }
       const label = document.createElement('span'); label.textContent = keyword; const total = document.createElement('small'); total.textContent = String(count); chip.append(label,total);
@@ -4401,6 +4403,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   setActivityConsoleOpen(false);
   consoleToggle.addEventListener('click',toggleActivityConsole);
   consoleHeaderToggle?.addEventListener('click',toggleActivityConsole);
+  consoleClear?.addEventListener('click',()=>{activities.splice(0,activities.length);renderActivities();});
   window.addEventListener('keydown',(event)=>{const target=event.target instanceof HTMLElement?event.target:null;const editing=target?.matches('input, textarea, select, [contenteditable="true"]')||Boolean(target?.closest('.handsontableInputHolder, .htEditor, [role="dialog"]'));if(!editing&&event.shiftKey&&!event.metaKey&&!event.ctrlKey&&!event.altKey&&event.code==='KeyC'){event.preventDefault();toggleActivityConsole();}});
   const clampConsoleHeight=(value:number)=>Math.max(110,Math.min(Math.round(value),Math.round(window.innerHeight*.82)));
   const setConsoleHeight=(value:number,persist=true)=>{const height=clampConsoleHeight(value);consoleDrawer.style.height=`${height}px`;consoleResizeHandle?.setAttribute('aria-valuenow',String(height));if(persist)window.localStorage.setItem(CONSOLE_HEIGHT_KEY,String(height));};
