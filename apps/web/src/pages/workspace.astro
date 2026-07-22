@@ -19,7 +19,7 @@ const ownerKey = ownerKeyFor(email);
 const chirpEnabled = chirpAccessAllowed(email);
 const catalog = getCatalog();
 await catalog.ensureSchema();
-const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus, zoteroMappingRows, readingStateRows] = await Promise.all([
+const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus, zoteroMappingRows, readingStateRows, paperStatusRows, annotationStatusRows] = await Promise.all([
   catalog.list(ownerKey, 10_000), catalog.listLibraries(ownerKey), catalog.listSmartFolders(ownerKey),
   catalog.pool.query('SELECT keyword,color FROM catalog_keyword_styles WHERE owner_key=$1 ORDER BY lower(keyword)', [ownerKey]),
   getZoteroConnectionStatus(ownerKey),
@@ -29,11 +29,15 @@ const [references, libraries, smartFolders, keywordStyleRows, zoteroStatus, zote
      FROM catalog_reading_state state
      JOIN catalog_references reference ON reference.id=state.reference_id AND reference.owner_key=$1
      WHERE state.owner_key=$1 AND NOT (state.location ? 'recentDismissedAt')
-     ORDER BY state.updated_at DESC`, [ownerKey],
+      ORDER BY state.updated_at DESC`, [ownerKey],
   ),
+  catalog.pool.query("SELECT reference_id FROM catalog_papers WHERE owner_key=$1 AND resolution_status='resolved' AND openalex_id IS NOT NULL", [ownerKey]),
+  catalog.pool.query('SELECT reference_id FROM catalog_annotations WHERE owner_key=$1 GROUP BY reference_id', [ownerKey]),
 ]);
 const zoteroReferenceIds = new Set(zoteroMappingRows.rows.map((row:any) => String(row.reference_id)));
 const readAtByReference = new Map(readingStateRows.rows.map((row:any) => [String(row.reference_id),new Date(row.read_at).toISOString()]));
+const openAlexReferenceIds = new Set(paperStatusRows.rows.map((row:any) => String(row.reference_id)));
+const annotatedReferenceIds = new Set(annotationStatusRows.rows.map((row:any) => String(row.reference_id)));
 const keywordList = (source: any): string[] => {
   const raw = source?.keywords ?? source?.bibtex?.keywords ?? [];
   return [...new Set((Array.isArray(raw) ? raw : String(raw || '').split(/[,;\n]+/)).map((value) => String(value).trim()).filter(Boolean))];
@@ -82,6 +86,8 @@ const payload = {
     hasOriginal: reference.artifacts.some((artifact) => artifact.kind === 'original'),
     hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
     hasText: reference.artifacts.some((artifact) => artifact.kind === 'markdown'),
+    hasOpenAlex: openAlexReferenceIds.has(reference.id) || String((reference.source as any)?.scholarly?.resolutionStatus || '') === 'resolved',
+    hasAnnotations: annotatedReferenceIds.has(reference.id),
     hasKokoroNarration: reference.artifacts.some((artifact) => artifact.kind === 'kokoro-audio'),
     hasChirpNarration: chirpEnabled && reference.artifacts.some((artifact) => artifact.kind === 'chirp-audio'),
     needsOcr: referenceFileType(reference) === 'pdf' && reference.artifacts.some((artifact) => artifact.kind === 'original')

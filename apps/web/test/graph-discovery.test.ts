@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { openAlexCitationNeighborhood, openAlexReferenceNeighborhood, openAlexSimilarNeighborhood, referencesSharingKeyword } from '../src/lib/graph-discovery';
+import { hydrateStoredGraphPaperMetadata, openAlexCitationNeighborhood, openAlexReferenceNeighborhood, openAlexSimilarNeighborhood, referencesSharingKeyword } from '../src/lib/graph-discovery';
 import type { OpenAlexWork } from '@seshat/core';
 
 const work=(id:string,title:string,references:string[]=[]):OpenAlexWork=>({id,title,abstract:`Abstract for ${title}`,citedByCount:4,authors:[{id:`A-${id}`,name:`Author ${id}`,institutionIds:[]}],topics:[],institutions:[],referencedWorkIds:references,relatedWorkIds:[]});
@@ -31,4 +31,14 @@ test('builds related-work links for similar-paper discovery',()=>{
   const root={...work('W1','Root'),relatedWorkIds:['W8']};const graph=openAlexSimilarNeighborhood(root,[work('W8','Related')]);
   assert.equal(graph.total,1);
   assert.equal(graph.edges[0]?.relation,'related-to');
+});
+
+test('hydrates legacy stored graph nodes with OpenAlex author and year metadata',()=>{
+  type StoredNode={kind:string;properties:Record<string,unknown>};
+  const nodes=hydrateStoredGraphPaperMetadata<StoredNode>([{kind:'paper',properties:{referenceId:'local-1'}}],[{reference_id:'local-1',openalex_work:work('W1','Root')}]);
+  assert.deepEqual(nodes[0]?.properties?.authors,['Author W1']);
+  assert.equal(nodes[0]?.properties?.year,undefined);
+  const dated={...work('W2','Dated'),publicationYear:1998};
+  const datedNodes=hydrateStoredGraphPaperMetadata<StoredNode>([{kind:'paper',properties:{openAlexId:'W2'}}],[{openalex_id:'W2',openalex_work:dated}]);
+  assert.equal(datedNodes[0]?.properties?.year,1998);
 });

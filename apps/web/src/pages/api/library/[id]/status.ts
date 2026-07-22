@@ -49,6 +49,7 @@ export const GET: APIRoute = async ({ locals, params }) => {
       hasOriginal,
       hasStructure: reference.artifacts.some((artifact) => artifact.kind === 'structure'),
       hasText,
+      hasOpenAlex: Boolean(paper?.openAlexId && paper.resolutionStatus === 'resolved'),
       needsOcr: format === 'pdf' && hasOriginal && (!hasText || reference.wordCount < 20),
       paperStatus,
     },

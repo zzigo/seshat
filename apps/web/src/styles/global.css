@@ -180,6 +180,29 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .intake-row.catalogued { background: rgba(61,122,88,.08); }
 .intake-row.has-error { background: rgba(139,54,40,.07); }
 .file-kind { color: var(--gold); font: 700 10px monospace; text-transform: uppercase; letter-spacing: .08em; }
+.tree-reference-glyph { position:relative; width:12px; height:13px; display:inline-block; box-sizing:border-box; overflow:hidden; border:1px solid currentColor; border-radius:1px; background:color-mix(in srgb,currentColor 8%,transparent); }
+.tree-reference-glyph::before { content:''; position:absolute; z-index:0; pointer-events:none; }
+.tree-reference-glyph.item-paper { color:color-mix(in srgb,#657c9f 76%,var(--ink)); background:repeating-linear-gradient(to bottom,transparent 0 2px,color-mix(in srgb,currentColor 48%,transparent) 2px 3px,transparent 3px 4px); }
+.tree-reference-glyph.item-book { color:color-mix(in srgb,#9a7e55 76%,var(--ink)); }
+.tree-reference-glyph.item-book::before { inset:1px auto 1px 2px; width:1px; background:currentColor; box-shadow:3px 0 color-mix(in srgb,currentColor 40%,transparent); }
+.tree-reference-glyph.item-score { color:color-mix(in srgb,#92748d 78%,var(--ink)); background:repeating-linear-gradient(to bottom,transparent 0 2px,color-mix(in srgb,currentColor 36%,transparent) 2px 3px,transparent 3px 4px); }
+.tree-reference-glyph.item-score::before { top:3px; left:3px; width:3px; height:3px; border-radius:50%; background:currentColor; box-shadow:2px 4px currentColor; }
+.tree-reference-glyph.item-recording { color:color-mix(in srgb,#68877f 78%,var(--ink)); }
+.tree-reference-glyph.item-recording::before { inset:2px; border:1px solid currentColor; border-radius:50%; box-shadow:inset 0 0 0 2px color-mix(in srgb,currentColor 18%,transparent); }
+.tree-reference-glyph.item-performance { color:color-mix(in srgb,#a27164 76%,var(--ink)); }
+.tree-reference-glyph.item-performance::before { top:2px; left:3px; width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid currentColor; }
+.tree-reference-glyph.item-thesis { color:color-mix(in srgb,#727f91 78%,var(--ink)); }
+.tree-reference-glyph.item-thesis::before { top:1px; left:5px; width:1px; height:10px; background:currentColor; transform:rotate(34deg); }
+.tree-reference-glyph.item-report { color:color-mix(in srgb,#897b5e 76%,var(--ink)); }
+.tree-reference-glyph.item-report::before { inset:2px; border-top:1px solid currentColor; border-bottom:1px solid currentColor; }
+.tree-reference-glyph.item-misc { color:var(--muted); }
+.tree-reference-glyph.item-misc::before { top:3px; left:3px; width:4px; height:4px; border:1px solid currentColor; transform:rotate(45deg); }
+.tree-process-dots { position:absolute; z-index:2; right:0; bottom:0; width:7px; height:7px; display:grid; grid-template-columns:repeat(2,2px); grid-auto-rows:2px; place-content:center; gap:1px; border-radius:1px 0 0; background:color-mix(in srgb,var(--paper) 82%,transparent); pointer-events:none; }
+.tree-process-dot { width:2px; height:2px; border-radius:50%; box-shadow:0 0 0 .25px color-mix(in srgb,var(--ink) 18%,transparent); }
+.tree-process-dot.is-openalex { background:color-mix(in srgb,#6683a2 74%,var(--muted)); }
+.tree-process-dot.is-annotation { background:color-mix(in srgb,#a16e63 74%,var(--muted)); }
+.tree-process-dot.is-text { background:color-mix(in srgb,#66856d 76%,var(--muted)); }
+.tree-process-dot.is-structure { background:color-mix(in srgb,#897594 76%,var(--muted)); }
 .intake-row strong { display: block; font: 400 19px Georgia, serif; }
 .intake-row small { display: block; margin-top: 6px; color: var(--muted); font: 10px monospace; }
 .route-badge, .health-mark { padding: 7px 9px; border: 1px solid var(--line); color: var(--green); background: transparent; font: 9px monospace; letter-spacing: .08em; text-decoration: none; text-transform: uppercase; cursor: pointer; }

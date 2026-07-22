@@ -12,6 +12,13 @@ export const referencesSharingKeyword = <T extends {keywords:string[]}>(referenc
   return references.filter((reference)=>reference.keywords.some((value)=>normalizeGraphKeyword(value)===normalized));
 };
 
+type StoredPaperMetadata={reference_id?:unknown;referenceId?:unknown;openalex_id?:unknown;openAlexId?:unknown;openalex_work?:unknown;openAlexWork?:unknown};
+export const hydrateStoredGraphPaperMetadata=<T extends {kind?:unknown;properties?:Record<string,unknown>}>(nodes:T[],papers:StoredPaperMetadata[]):T[]=>{
+  const byReference=new Map<string,OpenAlexWork>(),byOpenAlex=new Map<string,OpenAlexWork>();
+  for(const paper of papers){const work=(paper.openalex_work||paper.openAlexWork) as OpenAlexWork|undefined;if(!work)continue;const referenceId=String(paper.reference_id||paper.referenceId||''),openAlexId=String(paper.openalex_id||paper.openAlexId||work.id||'');if(referenceId)byReference.set(referenceId,work);if(openAlexId)byOpenAlex.set(openAlexId,work);}
+  return nodes.map((node)=>{if(String(node.kind||'').toLowerCase()!=='paper')return node;const properties=node.properties||{},work=byReference.get(String(properties.referenceId||''))||byOpenAlex.get(String(properties.openAlexId||''));if(!work)return node;const existingAuthors=Array.isArray(properties.authors)?properties.authors.filter(Boolean):properties.authors;return{...node,properties:{...properties,year:properties.year||work.publicationYear,authors:(Array.isArray(existingAuthors)?existingAuthors.length:Boolean(existingAuthors))?existingAuthors:work.authors.map((author)=>author.name),abstract:properties.abstract||work.abstract}};});
+};
+
 const paperProperties=(work:OpenAlexWork)=>({openAlexId:work.id,doi:work.doi,year:work.publicationYear,authors:work.authors.map((author)=>author.name),abstract:work.abstract,citedByCount:work.citedByCount,referenceCount:work.referencedWorkIds.length,external:true});
 
 export const openAlexReferenceNeighborhood = (work:OpenAlexWork,referenceWorks:OpenAlexWork[]) => {

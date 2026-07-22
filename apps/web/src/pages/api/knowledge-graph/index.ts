@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../lib/catalog';
+import { hydrateStoredGraphPaperMetadata } from '../../../lib/graph-discovery';
 
 const list = (value: string | null) => new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
 
@@ -20,8 +21,15 @@ export const GET: APIRoute = async ({ locals, url }) => {
     catalog.pool.query(`SELECT node_key AS id,kind,label,properties FROM catalog_graph_nodes WHERE owner_key=$1`, [ownerKey]),
     catalog.pool.query(`SELECT edge_key AS id,from_key AS source,relation,to_key AS target,weight,properties,created_at AS "createdAt" FROM catalog_graph_edges WHERE owner_key=$1`, [ownerKey]),
   ]);
+  const graphReferenceIds = nodeRows.rows.map((node: any) => String(node.properties?.referenceId || '')).filter(Boolean);
+  const graphOpenAlexIds = nodeRows.rows.map((node: any) => String(node.properties?.openAlexId || '')).filter(Boolean);
+  const paperRows = await catalog.pool.query(
+    `SELECT reference_id,openalex_id,openalex_work FROM catalog_papers
+     WHERE owner_key=$1 AND (reference_id::text=ANY($2::text[]) OR openalex_id=ANY($3::text[]))`,
+    [ownerKey, graphReferenceIds, graphOpenAlexIds],
+  );
 
-  let nodes = nodeRows.rows.filter((node: any) => !nodeKinds.size || nodeKinds.has(node.kind));
+  let nodes = hydrateStoredGraphPaperMetadata(nodeRows.rows,paperRows.rows).filter((node: any) => !nodeKinds.size || nodeKinds.has(node.kind));
   let edges = edgeRows.rows.filter((edge: any) => (!edgeKinds.size || edgeKinds.has(String(edge.relation).toLowerCase())) && Number(edge.weight) >= minimumWeight);
   const allowedKinds = new Set(nodes.map((node: any) => node.id));
   edges = edges.filter((edge: any) => allowedKinds.has(edge.source) && allowedKinds.has(edge.target));

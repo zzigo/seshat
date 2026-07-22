@@ -18,7 +18,7 @@ import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
 import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAloud } from './read-aloud';
 import { chirpVoicesForLanguage } from '../lib/chirp';
 import { plainInlineTitle, safeInlineTitleHtml, setInlineTitle } from '../lib/inline-title';
-import { referenceVisualKind } from '../lib/reference-visual';
+import { bibliographicVisualKind, bibliographicVisualLabel, referenceProcessKinds, referenceProcessLabel, referenceVisualKind } from '../lib/reference-visual';
 import { buildCollectionDestinationTree, referenceIdsFromDragData, REFERENCE_MOVE_DRAG_MIME, REFERENCE_OPEN_DRAG_MIME, REFERENCE_SINGLE_DRAG_MIME } from '../lib/workspace-move';
 import { buildInboxAudit, type InboxAuditKind } from '../lib/inbox-audit';
 import { GRAPH_LAYOUT_DEFAULTS, citationHierarchyDepths, compactGraphAuthor, conceptKikiBoubaIndex, graphLabelCollisionRadius, graphLabelPlacement, wrapGraphLabel } from '../lib/graph-visual';
@@ -36,7 +36,7 @@ type ReferenceRow = {
   sourceProvider: string; zoteroMapped: boolean;
   bibliographicFields: Record<string,string>;
   sizeBytes: number;
-  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
+  libraryIds: string[]; status: string; hasOriginal: boolean; hasStructure: boolean; hasText: boolean; hasOpenAlex:boolean; hasAnnotations:boolean; hasKokoroNarration: boolean; hasChirpNarration: boolean; needsOcr: boolean; access: 'owner' | 'viewer';
 };
 type LibraryNode = { id: string; name: string; description?: string; parentId?: string; itemCount: number; access: 'owner' | 'viewer'; sharedByEmail?: string };
 type SmartFolderNode = { id: string; name: string; filters: SmartFolderFilters; createdAt: string; updatedAt: string };
@@ -69,6 +69,15 @@ const isInboxLibraryId = (id: string) => id.startsWith('inbox:');
 const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'owner'
   && !reference.libraryIds.some((id) => !isInboxLibraryId(id));
 const treeReferenceKind = (reference: ReferenceRow) => referenceVisualKind(reference.format, reference.hasText);
+const createTreeReferenceGlyph=(reference:ReferenceRow):HTMLElement=>{
+  const fileKind=treeReferenceKind(reference),itemKind=bibliographicVisualKind(reference.type),processes=referenceProcessKinds(reference);
+  const glyph=document.createElement('span');glyph.className=`tree-reference-glyph item-${itemKind}`;glyph.dataset.fileKind=fileKind;
+  glyph.classList.toggle('needs-ocr',reference.needsOcr);glyph.classList.toggle('has-narration',reference.hasKokoroNarration||reference.hasChirpNarration);
+  const formatLabel=({pdf:'PDF',djvu:'DjVu',ebook:'Ebook',text:'text document','no-text':'no extracted text'} as const)[fileKind];
+  glyph.title=[bibliographicVisualLabel(itemKind),formatLabel,...processes.map(referenceProcessLabel),reference.needsOcr?'needs OCR':''].filter(Boolean).join(' · ');glyph.setAttribute('aria-label',glyph.title);
+  if(processes.length){const dots=document.createElement('span');dots.className='tree-process-dots';dots.setAttribute('aria-hidden','true');for(const process of processes){const dot=document.createElement('i');dot.className=`tree-process-dot is-${process}`;dots.appendChild(dot);}glyph.appendChild(dots);}
+  return glyph;
+};
 const referenceState = (reference: any): string => {
   const active = (reference.jobs || []).find((job:any) => job.status === 'running' || job.status === 'queued');
   const failed = (reference.jobs || []).find((job:any) => job.status === 'failed');
@@ -112,6 +121,8 @@ const rowFromCatalogReference = (reference: any): ReferenceRow => ({
   hasOriginal: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original'),
   hasStructure: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'structure'),
   hasText: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'markdown'),
+  hasOpenAlex: Boolean(reference.hasOpenAlex || reference.openAlexId || reference.paperStatus === 'ready' || reference.source?.scholarly?.resolutionStatus === 'resolved'),
+  hasAnnotations: Boolean(reference.hasAnnotations || Number(reference.annotationCount || 0) > 0),
   hasKokoroNarration: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'kokoro-audio'),
   hasChirpNarration: (reference.artifacts || []).some((artifact:any) => artifact.kind === 'chirp-audio'),
   needsOcr: referenceFileType(reference) === 'pdf' && (reference.artifacts || []).some((artifact:any) => artifact.kind === 'original')
@@ -3731,12 +3742,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
       item.classList.toggle('selected', selectedReferences.has(reference.id));
       item.draggable = reference.access !== 'viewer';
-      const kind = treeReferenceKind(reference);
-      const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
-      glyph.classList.toggle('needs-ocr', reference.needsOcr);
-      glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
-      glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', djvu: 'DjVu', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
-      glyph.setAttribute('aria-label', glyph.title);
+      const glyph=createTreeReferenceGlyph(reference);
       const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
       const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
       if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
@@ -3923,12 +3929,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
         item.classList.toggle('selected', selectedReferences.has(reference.id));
         item.draggable = reference.access !== 'viewer';
-        const kind = treeReferenceKind(reference);
-        const glyph = document.createElement('span'); glyph.className = `tree-reference-glyph is-${kind}`;
-        glyph.classList.toggle('needs-ocr', reference.needsOcr);
-        glyph.classList.toggle('has-narration', reference.hasKokoroNarration||reference.hasChirpNarration);
-        glyph.title = reference.needsOcr ? 'PDF needs OCR or usable extracted text' : ({ pdf: 'PDF', djvu: 'DjVu', ebook: 'Ebook', text: 'Text available', 'no-text': 'No text available' } as const)[kind];
-        glyph.setAttribute('aria-label', glyph.title);
+        const glyph=createTreeReferenceGlyph(reference);
         const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
         const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
         if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
@@ -4127,13 +4128,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const upsertRow = (next: ReferenceRow) => {
     const current = references.get(next.id);
-    if (current) Object.assign(current, next);
+    if (current) { const hasOpenAlex=current.hasOpenAlex||next.hasOpenAlex,hasAnnotations=current.hasAnnotations||next.hasAnnotations;Object.assign(current,next,{hasOpenAlex,hasAnnotations}); }
     else { payload.references.unshift(next); references.set(next.id, next); }
     invalidateMetadataSuggestions();
     committed.set(next.id, { ...(references.get(next.id) as ReferenceRow) });
     refreshTable();
     renderTree(search.value);
   };
+
+  window.addEventListener('seshat:annotations-changed',((event:CustomEvent<{referenceId?:string}>)=>{const referenceId=event.detail?.referenceId,row=referenceId?references.get(referenceId):undefined;if(!referenceId||!row)return;void fetch(`/api/library/${encodeURIComponent(referenceId)}/annotations`,{cache:'no-store'}).then(async(response)=>{if(!response.ok)return;const result=await response.json();row.hasAnnotations=Boolean(result.annotations?.length);renderTree(search.value);}).catch(()=>undefined);}) as EventListener);
 
   const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
   const stageMessage: Record<string, string> = {
