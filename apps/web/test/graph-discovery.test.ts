@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { openAlexReferenceNeighborhood, referencesSharingKeyword } from '../src/lib/graph-discovery';
+import { openAlexCitationNeighborhood, openAlexReferenceNeighborhood, openAlexSimilarNeighborhood, referencesSharingKeyword } from '../src/lib/graph-discovery';
 import type { OpenAlexWork } from '@seshat/core';
 
 const work=(id:string,title:string,references:string[]=[]):OpenAlexWork=>({id,title,citedByCount:4,authors:[],topics:[],institutions:[],referencedWorkIds:references,relatedWorkIds:[]});
@@ -18,3 +18,15 @@ test('builds a bounded OpenAlex reference neighborhood with recursive counts',()
   assert.equal(graph.nodes.find((node)=>node.id==='paper:W2')?.properties.referenceCount,1);
 });
 
+test('points citing works toward the selected paper and preserves the full count',()=>{
+  const root={...work('W1','Root'),citedByCount:27};const graph=openAlexCitationNeighborhood(root,[work('W9','Citing paper',['W1'])]);
+  assert.equal(graph.total,27);
+  assert.equal(graph.edges[0]?.source,'paper:W9');
+  assert.equal(graph.edges[0]?.target,'paper:W1');
+});
+
+test('builds related-work links for similar-paper discovery',()=>{
+  const root={...work('W1','Root'),relatedWorkIds:['W8']};const graph=openAlexSimilarNeighborhood(root,[work('W8','Related')]);
+  assert.equal(graph.total,1);
+  assert.equal(graph.edges[0]?.relation,'related-to');
+});

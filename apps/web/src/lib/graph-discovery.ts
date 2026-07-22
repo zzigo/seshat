@@ -24,3 +24,24 @@ export const openAlexReferenceNeighborhood = (work:OpenAlexWork,referenceWorks:O
   return {rootId,total:work.referencedWorkIds.length,nodes,edges};
 };
 
+export const openAlexCitationNeighborhood = (work:OpenAlexWork,citingWorks:OpenAlexWork[]) => {
+  const rootId=stableKnowledgeNodeId('paper',work.id);
+  const nodes:DiscoveryGraphNode[]=[{
+    id:rootId,kind:'paper',label:work.title,
+    properties:{openAlexId:work.id,citedByCount:work.citedByCount,year:work.publicationYear,referenceCount:work.referencedWorkIds.length,external:true},
+  }];
+  const edges:DiscoveryGraphEdge[]=[];
+  for(const citing of citingWorks){const source=stableKnowledgeNodeId('paper',citing.id);nodes.push({id:source,kind:'paper',label:citing.title,properties:{openAlexId:citing.id,doi:citing.doi,year:citing.publicationYear,citedByCount:citing.citedByCount,referenceCount:citing.referencedWorkIds.length,external:true}});edges.push({id:stableKnowledgeEdgeId('cites',source,rootId,true),source,target:rootId,relation:'cites',weight:1,properties:{directed:true,evidence:{method:'openalex-citing-works',count:1},provenance:{source:'openalex-live'}}});}
+  return {rootId,total:work.citedByCount,nodes,edges};
+};
+
+export const openAlexSimilarNeighborhood = (work:OpenAlexWork,relatedWorks:OpenAlexWork[]) => {
+  const rootId=stableKnowledgeNodeId('paper',work.id);
+  const nodes:DiscoveryGraphNode[]=[{
+    id:rootId,kind:'paper',label:work.title,
+    properties:{openAlexId:work.id,citedByCount:work.citedByCount,year:work.publicationYear,referenceCount:work.referencedWorkIds.length,external:true},
+  }];
+  const edges:DiscoveryGraphEdge[]=[];
+  for(const related of relatedWorks){const target=stableKnowledgeNodeId('paper',related.id);nodes.push({id:target,kind:'paper',label:related.title,properties:{openAlexId:related.id,doi:related.doi,year:related.publicationYear,citedByCount:related.citedByCount,referenceCount:related.referencedWorkIds.length,external:true}});edges.push({id:stableKnowledgeEdgeId('related-to',rootId,target),source:rootId,target,relation:'related-to',weight:1,properties:{directed:false,evidence:{method:'openalex-related-works',count:1},provenance:{source:'openalex-live'}}});}
+  return {rootId,total:work.relatedWorkIds.length,nodes,edges};
+};

@@ -7,7 +7,6 @@ const actions: Record<string, EnrichmentStage> = {
   extract: 'extract',
   scholarly: 'scholarly',
   'enrich-openalex': 'scholarly',
-  'refresh-graph': 'scholarly',
   identify: 'identify',
   summarize: 'summarize',
   relate: 'relate',
