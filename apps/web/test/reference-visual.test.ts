@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bibliographicVisualKind, referenceProcessKinds, referenceVisualKind } from '../src/lib/reference-visual';
+import { bibliographicVisualKind, referenceLinkState, referenceProcessKinds, referenceVisualKind } from '../src/lib/reference-visual';
 
 test('keeps DjVu visually distinct from PDF while sharing document behavior', () => {
   assert.equal(referenceVisualKind('pdf'), 'pdf');
@@ -26,4 +26,9 @@ test('groups bibliographic item types without confusing them with file formats',
 
 test('returns only completed document processes in a stable order', () => {
   assert.deepEqual(referenceProcessKinds({hasOpenAlex:true,hasAnnotations:false,hasText:true,hasStructure:true}),['openalex','text','structure']);
+});
+
+test('distinguishes records without an associated file from linked documents',()=>{
+  assert.equal(referenceLinkState({hasOriginal:false}),'unlinked');
+  assert.equal(referenceLinkState({hasOriginal:true}),'linked');
 });

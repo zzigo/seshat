@@ -1,6 +1,7 @@
 export type ReferenceVisualKind = 'pdf' | 'djvu' | 'ebook' | 'text' | 'no-text';
 export type BibliographicVisualKind = 'paper' | 'book' | 'score' | 'recording' | 'performance' | 'thesis' | 'report' | 'misc';
 export type ReferenceProcessKind = 'openalex' | 'annotation' | 'text' | 'structure';
+export type ReferenceLinkState = 'linked' | 'unlinked';
 
 export const referenceVisualKind = (format: string, hasText = false): ReferenceVisualKind => {
   const normalized = String(format || '').trim().toLowerCase();
@@ -34,3 +35,4 @@ export const referenceProcessKinds = (state: { hasOpenAlex?:boolean;hasAnnotatio
   state.hasStructure ? 'structure' : null,
 ].filter((kind): kind is ReferenceProcessKind => Boolean(kind));
 export const referenceProcessLabel = (kind: ReferenceProcessKind): string => ({openalex:'OpenAlex indexed',annotation:'Annotated',text:'Text extracted',structure:'Structure extracted'})[kind];
+export const referenceLinkState = (state: { hasOriginal?:boolean }): ReferenceLinkState => state.hasOriginal ? 'linked' : 'unlinked';

@@ -18,7 +18,7 @@ import { forceCollide, forceRadial, forceY } from 'd3-force-3d';
 import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAloud } from './read-aloud';
 import { chirpVoicesForLanguage } from '../lib/chirp';
 import { plainInlineTitle, safeInlineTitleHtml, setInlineTitle } from '../lib/inline-title';
-import { bibliographicVisualKind, bibliographicVisualLabel, referenceProcessKinds, referenceProcessLabel, referenceVisualKind } from '../lib/reference-visual';
+import { bibliographicVisualKind, bibliographicVisualLabel, referenceLinkState, referenceProcessKinds, referenceProcessLabel, referenceVisualKind } from '../lib/reference-visual';
 import { buildCollectionDestinationTree, referenceIdsFromDragData, REFERENCE_MOVE_DRAG_MIME, REFERENCE_OPEN_DRAG_MIME, REFERENCE_SINGLE_DRAG_MIME } from '../lib/workspace-move';
 import { buildInboxAudit, type InboxAuditKind } from '../lib/inbox-audit';
 import { GRAPH_LAYOUT_DEFAULTS, citationHierarchyDepths, compactGraphAuthor, conceptKikiBoubaIndex, graphLabelCollisionRadius, graphLabelPlacement, wrapGraphLabel } from '../lib/graph-visual';
@@ -71,10 +71,10 @@ const isUnfiledReference = (reference: ReferenceRow) => reference.access === 'ow
 const treeReferenceKind = (reference: ReferenceRow) => referenceVisualKind(reference.format, reference.hasText);
 const createTreeReferenceGlyph=(reference:ReferenceRow):HTMLElement=>{
   const fileKind=treeReferenceKind(reference),itemKind=bibliographicVisualKind(reference.type),processes=referenceProcessKinds(reference);
-  const glyph=document.createElement('span');glyph.className=`tree-reference-glyph item-${itemKind}`;glyph.dataset.fileKind=fileKind;
+  const linkState=referenceLinkState(reference);const glyph=document.createElement('span');glyph.className=`tree-reference-glyph item-${itemKind} is-${linkState}`;glyph.dataset.fileKind=fileKind;
   glyph.classList.toggle('needs-ocr',reference.needsOcr);glyph.classList.toggle('has-narration',reference.hasKokoroNarration||reference.hasChirpNarration);
   const formatLabel=({pdf:'PDF',djvu:'DjVu',ebook:'Ebook',text:'text document','no-text':'no extracted text'} as const)[fileKind];
-  glyph.title=[bibliographicVisualLabel(itemKind),formatLabel,...processes.map(referenceProcessLabel),reference.needsOcr?'needs OCR':''].filter(Boolean).join(' · ');glyph.setAttribute('aria-label',glyph.title);
+  glyph.title=[bibliographicVisualLabel(itemKind),linkState==='unlinked'?'No associated file':formatLabel,...processes.map(referenceProcessLabel),reference.needsOcr?'needs OCR':''].filter(Boolean).join(' · ');glyph.setAttribute('aria-label',glyph.title);
   if(processes.length){const dots=document.createElement('span');dots.className='tree-process-dots';dots.setAttribute('aria-hidden','true');for(const process of processes){const dot=document.createElement('i');dot.className=`tree-process-dot is-${process}`;dots.appendChild(dot);}glyph.appendChild(dots);}
   return glyph;
 };

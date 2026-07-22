@@ -27,7 +27,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
      )
      SELECT reference.id,reference.title,reference.type,reference.contributors,reference.issued,
        reference.language,reference.source,reference.updated_at,state.location,state.updated_at AS read_at,
-       original.mime_type,original.size_bytes,
+       original.id AS original_id,original.mime_type,original.size_bytes,
        EXISTS (SELECT 1 FROM catalog_papers paper WHERE paper.owner_key=$1 AND paper.reference_id=reference.id AND paper.resolution_status='resolved' AND paper.openalex_id IS NOT NULL) AS has_openalex,
        EXISTS (SELECT 1 FROM catalog_annotations annotation WHERE annotation.owner_key=$1 AND annotation.reference_id=reference.id) AS has_annotations,
        EXISTS (SELECT 1 FROM catalog_artifacts artifact WHERE artifact.reference_id=reference.id AND artifact.kind='markdown') AS has_text,
@@ -35,7 +35,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
      FROM catalog_references reference
      LEFT JOIN catalog_reading_state state ON state.owner_key=$1 AND state.reference_id=reference.id
      LEFT JOIN LATERAL (
-       SELECT artifact.mime_type,artifact.size_bytes FROM catalog_artifacts artifact
+       SELECT artifact.id,artifact.mime_type,artifact.size_bytes FROM catalog_artifacts artifact
        WHERE artifact.reference_id=reference.id AND artifact.kind='original'
        ORDER BY artifact.created_at LIMIT 1
      ) original ON true
@@ -61,6 +61,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
       year: Number(row.issued?.year) || null,
       language: row.language || '',
       format: referenceFileType({ source: row.source || {}, artifacts: [{ kind: 'original', mimeType: row.mime_type || '' }] }),
+      hasOriginal: Boolean(row.original_id),
       hasOpenAlex: Boolean(row.has_openalex),
       hasAnnotations: Boolean(row.has_annotations),
       hasText: Boolean(row.has_text),

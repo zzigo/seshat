@@ -197,6 +197,8 @@ footer { min-height: 150px; display: flex; align-items: center; justify-content:
 .tree-reference-glyph.item-report::before { inset:2px; border-top:1px solid currentColor; border-bottom:1px solid currentColor; }
 .tree-reference-glyph.item-misc { color:var(--muted); }
 .tree-reference-glyph.item-misc::before { top:3px; left:3px; width:4px; height:4px; border:1px solid currentColor; transform:rotate(45deg); }
+.tree-reference-glyph.is-unlinked { border-style:dashed; background:transparent; }
+.tree-reference-glyph.is-unlinked::after { content:''; position:absolute; z-index:1; top:1px; left:5px; width:1px; height:11px; background:color-mix(in srgb,#b36f55 78%,var(--ink)); box-shadow:0 0 0 .75px var(--paper); transform:rotate(42deg); pointer-events:none; }
 .tree-process-dots { position:absolute; z-index:2; right:0; bottom:0; width:7px; height:7px; display:grid; grid-template-columns:repeat(2,2px); grid-auto-rows:2px; place-content:center; gap:1px; border-radius:1px 0 0; background:color-mix(in srgb,var(--paper) 82%,transparent); pointer-events:none; }
 .tree-process-dot { width:2px; height:2px; border-radius:50%; box-shadow:0 0 0 .25px color-mix(in srgb,var(--ink) 18%,transparent); }
 .tree-process-dot.is-openalex { background:color-mix(in srgb,#6683a2 74%,var(--muted)); }
