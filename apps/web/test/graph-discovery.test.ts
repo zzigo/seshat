@@ -3,7 +3,7 @@ import test from 'node:test';
 import { openAlexCitationNeighborhood, openAlexReferenceNeighborhood, openAlexSimilarNeighborhood, referencesSharingKeyword } from '../src/lib/graph-discovery';
 import type { OpenAlexWork } from '@seshat/core';
 
-const work=(id:string,title:string,references:string[]=[]):OpenAlexWork=>({id,title,citedByCount:4,authors:[],topics:[],institutions:[],referencedWorkIds:references,relatedWorkIds:[]});
+const work=(id:string,title:string,references:string[]=[]):OpenAlexWork=>({id,title,abstract:`Abstract for ${title}`,citedByCount:4,authors:[{id:`A-${id}`,name:`Author ${id}`,institutionIds:[]}],topics:[],institutions:[],referencedWorkIds:references,relatedWorkIds:[]});
 
 test('matches vault keywords exactly across case and accents',()=>{
   const rows=[{id:'1',keywords:['Música electroacústica']},{id:'2',keywords:['music']},{id:'3',keywords:['MUSICA ELECTROACUSTICA']}];
@@ -16,6 +16,8 @@ test('builds a bounded OpenAlex reference neighborhood with recursive counts',()
   assert.equal(graph.total,2);
   assert.equal(graph.edges.length,1);
   assert.equal(graph.nodes.find((node)=>node.id==='paper:W2')?.properties.referenceCount,1);
+  assert.deepEqual(graph.nodes.find((node)=>node.id==='paper:W2')?.properties.authors,['Author W2']);
+  assert.equal(graph.nodes.find((node)=>node.id==='paper:W2')?.properties.abstract,'Abstract for Reference');
 });
 
 test('points citing works toward the selected paper and preserves the full count',()=>{

@@ -14,6 +14,16 @@ test('keeps Activity hidden until Shift C or the header icon toggles the full co
   assert.match(styles,/\.workspace-console\[hidden\]\s*\{\s*display:none !important;/);
 });
 
+test('keeps raw OpenAlex traffic in a resizable scrolling console', () => {
+  assert.match(page,/data-console-resize-handle/);
+  assert.match(script,/appendConsoleTrace\(trace\.channel/);
+  assert.match(script,/response\.clone\(\)\.text\(\)/);
+  assert.match(script,/activities\.length > 300/);
+  assert.match(script,/CONSOLE_HEIGHT_KEY/);
+  assert.match(styles,/\.console-entry pre\s*\{[^}]*white-space:pre-wrap/);
+  assert.match(styles,/\.console-drawer\s*\{[^}]*overflow:auto/);
+});
+
 test('renders Help in one column with a borderless shortcut table', () => {
   assert.match(script,/className='help-shortcut-table'/);
   assert.match(styles,/\.workspace-help\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/);
