@@ -424,20 +424,28 @@ html { max-width: 100%; overflow: hidden; }
 .read-aloud-button[data-reader-state="paused"] { color:var(--gold); }
 .read-aloud-caption { position:absolute; z-index:45; left:50%; bottom:18px; width:min(780px,calc(100% - 28px)); min-width:0; display:flex; align-items:center; gap:8px; overflow-x:auto; overflow-y:hidden; transform:translateX(-50%); padding:7px; border:1px solid color-mix(in srgb,var(--ink) 72%,transparent); border-radius:11px; background:color-mix(in srgb,var(--paper) 88%,transparent); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); box-shadow:0 10px 32px rgba(20,28,23,.24); scrollbar-width:none; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; }
 .read-aloud-caption::-webkit-scrollbar { display:none; }
-.read-aloud-caption-controls { min-height:38px; display:flex; align-items:center; gap:6px; pointer-events:auto; }
+.read-aloud-caption-controls { min-height:48px; display:flex; align-items:center; gap:6px; pointer-events:auto; }
 .read-aloud-caption-controls button { width:38px; height:38px; display:grid; place-items:center; padding:0; border:1px solid color-mix(in srgb,var(--ink) 22%,transparent); border-radius:9px; color:var(--ink); background:color-mix(in srgb,var(--paper) 82%,transparent); box-shadow:0 2px 7px rgba(20,28,23,.09); cursor:pointer; touch-action:manipulation; transition:background .14s ease,color .14s ease,border-color .14s ease,transform .14s ease; }
 .read-aloud-caption-controls button:hover { border-color:color-mix(in srgb,var(--green) 55%,transparent); background:var(--paper); transform:translateY(-1px); }
 .read-aloud-caption-controls button:active { color:var(--paper); background:var(--green); transform:translateY(0); }
 .read-aloud-caption-controls button:focus-visible { outline:2px solid var(--green-bright); outline-offset:2px; }
 .read-aloud-caption-controls svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
-.read-aloud-caption-controls .caption-section { width:56px; height:56px; }
-.read-aloud-caption-controls .caption-section svg { width:51px; height:51px; stroke-width:1.25; }
+.read-aloud-caption-controls .caption-comment,.read-aloud-caption-controls .caption-section,.read-aloud-caption-controls .caption-speed { border-color:transparent; background:transparent; box-shadow:none; }
+.read-aloud-caption-controls .caption-comment:hover,.read-aloud-caption-controls .caption-section:hover,.read-aloud-caption-controls .caption-speed:hover { border-color:transparent; background:color-mix(in srgb,var(--green) 9%,transparent); }
+.read-aloud-caption-controls .caption-section { width:48px; height:48px; }
+.read-aloud-caption-controls .caption-section svg { width:43px; height:43px; stroke-width:1.25; }
 .read-aloud-caption-controls .reader-icon-fill { fill:currentColor; stroke:none; }
-.read-aloud-caption-controls .caption-comment { width:48px; grid-template-columns:16px auto; gap:3px; }
+.read-aloud-caption-controls .caption-comment { width:42px; height:42px; border-radius:50%; }
+.read-aloud-caption-controls .caption-comment svg { width:25px; height:25px; stroke-width:1.55; }
+.read-aloud-caption-controls .caption-speed { width:42px; height:42px; }
+.read-aloud-caption-controls .caption-speed svg { width:21px; height:21px; stroke-width:1.75; }
 .read-aloud-caption-controls small { color:inherit; font:7px ui-monospace,monospace; text-transform:uppercase; white-space:nowrap; }
-.read-aloud-caption-controls output { min-width:50px; align-self:center; color:var(--ink); font:9px ui-monospace,monospace; text-align:center; white-space:nowrap; }
-.read-aloud-caption-controls .caption-transport { width:42px; color:var(--paper); border-color:var(--green); background:var(--green); }
+.read-aloud-caption-controls output { min-width:50px; align-self:center; color:var(--ink); font:11px ui-monospace,monospace; text-align:center; white-space:nowrap; }
+.read-aloud-caption-controls .caption-transport { width:42px; height:42px; border-radius:50%; color:var(--paper); border-color:var(--green); background:var(--green); }
 .read-aloud-caption-controls .caption-transport:hover { color:var(--paper); background:var(--green-bright); }
+.read-aloud-caption-controls .caption-voices { width:42px; height:42px; border-radius:50%; border-color:color-mix(in srgb,var(--green) 65%,transparent); color:var(--green); background:color-mix(in srgb,var(--paper) 72%,transparent); box-shadow:none; }
+.read-aloud-caption-controls .caption-voices span { font:600 12px/1 ui-monospace,monospace; }
+.read-aloud-caption-controls .caption-voices:hover { color:var(--paper); border-color:var(--green); background:var(--green); }
 .read-aloud-caption.is-marked { border-color:var(--gold); }
 .read-aloud-caption.is-marked .caption-comment { color:var(--paper); border-color:var(--gold); background:var(--gold); }
 .textLayer span.read-aloud-active { background:transparent; text-decoration:underline; text-decoration-color:var(--gold); text-decoration-thickness:1.5px; text-underline-offset:3px; }
@@ -453,7 +461,7 @@ html { max-width: 100%; overflow: hidden; }
 .reader-chapters button.has-label { top:0; width:18px; height:13px; border:1px solid color-mix(in srgb,var(--gold) 55%,transparent); border-radius:4px; background:color-mix(in srgb,var(--paper) 90%,transparent); }
 .reader-chapters button.has-label[data-label-row="1"] { top:13px; }
 .reader-chapters button:hover { z-index:2; color:var(--paper); border-color:var(--gold); background:var(--gold); }
-@media(max-width:500px){.read-aloud-caption{bottom:6px;width:calc(100% - 12px);gap:5px;padding:5px}.read-aloud-caption-controls{width:auto;flex:0 0 auto;gap:4px}.read-aloud-caption-controls button{width:36px;height:36px}.read-aloud-caption-controls output{min-width:42px}.read-aloud-caption-controls .caption-transport{width:38px}.read-aloud-caption-controls .caption-comment{width:46px}.reader-timeline{min-width:260px;flex-basis:74vw;grid-template-columns:36px minmax(0,1fr) 42px;gap:4px;padding-left:5px}.reader-timeline-track{height:34px}}
+@media(max-width:500px){.read-aloud-caption{bottom:6px;width:calc(100% - 12px);gap:5px;padding:5px}.read-aloud-caption-controls{width:auto;flex:0 0 auto;gap:4px}.read-aloud-caption-controls output{min-width:44px}.read-aloud-caption-controls .caption-comment,.read-aloud-caption-controls .caption-speed,.read-aloud-caption-controls .caption-transport,.read-aloud-caption-controls .caption-voices{width:40px;height:40px}.read-aloud-caption-controls .caption-section{width:46px;height:46px}.read-aloud-caption-controls .caption-section svg{width:41px;height:41px}.reader-timeline{min-width:260px;flex-basis:74vw;grid-template-columns:36px minmax(0,1fr) 42px;gap:4px;padding-left:5px}.reader-timeline-track{height:34px}}
 .read-aloud-stop { color:var(--red,#a22)!important; }.read-aloud-stop[hidden] { display:none!important; }
 .reader-voice-dialog { width:min(520px,calc(100vw - 24px)); padding:0; border:1px solid var(--ink); color:var(--ink); background:var(--paper); box-shadow:0 20px 60px rgba(0,0,0,.35); }.reader-voice-dialog::backdrop { background:rgba(16,23,19,.48); }.reader-voice-dialog form { display:grid; gap:12px; padding:14px; }.reader-voice-dialog header { display:flex; justify-content:space-between; align-items:start; padding-bottom:10px; border-bottom:1px solid var(--hairline); }.reader-voice-dialog header div { display:grid; gap:3px; }.reader-voice-dialog header small,.reader-voice-dialog label { color:var(--muted); font:8px monospace; text-transform:uppercase; }.reader-voice-dialog header strong { font:20px Georgia,serif; }.reader-voice-dialog header button { border:0; background:transparent; color:var(--muted); font-size:18px; cursor:pointer; }.reader-voice-dialog label { display:grid; gap:5px; }.reader-voice-dialog select { width:100%; height:32px; border:1px solid var(--hairline); padding:0 7px; color:var(--ink); background:var(--paper-deep); font:10px monospace; text-transform:none; }.reader-voice-dialog input[type="range"] { width:100%; accent-color:var(--green); }.reader-voice-dialog output { color:var(--ink); }.reader-voice-dialog p { margin:0; color:var(--muted); font:10px/1.5 monospace; }.reader-voice-dialog footer { display:flex; justify-content:flex-end; gap:7px; padding-top:10px; border-top:1px solid var(--hairline); }.reader-voice-dialog footer button { min-height:30px; border:1px solid var(--hairline); padding:0 11px; color:var(--ink); background:var(--field); cursor:pointer; }.reader-voice-dialog footer button.primary { color:var(--paper); background:var(--green); }
 .pod-document-body { min-height: 0; overflow: auto; }
