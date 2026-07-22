@@ -18,6 +18,7 @@ import { KOKORO_VOICES, narrationCharacterCount, normalizeReaderLanguage, readAl
 import { chirpVoicesForLanguage } from '../lib/chirp';
 import { plainInlineTitle, setInlineTitle } from '../lib/inline-title';
 import { referenceVisualKind } from '../lib/reference-visual';
+import { buildCollectionDestinationTree, referenceIdsFromDragData, REFERENCE_MOVE_DRAG_MIME, REFERENCE_OPEN_DRAG_MIME, REFERENCE_SINGLE_DRAG_MIME } from '../lib/workspace-move';
 
 registerAllModules();
 
@@ -35,6 +36,7 @@ type WorkspacePayload = { references: ReferenceRow[]; libraries: LibraryNode[]; 
 type ShareTarget = { id: string; type: 'user' | 'group'; label: string; email?: string; emails?: string[]; memberCount?: number };
 type ToolKind = 'analysis' | 'annotation' | 'agent' | 'graph' | 'search';
 type Activity = { id: string; message: string; state: 'working' | 'complete' | 'error'; referenceId?: string; mapReady?: boolean };
+type ContextMenuItem={label:string;shortcut?:string;danger?:boolean;disabled?:boolean;swatch?:string;checked?:boolean;children?:ContextMenuItem[];searchable?:boolean;searchPlaceholder?:string;searchText?:string;action?:()=>void|Promise<void>};
 const PERSON_ROLE_LABELS:Partial<Record<Contributor['role'],string>>={author:'author',editor:'editor',translator:'translator',composer:'composer',performer:'performer',curator:'curator',producer:'producer',director:'director',conductor:'conductor',commentator:'commentator',annotator:'annotator',introduction:'introduction by',foreword:'foreword / prologue by',afterword:'afterword by',contributor:'other contributor'};
 
 const STORAGE_KEY = 'seshat.workspace.layout.v1';
@@ -215,7 +217,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let visibleCatalogRows = computeFilteredRows();
   const filteredRows = () => visibleCatalogRows;
   const setOpenDragData = (transfer: DataTransfer | null, ids: string[]) => {
-    if (!transfer || !ids.length) return; transfer.effectAllowed='copyMove'; transfer.setData('application/x-seshat-open-references',JSON.stringify([...new Set(ids)])); transfer.setData('text/plain',ids[0]);
+    if (!transfer || !ids.length) return;const unique=[...new Set(ids)];transfer.effectAllowed='copyMove';transfer.setData(REFERENCE_OPEN_DRAG_MIME,JSON.stringify(unique));transfer.setData(REFERENCE_MOVE_DRAG_MIME,JSON.stringify(unique));transfer.setData(REFERENCE_SINGLE_DRAG_MIME,unique[0]);transfer.setData('text/plain',unique[0]);
   };
   const refreshTable = () => {
     visibleCatalogRows = computeFilteredRows();
@@ -642,6 +644,34 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       setSaveState(`${proposals.length} year correction${proposals.length===1?'':'s'} proposed`);
     }catch(error){status.textContent=error instanceof Error?error.message:'Year repair preview failed';setSaveState(status.textContent,'error');}
   };
+  const moveReferencesToCollection = async (ids:string[],targetLibraryId:string|null,add=false) => {
+    const rows=[...new Set(ids)].map((id)=>references.get(id)).filter((reference):reference is ReferenceRow=>reference?.access==='owner');
+    if(!rows.length){setSaveState('no editable references selected','error');return;}
+    const destination=targetLibraryId?payload.libraries.find((library)=>library.id===targetLibraryId):null;
+    setSaveState(`${add?'adding':'moving'} ${rows.length} ${rows.length===1?'item':'items'}${destination?` to ${destination.name}`:' to Inbox'}…`,'saving');
+    let completed=0;
+    try{
+      for(const reference of rows){
+        const libraryIds=targetLibraryId?(add?[...new Set([...reference.libraryIds.filter((id)=>!isInboxLibraryId(id)),targetLibraryId])]:[targetLibraryId]):[];
+        const response=await fetch(`/api/library/${encodeURIComponent(reference.id)}/libraries`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({libraryIds})});
+        const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Could not move reference.');reference.libraryIds=Array.isArray(result.libraryIds)?result.libraryIds:libraryIds;completed+=1;
+      }
+      refreshTable();renderTree(search.value);syncTreeSelection();
+      setSaveState(`${completed} ${completed===1?'item':'items'} ${add?'added':'moved'}${destination?` to ${destination.name}`:' to Inbox'}`);
+    }catch(error){refreshTable();renderTree(search.value);syncTreeSelection();setSaveState(`${completed?`${completed} moved · `:''}${error instanceof Error?error.message:'Move failed'}`,'error');}
+  };
+  const moveDestinationItems=(ids:string[]):ContextMenuItem[]=>{
+    const editableIds=ids.filter((id)=>references.get(id)?.access!=='viewer');
+    const trees=buildCollectionDestinationTree(payload.libraries.filter((library)=>library.access!=='viewer'&&!isInboxLibraryId(library.id)));
+    const makeItem=(node:(typeof trees)[number],path:string[]):ContextMenuItem=>{
+      const fullPath=[...path,node.name];
+      return{label:node.name,searchText:fullPath.join(' '),checked:Boolean(editableIds.length)&&editableIds.every((id)=>references.get(id)?.libraryIds.includes(node.id)),children:node.children.map((child)=>makeItem(child,fullPath)),action:()=>moveReferencesToCollection(editableIds,node.id)};
+    };
+    return[
+      {label:'Inbox / Unfiled',searchText:'Inbox Unfiled remove collections',checked:Boolean(editableIds.length)&&editableIds.every((id)=>isUnfiledReference(references.get(id)!)),action:()=>moveReferencesToCollection(editableIds,null)},
+      ...trees.map((node)=>makeItem(node,[])),
+    ];
+  };
   const referenceMenuItems = (ids: string[], requestedCollectionId: string | null = activeLibrary) => {
     const editableIds = ids.filter((id) => references.get(id)?.access !== 'viewer');
     const collection = requestedCollectionId ? payload.libraries.find((item) => item.id === requestedCollectionId) : undefined;
@@ -649,6 +679,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       ? editableIds.filter((id) => references.get(id)?.libraryIds.includes(requestedCollectionId)) : [];
     return [
     { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
+    { label: `Move selected item${editableIds.length===1?'':`s (${editableIds.length})`}…`, disabled:!editableIds.length,searchable:true,searchPlaceholder:'Filter collections…',children:moveDestinationItems(editableIds) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Case Fix${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => caseFixReferences(editableIds) },
     { label: `Repair bibliographic year…${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => openYearRepair(editableIds) },
@@ -3135,17 +3166,18 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   let contextMenu: HTMLElement | null = null;
   const closeContextMenu = () => { contextMenu?.remove(); contextMenu = null; };
-  type ContextMenuItem={label:string;shortcut?:string;danger?:boolean;disabled?:boolean;swatch?:string;checked?:boolean;children?:ContextMenuItem[];action?:()=>void|Promise<void>};
   const openContextMenu = (event: MouseEvent, items: ContextMenuItem[]) => {
     event.preventDefault(); event.stopPropagation(); closeContextMenu();
-    const buildMenu=(entries:ContextMenuItem[],nested=false)=>{const menu = document.createElement('div'); menu.className = nested?'seshat-context-menu context-submenu':'seshat-context-menu'; menu.setAttribute('role', 'menu');
+    const buildMenu=(entries:ContextMenuItem[],nested=false,searchable=false,placeholder='Filter…')=>{const menu = document.createElement('div'); menu.className = nested?'seshat-context-menu context-submenu':'seshat-context-menu';menu.classList.toggle('context-searchable',searchable); menu.setAttribute('role', 'menu');
+    let filter:HTMLInputElement|null=null;if(searchable){filter=document.createElement('input');filter.type='search';filter.className='context-menu-search';filter.placeholder=placeholder;filter.setAttribute('aria-label',placeholder);menu.appendChild(filter);}
     entries.forEach((item) => {
       const wrap=document.createElement('div');wrap.className='context-menu-item';const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem');
-      if (item.swatch) { const swatch = document.createElement('i'); swatch.className = 'context-swatch'; swatch.style.background = item.swatch; button.appendChild(swatch); }
-      if(item.checked!==undefined){const check=document.createElement('i');check.className='context-check';check.textContent=item.checked?'✓':'';button.appendChild(check);}button.append(item.label);if(item.shortcut){const shortcut=document.createElement('kbd');shortcut.className='context-shortcut';shortcut.textContent=item.shortcut;button.appendChild(shortcut);}if(item.children?.length){const arrow=document.createElement('span');arrow.className='context-arrow';arrow.textContent='›';button.appendChild(arrow);wrap.append(button,buildMenu(item.children,true));}else wrap.appendChild(button);
+      button.dataset.searchText=normalize(item.searchText||item.label);if (item.swatch) { const swatch = document.createElement('i'); swatch.className = 'context-swatch'; swatch.style.background = item.swatch; button.appendChild(swatch); }
+      if(item.checked!==undefined){const check=document.createElement('i');check.className='context-check';check.textContent=item.checked?'✓':'';button.appendChild(check);}button.append(item.label);if(item.shortcut){const shortcut=document.createElement('kbd');shortcut.className='context-shortcut';shortcut.textContent=item.shortcut;button.appendChild(shortcut);}if(item.children?.length){const arrow=document.createElement('span');arrow.className='context-arrow';arrow.textContent='›';button.appendChild(arrow);const submenu=buildMenu(item.children,true,Boolean(item.searchable),item.searchPlaceholder||'Filter…');const place=()=>{const bounds=button.getBoundingClientRect(),menuWidth=260;const proposed=bounds.right+menuWidth<=window.innerWidth-6?bounds.right-3:bounds.left-menuWidth+3;submenu.style.left=`${Math.max(6,Math.min(window.innerWidth-menuWidth-6,proposed))}px`;const menuHeight=Math.min(submenu.scrollHeight||620,window.innerHeight-12);submenu.style.top=`${Math.max(6,Math.min(bounds.top-5,window.innerHeight-menuHeight-6))}px`;};wrap.addEventListener('pointerenter',place);button.addEventListener('focus',place);wrap.append(button,submenu);}else wrap.appendChild(button);
       button.disabled = Boolean(item.disabled); button.classList.toggle('danger', Boolean(item.danger));
       if(item.action)button.addEventListener('click', () => { closeContextMenu(); void item.action?.(); }); menu.appendChild(wrap);
-    });return menu;};
+    });if(filter){const apply=()=>{const query=normalize(filter!.value);const visit=(branch:HTMLElement):boolean=>{let matched=false;[...branch.children].forEach((child)=>{if(!(child instanceof HTMLElement)||!child.classList.contains('context-menu-item'))return;const button=child.querySelector<HTMLButtonElement>(':scope > button');const submenu=child.querySelector<HTMLElement>(':scope > .context-submenu');const descendant=submenu?visit(submenu):false;const own=!query||Boolean(button?.dataset.searchText?.includes(query));child.hidden=Boolean(query)&&!own&&!descendant;if(!child.hidden)matched=true;});return matched;};visit(menu);};filter.addEventListener('input',apply);filter.addEventListener('keydown',(keyboardEvent)=>{keyboardEvent.stopPropagation();if(keyboardEvent.key==='Escape')closeContextMenu();});}
+    return menu;};
     const menu=buildMenu(items);
     root.appendChild(menu); contextMenu = menu;
     const bounds = menu.getBoundingClientRect();
@@ -3292,35 +3324,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     };
     const matched = payload.references.filter((reference) => !normalizedQuery || [reference.title, reference.contributorsDisplay, reference.citeKey, reference.tags, reference.publisher, reference.filename]
       .some((value) => normalize(value).includes(normalizedQuery)));
-    const moveReference = async (reference: ReferenceRow, libraryIds: string[]) => {
-      const response = await fetch(`/api/library/${reference.id}/libraries`, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({ libraryIds }) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Could not move reference.');
-      reference.libraryIds = result.libraryIds; renderTree(search.value); refreshTable();
-    };
-    const dragReferenceIds = (event: DragEvent) => {
-      const bundled = event.dataTransfer?.getData('application/x-seshat-references');
-      if (bundled) {
-        try {
-          const parsed = JSON.parse(bundled);
-          if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === 'string');
-        } catch {}
-      }
-      const single = event.dataTransfer?.getData('application/x-seshat-reference');
-      return single ? [single] : [];
-    };
-    const moveReferences = async (ids: string[], targetLibraryId: string | null, add = false) => {
-      const unique = [...new Set(ids)]
-        .map((id) => references.get(id))
-        .filter((reference): reference is ReferenceRow => reference !== undefined && reference.access !== 'viewer');
-      for (const reference of unique) {
-        const next = targetLibraryId
-          ? (add ? [...new Set([...reference.libraryIds, targetLibraryId])] : [targetLibraryId])
-          : [];
-        await moveReference(reference, next);
-      }
-      setSaveState(unique.length === 1 ? (targetLibraryId ? 'reference moved' : 'moved outside libraries') : `${unique.length} references moved`);
-    };
+    const dragReferenceIds = (event: DragEvent) => referenceIdsFromDragData((mime)=>event.dataTransfer?.getData(mime)||'').filter((id)=>references.has(id));
     const moveLibrary = async (library: LibraryNode, parentId: string | null) => {
       const response = await fetch(`/api/libraries/${library.id}`, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ parentId }) });
       const result = await response.json().catch(() => ({}));
@@ -3328,14 +3332,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       library.parentId = result.library.parentId; renderTree(search.value);
     };
     const allButton = makeButton('All references', matched.length, null);
-    allButton.addEventListener('dragover', (event) => { event.preventDefault(); allButton.classList.add('drop-target'); });
+    allButton.addEventListener('dragover', (event) => { event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='move';allButton.classList.add('drop-target'); });
     allButton.addEventListener('dragleave', () => allButton.classList.remove('drop-target'));
     allButton.addEventListener('drop', async (event) => {
       event.preventDefault(); allButton.classList.remove('drop-target');
       const referenceIds = dragReferenceIds(event);
       const library = payload.libraries.find((item) => item.id === event.dataTransfer?.getData('application/x-seshat-library'));
       try {
-        if (referenceIds.length) await moveReferences(referenceIds, null);
+        if (referenceIds.length) await moveReferencesToCollection(referenceIds, null);
         else if (library) { await moveLibrary(library, null); setSaveState('library moved to root'); }
       } catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
     });
@@ -3585,7 +3589,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); syncTreeSelection(); }
         const openIds=[...selectedReferences]; setOpenDragData(event.dataTransfer,openIds);
         const moveIds = openIds.filter((id) => references.get(id)?.access !== 'viewer');
-        if (moveIds.length) { event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(moveIds)); event.dataTransfer?.setData('application/x-seshat-reference', moveIds[0]); }
+        if (moveIds.length) { event.dataTransfer?.setData(REFERENCE_MOVE_DRAG_MIME, JSON.stringify(moveIds)); event.dataTransfer?.setData(REFERENCE_SINGLE_DRAG_MIME, moveIds[0]); }
         setSaveState(`${openIds.length} selected`);
       });
       container.appendChild(item);
@@ -3663,7 +3667,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if (library.access === 'viewer') { event.preventDefault(); return; }
         event.dataTransfer?.setData('application/x-seshat-library', library.id); event.stopPropagation();
       });
-      summary.addEventListener('dragover', (event) => { event.preventDefault(); summary.classList.add('drop-target'); });
+      summary.addEventListener('dragover', (event) => { event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect=event.altKey?'copy':'move';summary.classList.add('drop-target'); });
       summary.addEventListener('dragleave', () => summary.classList.remove('drop-target'));
       summary.addEventListener('drop', async (event) => {
         event.preventDefault(); summary.classList.remove('drop-target');
@@ -3676,7 +3680,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         const referenceIds = dragReferenceIds(event);
         if (!referenceIds.length) return;
         try {
-          await moveReferences(referenceIds, library.id, event.altKey);
+          await moveReferencesToCollection(referenceIds, library.id, event.altKey);
           if (event.altKey) setSaveState(referenceIds.length === 1 ? 'added to library' : `${referenceIds.length} references added to library`);
         } catch (error) { setSaveState(error instanceof Error ? error.message : 'Move failed', 'error'); }
       });
@@ -3777,7 +3781,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           if (!selectedReferences.has(reference.id)) { selectedReferences.clear(); selectedReferences.add(reference.id); syncTreeSelection(); }
           const openIds=[...selectedReferences]; setOpenDragData(event.dataTransfer,openIds);
           const moveIds = openIds.filter((id) => references.get(id)?.access !== 'viewer');
-          if (moveIds.length) { event.dataTransfer?.setData('application/x-seshat-references', JSON.stringify(moveIds)); event.dataTransfer?.setData('application/x-seshat-reference', moveIds[0]); }
+          if (moveIds.length) { event.dataTransfer?.setData(REFERENCE_MOVE_DRAG_MIME, JSON.stringify(moveIds)); event.dataTransfer?.setData(REFERENCE_SINGLE_DRAG_MIME, moveIds[0]); }
           setSaveState(`${openIds.length} selected`);
         });
         nested.appendChild(item);

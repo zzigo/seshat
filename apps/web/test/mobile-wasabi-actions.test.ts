@@ -28,6 +28,6 @@ test('mobile Wasabi actions preview candidates before linking the chosen object'
   } finally {
     globalThis.fetch = originalFetch;
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
-    else delete (globalThis as typeof globalThis & { window?: unknown }).window;
+    else Reflect.deleteProperty(globalThis, 'window');
   }
 });
