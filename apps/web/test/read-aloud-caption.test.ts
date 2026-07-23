@@ -18,6 +18,20 @@ test('keeps the reading toolbar compact and exposes voice settings directly',()=
   assert.match(script,/controls\.append\(comment,previousSection,nextSection,slower,speed,faster,transport,voices\)/);
 });
 
+test('moves the shared reading toolbar from a dedicated persistent handle',()=>{
+  assert.match(script,/dragHandle\.className='caption-drag-handle'/);
+  assert.match(script,/this\.installCaptionDrag\(caption,dragHandle\)/);
+  assert.match(script,/CAPTION_POSITION_KEY='seshat\.read-aloud\.position\.v1'/);
+  assert.match(styles,/\.caption-drag-handle\s*\{[^}]*touch-action:none/);
+});
+
+test('lays out voice and structural controls responsively',()=>{
+  assert.match(script,/primaryGrid\.className='reader-voice-primary-grid'/);
+  assert.match(script,/form\.append\(header,primaryGrid,structure,note,footer\)/);
+  assert.match(styles,/\.reader-voice-dialog\s*\{\s*width:min\(780px/);
+  assert.match(styles,/@media\(max-width:700px\)\{\.reader-voice-primary-grid/);
+});
+
 test('uses flat section and speed controls with circular transport and voices',()=>{
   assert.match(styles,/\.caption-comment,\.read-aloud-caption-controls \.caption-section,\.read-aloud-caption-controls \.caption-speed\s*\{\s*border-color:transparent;\s*background:transparent;/);
   assert.match(styles,/\.caption-transport\s*\{[^}]*border-radius:50%/);

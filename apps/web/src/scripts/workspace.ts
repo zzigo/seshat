@@ -2908,11 +2908,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
         const searchInput = document.createElement('input');
         searchInput.type = 'search';
+        searchInput.className = 'corpus-pod-search-input';
         searchInput.placeholder = 'Search exact phrase, semantic concept...';
         searchInput.style.flex = '1';
         searchInput.style.padding = '6px 10px';
         searchInput.style.border = '1px solid var(--line)';
-        searchInput.style.background = '#ffffff';
+        searchInput.style.color = 'var(--ink)';
+        searchInput.style.background = 'var(--field, var(--paper-deep))';
+        searchInput.style.caretColor = 'var(--green-bright)';
         searchInput.style.fontSize = '13px';
 
         const searchButton = document.createElement('button');

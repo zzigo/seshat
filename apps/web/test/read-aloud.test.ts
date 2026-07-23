@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { narrationCharacterCount, normalizeReaderLanguage, readingSentenceIndexForQuote, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
+import { boundedReaderCaptionCenter, narrationCharacterCount, normalizeReaderLanguage, readingSentenceIndexForQuote, renderedTimeForSourceOffset, splitReadingSentences, steppedReaderRate, visibleChapterLabelIndexes } from '../src/scripts/read-aloud';
 import { phonemizeSpanish } from '../src/scripts/spanish-phonemizer';
 import { billableCharacterCount, chirpMonth, chirpVoicesForLanguage, nextChirpRenewal } from '../src/lib/chirp';
 import { chirpAccessAllowed } from '../src/lib/chirp-access';
@@ -48,6 +48,12 @@ test('steps reader speed by quarters within safe playback bounds', () => {
   assert.equal(steppedReaderRate(.5,-.25),.5);
   assert.equal(steppedReaderRate(2,.25),2.25);
   assert.equal(steppedReaderRate(3,.25),3);
+});
+
+test('keeps a moved reading toolbar fully inside its reader surface', () => {
+  assert.deepEqual(boundedReaderCaptionCenter(-100,900,1000,700,600,70),{x:306,y:659});
+  assert.deepEqual(boundedReaderCaptionCenter(500,350,1000,700,600,70),{x:500,y:350});
+  assert.deepEqual(boundedReaderCaptionCenter(40,40,300,50,600,70),{x:150,y:25});
 });
 
 test('samples chapter labels across the full timeline', () => {
