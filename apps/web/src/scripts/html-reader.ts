@@ -1,11 +1,12 @@
 import { annotationColors, type Annotation } from './annotations';
+import type { NarrationHeading } from '../lib/narration-structure';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 
 type HtmlAnchor = {
   quote:string;prefix:string;suffix:string;startOffset:number;endOffset:number;
   sourceKind:'html';locator:string;rects:[];
 };
-type ReaderSourceDetail={kind?:string;load?:()=>Promise<string>};
+type ReaderSourceDetail={kind?:string;load?:()=>Promise<string>;headings?:()=>Promise<NarrationHeading[]>};
 type ReaderLocationDetail={text?:string;start?:number;end?:number};
 
 const highlightName=(id:string)=>`seshat-html-annotation-${id.replace(/[^a-zA-Z0-9_-]/g,'-')}`;
@@ -70,7 +71,8 @@ export async function mountHtmlReader(
 
   const keyboard=(event:KeyboardEvent)=>{if((event.target as HTMLElement|null)?.matches('input,textarea,select,[contenteditable="true"]'))return;const key=event.key.toLowerCase();if(palette.hidden)return;if(/^[1-8]$/.test(key)||key==='m'){event.preventDefault();palette.querySelector<HTMLButtonElement>(`[data-annotation-key="${key}"]`)?.click();}};
   const annotationsChanged=async(event:Event)=>{if((event as CustomEvent).detail?.referenceId!==referenceId)return;const response=await fetch(`/api/library/${encodeURIComponent(referenceId)}/annotations`);if(!response.ok)return;annotations=((await response.json()).annotations||[]).filter((item:Annotation)=>item.sourceKind==='html');renderHighlights();};
-  const provideSource=(event:Event)=>{const detail=(event as CustomEvent<ReaderSourceDetail>).detail;if(!detail||detail.load)return;detail.kind='html';detail.load=async()=>readerText();};
+  const readerHeadings=()=>[...content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')].map((heading,index)=>{const before=document.createRange();before.selectNodeContents(content);before.setEndBefore(heading);const level=Number(heading.tagName.slice(1))||1;return{id:`html:${index}`,title:String(heading.textContent||'').replace(/\s+/g,' ').trim(),level,kind:level===1?'chapter':'section',offset:before.toString().length};}).filter((heading)=>heading.title);
+  const provideSource=(event:Event)=>{const detail=(event as CustomEvent<ReaderSourceDetail>).detail;if(!detail||detail.load)return;detail.kind='html';detail.load=async()=>readerText();detail.headings=async()=>readerHeadings();};
   const locate=(event:Event)=>{const detail=(event as CustomEvent<ReaderLocationDetail>).detail||{},start=Math.max(0,Number(detail.start)||0),end=Math.max(start+1,Number(detail.end)||start+String(detail.text||'').length),range=rangeAt(start,end);if(!range)return;const registry=(CSS as any).highlights,Highlight=(window as any).Highlight;if(registry&&typeof Highlight==='function')registry.set('seshat-read-aloud',new Highlight(range));(range.startContainer.parentElement||content).scrollIntoView({block:'center',behavior:'smooth'});};
   const clearLocate=()=>{(CSS as any).highlights?.delete?.('seshat-read-aloud');};
   const invert=(event:Event)=>shell.classList.toggle('is-inverted',Boolean((event as CustomEvent<{active?:boolean}>).detail?.active));

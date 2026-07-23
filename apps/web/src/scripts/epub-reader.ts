@@ -1,5 +1,6 @@
 import 'foliate-js/view.js';
 import { epubDocumentAppearance, epubDocumentThemeCss } from '../lib/epub-appearance';
+import type { NarrationHeading } from '../lib/narration-structure';
 import type { ReaderCommandDetail, ReaderControlsState, ReaderPlayFromDetail } from '../lib/reader-controls';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 import { annotationColors, type Annotation } from './annotations';
@@ -9,7 +10,7 @@ type ReadingPreferences = { flow: 'paginated' | 'scrolled'; fontScale: number };
 type TocItem = { label?: string; href?: string; subitems?: TocItem[] };
 type RelocateDetail = { cfi?: string; fraction?: number; index?: number; tocItem?: { label?: string } };
 type EpubSection = { linear?: string; createDocument?: () => Promise<Document> };
-type ReaderSourceDetail = { kind?: string; load?: () => Promise<string> };
+type ReaderSourceDetail = { kind?: string; load?: () => Promise<string>; headings?: () => Promise<NarrationHeading[]> };
 type ReaderLocationDetail = { text?: string; start?: number };
 type ReaderSectionShiftDetail = { delta: number; currentOffset?: number; targetOffset?: number };
 type EpubAnchor = {
@@ -69,6 +70,7 @@ export async function mountEpubReader(
   const bookReady = new Promise<void>((resolve) => { signalBookReady = resolve; });
   let textPromise: Promise<string> | null = null;
   let sectionRanges: Array<{ index: number; start: number; end: number }> = [];
+  let readerHeadings: NarrationHeading[] = [];
   let pendingLocation: { index: number; text: string } | null = null;
   let currentSectionIndex = 0;
   let currentChapter = 'cap';
@@ -107,12 +109,14 @@ export async function mountEpubReader(
     await bookReady;
     if (textPromise) return textPromise;
     textPromise = (async () => {
-      const sections = view.book?.sections || []; const parts: string[] = []; sectionRanges = []; let offset = 0;
+      const sections = view.book?.sections || []; const parts: string[] = []; sectionRanges = []; readerHeadings = []; let offset = 0;
       for (let index = 0; index < sections.length; index += 1) {
         const section = sections[index]; if (!section.createDocument || section.linear === 'no') continue;
-        const text = documentText(await section.createDocument()); if (!text) continue;
+        const sectionDocument=await section.createDocument(),text = documentText(sectionDocument); if (!text) continue;
         if (parts.length) offset += 2;
-        const start = offset; parts.push(text); offset += text.length; sectionRanges.push({ index, start, end: offset });
+        const start = offset;let headingCursor=0;
+        sectionDocument.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').forEach((heading,headingIndex)=>{const title=String(heading.textContent||'').replace(/\s+/g,' ').trim();if(!title)return;const local=text.toLocaleLowerCase().indexOf(title.toLocaleLowerCase(),headingCursor);if(local<0)return;headingCursor=local+title.length;readerHeadings.push({id:`epub:${index}:${headingIndex}`,title,level:Number(heading.tagName.slice(1))||1,kind:Number(heading.tagName.slice(1))===1?'chapter':'section',offset:start+local});});
+        parts.push(text); offset += text.length; sectionRanges.push({ index, start, end: offset });
       }
       const text = parts.join('\n\n'); if (!text) throw new Error('This EPUB contains no readable text.'); return text;
     })();
@@ -197,7 +201,7 @@ export async function mountEpubReader(
     clearReadingMarker(); const target = readingBlock(doc, text); if (!target) return;
     target.setAttribute('data-seshat-read-aloud', ''); target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   };
-  const provideReaderSource = (event: Event) => { const detail = (event as CustomEvent<ReaderSourceDetail>).detail; if (!detail || detail.load) return; detail.kind = 'epub'; detail.load = loadReaderText; };
+  const provideReaderSource = (event: Event) => { const detail = (event as CustomEvent<ReaderSourceDetail>).detail; if (!detail || detail.load) return; detail.kind = 'epub'; detail.load = loadReaderText; detail.headings=async()=>{await loadReaderText();return readerHeadings;}; };
   const locateReaderText = (event: Event) => {
     const detail = (event as CustomEvent<ReaderLocationDetail>).detail || {}; const start = Number(detail.start); const text = String(detail.text || '');
     const section = sectionRanges.find((item) => start >= item.start && start <= item.end); if (!section || !text) return;
