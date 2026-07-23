@@ -32,3 +32,11 @@ test('draws concept topographies and strips emphasis markup from canvas labels',
   assert.match(workspace,/const label=plainInlineTitle\(node\.label/);
   assert.match(workspace,/setInlineTitle\(title,paper\.label/);
 });
+
+test('uses a concept-first corpus projection while preserving the individual graph controls',()=>{
+  assert.match(workspace,/api\/knowledge-graph\/corpus/);
+  assert.match(workspace,/paper:!globalGraph,author:!globalGraph,topic:true,emergence:false/);
+  assert.match(workspace,/toggle\('Emerging language'/);
+  assert.match(workspace,/renderCorpusGroupNode\(node,'Author'\)/);
+  assert.match(workspace,/open\.textContent='Open document'/);
+});
