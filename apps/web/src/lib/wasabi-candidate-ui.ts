@@ -1,3 +1,5 @@
+import { openWasabiOrphanDialog } from './wasabi-orphan-ui';
+
 export type WasabiCandidate = {
   key: string;
   filename: string;
@@ -21,6 +23,7 @@ type CandidateOptions = {
   report?: (message: string, kind?: 'saving' | 'success' | 'error') => void;
   onLinked?: (candidate: WasabiCandidate) => void;
 };
+type WasabiLinkResult = { error?:string; replaced?:Array<{key:string;filename:string;provider:string}>; sanitizePaths?:string[] };
 
 const bytesLabel = (value: number) => value >= 1_000_000_000
   ? `${(value / 1_000_000_000).toFixed(1)} GB`
@@ -56,7 +59,7 @@ export const linkWasabiCandidate = async (referenceId: string, candidate: Wasabi
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key: candidate.key }),
   });
-  const result = await response.json().catch(() => ({})) as { error?: string };
+  const result = await response.json().catch(() => ({})) as WasabiLinkResult;
   if (!response.ok) throw new Error(result.error || 'The Wasabi file could not be linked.');
   window.dispatchEvent(new CustomEvent('seshat:wasabi-linked', { detail: { referenceId, candidate } }));
   return result;
@@ -70,9 +73,10 @@ export const autoLinkFirstWasabiCandidate = async (options: CandidateOptions) =>
     const candidate = result.candidates?.[0];
     if (!candidate) throw new Error('No plausible Wasabi candidate was found in this item folder.');
     report(`Linking ${candidate.filename}…`, 'saving');
-    await linkWasabiCandidate(options.referenceId, candidate);
+    const linked=await linkWasabiCandidate(options.referenceId, candidate);
     report(`Linked ${candidate.filename}`, 'success');
     options.onLinked?.(candidate);
+    if(linked.replaced?.length)void openWasabiOrphanDialog({paths:linked.sanitizePaths,title:`Replaced file · ${options.title}`,report});
   } catch (error) {
     report(error instanceof Error ? error.message : 'Wasabi auto-link failed.', 'error');
   }
@@ -139,10 +143,11 @@ export const openWasabiCandidateDialog = async (options: CandidateOptions) => {
           button.disabled = true;
           status.value = `Linking ${candidate.filename}…`;
           try {
-            await linkWasabiCandidate(options.referenceId, candidate);
+            const linked=await linkWasabiCandidate(options.referenceId, candidate);
             options.onLinked?.(candidate);
             dialog.close();
             report(`Linked ${candidate.filename}`, 'success');
+            if(linked.replaced?.length)void openWasabiOrphanDialog({paths:linked.sanitizePaths,title:`Replaced file · ${options.title}`,report});
           } catch (error) {
             button.disabled = false;
             status.value = error instanceof Error ? error.message : 'The Wasabi file could not be linked.';

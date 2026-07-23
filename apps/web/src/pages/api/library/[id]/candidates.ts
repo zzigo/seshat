@@ -17,6 +17,10 @@ const normalized = (value: unknown): string => String(value || '').normalize('NF
 const stopwords = new Set(['and','the','for','from','with','como','para','las','los','una','uno','del','por','con','y']);
 const tokens = (value: unknown): Set<string> => new Set(normalized(value).split(' ').filter((token) => token.length > 2 && !stopwords.has(token)));
 const cleanPathSegment = (value: unknown): string => String(value || '').normalize('NFC').replace(/[\u0000-\u001f\u007f/\\]/g,'').trim();
+const relativeDirectoryForKey = (key:string,root:string) => {
+  const relative=key.startsWith(`${root}/`)?key.slice(root.length+1):key;
+  return relative.includes('/')?relative.slice(0,relative.lastIndexOf('/')):'';
+};
 
 const context = async (locals: App.Locals, id: string) => {
   const user = (locals.session as any)?.user; const email = String(user?.email || '').trim().toLowerCase();
@@ -141,14 +145,28 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const filename = key.split('/').at(-1) || 'document';
   const sha256 = /^[a-f0-9]{64}$/i.test(String(head.Metadata?.sha256 || '')) ? String(head.Metadata!.sha256).toLowerCase()
     : createHash('sha256').update(['wasabi',bucket,key,head.ETag || '',head.ContentLength || 0].join('\0')).digest('hex');
-  const updated = await value.catalog.replaceOriginal(value.ownerKey, value.reference.id, {
-    originalFilename:filename, originalSha256:sha256,
-    artifact:{ id:randomUUID(), kind:'original', provider:'wasabi-linked', objectKey:key, bucket,
-      mimeType:head.ContentType || mimeType(filename), sizeBytes:Number(head.ContentLength || 0), sha256, etag:head.ETag?.replaceAll('"','') },
-  });
+  const replaced=value.reference.artifacts.filter((artifact)=>artifact.kind==='original'&&artifact.objectKey!==key).map((artifact)=>({
+    key:artifact.objectKey,
+    filename:artifact.objectKey.split('/').at(-1)||artifact.objectKey,
+    provider:artifact.provider,
+  }));
+  let updated;
+  try{
+    updated = await value.catalog.replaceOriginal(value.ownerKey, value.reference.id, {
+      originalFilename:filename, originalSha256:sha256,
+      artifact:{ id:randomUUID(), kind:'original', provider:'wasabi-linked', objectKey:key, bucket,
+        mimeType:head.ContentType || mimeType(filename), sizeBytes:Number(head.ContentLength || 0), sha256, etag:head.ETag?.replaceAll('"','') },
+    });
+  }catch(error:any){
+    console.error('[seshat:candidate:link]',error);
+    if(String(error?.code||'')==='23505'&&String(error?.constraint||'').includes('original_sha256'))return Response.json({error:'That document is already attached to another item.'},{status:409});
+    return Response.json({error:'The Wasabi file could not be linked.'},{status:500});
+  }
   if (!updated) return Response.json({ error:'not_found' }, { status:404 });
   await value.catalog.pool.query(
     `UPDATE catalog_references SET source=jsonb_set(jsonb_set(source,'{wasabiObjectKey}',to_jsonb($3::text),true),'{wasabiStorageRoot}',to_jsonb($4::text),true) WHERE owner_key=$1 AND id=$2`,
-    [value.ownerKey,value.reference.id,key,root]);
-  return Response.json({ ok:true, reference:await value.catalog.get(value.ownerKey,value.reference.id) });
+    [value.ownerKey,value.reference.id,key,root],
+  ).catch((error)=>console.error('[seshat:candidate:source-path]',error));
+  const sanitizePaths=[...new Set([...replaced.map((artifact)=>relativeDirectoryForKey(artifact.key,root)),relativeDirectoryForKey(key,root)])];
+  return Response.json({ ok:true, reference:await value.catalog.get(value.ownerKey,value.reference.id),replaced,sanitizePaths });
 };

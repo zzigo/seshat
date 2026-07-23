@@ -19,6 +19,10 @@ const mediaTypes: Record<string, string> = {
 const extension = (name: string) => name.toLowerCase().split('.').pop() || '';
 const safeName = (name: string) => name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'document';
+const relativeDirectoryForKey = (key:string,root:string) => {
+  const relative=key.startsWith(`${root}/`)?key.slice(root.length+1):key;
+  return relative.includes('/')?relative.slice(0,relative.lastIndexOf('/')):'';
+};
 
 export const POST: APIRoute = async ({ request, locals, params }) => {
   const email = String((locals.session as any)?.user?.email || '').trim().toLowerCase();
@@ -66,12 +70,19 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
       },
     });
     if (!updated) throw new Error('REFERENCE_NOT_FOUND');
-    const oldObjects = reference.artifacts.filter((artifact) => artifact.provider !== 'wasabi-linked' && artifact.objectKey !== objectKey && artifact.bucket === bucket);
-    if (oldObjects.length) {
-      await storage.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: oldObjects.map(({ objectKey: Key }) => ({ Key })) } }))
-        .catch((error) => console.error('[seshat:file:cleanup]', error));
-    }
-    return Response.json({ ok: true, reference: updated });
+    await catalog.pool.query(
+      `UPDATE catalog_references
+       SET source=jsonb_set(jsonb_set(source,'{wasabiObjectKey}',to_jsonb($3::text),true),'{wasabiStorageRoot}',to_jsonb($4::text),true)
+       WHERE owner_key=$1 AND id=$2`,
+      [ownerKey,reference.id,objectKey,storageRoot],
+    ).catch((error)=>console.error('[seshat:file:source-path]',error));
+    const replaced=reference.artifacts.filter((artifact)=>artifact.kind==='original'&&artifact.objectKey!==objectKey).map((artifact)=>({
+      key:artifact.objectKey,
+      filename:artifact.objectKey.split('/').at(-1)||artifact.objectKey,
+      provider:artifact.provider,
+    }));
+    const sanitizePaths=[...new Set([...replaced.map((artifact)=>relativeDirectoryForKey(artifact.key,storageRoot)),relativeDirectoryForKey(objectKey,storageRoot)])];
+    return Response.json({ ok: true, reference:await catalog.get(ownerKey,reference.id),replaced,sanitizePaths });
   } catch (error: any) {
     if (uploaded) await storage.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Quiet: true, Objects: [{ Key: objectKey }] } })).catch(() => undefined);
     console.error('[seshat:file]', error);

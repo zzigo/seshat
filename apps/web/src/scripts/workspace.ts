@@ -10,6 +10,7 @@ import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
 import { mountReaderPageInput } from '../lib/reader-page-input';
 import { mountReaderSearch } from '../lib/reader-search';
+import { openWasabiOrphanDialog } from '../lib/wasabi-orphan-ui';
 import { mountHtmlReader } from './html-reader';
 import { referenceFileType } from '../lib/reference-file';
 import { belongsToLibraryBranch, collectLibraryBranchIds } from '../lib/library-scope';
@@ -177,6 +178,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let activeLibrary: string | null = null;
   let activeSmartFolder: string | null = null;
   let activeVirtualFolder: 'duplicates' | 'inbox-audit' | 'recently-read' | null = null;
+  let orphanCount:number|null=null;
   let inboxAuditScope: 'all' | 'possible' | 'bibtex' | 'uploads' | 'local' = 'all';
   let activeKeyword: string | null = null;
   let activeReference: string | null = payload.references[0]?.id || null;
@@ -676,9 +678,10 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if(!response.ok)throw new Error(result.error||'Wasabi folder could not be opened.');
     return {path:String(result.path||''),root:String(result.root||''),directories:Array.isArray(result.directories)?result.directories:[],files:Array.isArray(result.files)?result.files:[],truncated:Boolean(result.truncated)};
   };
+  type WasabiReplacementResult={reference?:any;replaced?:Array<{key:string;filename:string;provider:string}>;sanitizePaths?:string[]};
   const linkWasabiCandidate = async (referenceId:string,candidate:WasabiCandidate,options:{deferRender?:boolean;follow?:boolean}={}) => {
     const linked = await fetch(`/api/library/${referenceId}/candidates`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ key:candidate.key }) });
-    const linkedResult = await linked.json().catch(() => ({}));
+    const linkedResult = await linked.json().catch(() => ({})) as WasabiReplacementResult&{error?:string};
     if (!linked.ok) throw new Error(linkedResult.error || 'Candidate could not be linked.');
     const next = rowFromCatalogReference(linkedResult.reference);
     if (options.deferRender) {
@@ -686,7 +689,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     } else upsertRow(next);
     updateActivity(`candidate-${referenceId}`, { state:options.follow===false?'complete':'working', referenceId, message:options.follow===false?`${candidate.filename} · linked; extraction queued`:`${candidate.filename} · linked; extracting text and structure` });
     if(options.follow!==false)void followPipeline(referenceId, `candidate-${referenceId}`, candidate.filename);
-    return next;
+    return {...linkedResult,reference:next};
+  };
+  const reviewWasabiReplacement=(result:WasabiReplacementResult,title:string)=>{
+    if(!result.replaced?.length)return;
+    orphanCount=null;renderTree(search.value);
+    void openWasabiOrphanDialog({paths:result.sanitizePaths,title:`Replaced file · ${title}`,report:(message,kind)=>setSaveState(message,kind==='error'?'error':kind==='saving'?'saving':'ready')});
   };
   const searchForCandidate = async (referenceId: string) => {
     const reference = references.get(referenceId); if (!reference) return;
@@ -696,7 +704,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     const status = document.createElement('p'); status.textContent = 'Locating the item folder…';const crumbs=document.createElement('nav');crumbs.className='candidate-breadcrumbs';crumbs.hidden=true;const list = document.createElement('div'); list.className = 'candidate-list';body.append(tools,status,crumbs,list); dialog.appendChild(body);
     setSaveState('searching Wasabi candidates…', 'saving');
     let searchResult:WasabiCandidateSearch|undefined,browser:WasabiBrowser|undefined,mode:'candidates'|'browse'='candidates';
-    const link=async(candidate:WasabiCandidate,row:HTMLButtonElement)=>{row.disabled=true;status.textContent=`Linking ${candidate.filename} without copying…`;try{await linkWasabiCandidate(referenceId,candidate);dialog.close();setSaveState('existing Wasabi object linked; extraction queued');}catch(error){row.disabled=false;status.textContent=error instanceof Error?error.message:'Candidate could not be linked.';}};
+    const link=async(candidate:WasabiCandidate,row:HTMLButtonElement)=>{row.disabled=true;status.textContent=`Linking ${candidate.filename} without copying…`;try{const replacement=await linkWasabiCandidate(referenceId,candidate);dialog.close();setSaveState('existing Wasabi object linked; extraction queued');reviewWasabiReplacement(replacement,reference.title);}catch(error){row.disabled=false;status.textContent=error instanceof Error?error.message:'Candidate could not be linked.';}};
     const matching=(candidate:WasabiCandidate,query:string)=>!query||`${candidate.filename} ${candidate.path}`.toLowerCase().includes(query);
     const renderCandidates=()=>{
       mode='candidates';crumbs.hidden=true;browseButton.textContent='Browse Wasabi';list.replaceChildren();const query=filter.value.trim().toLowerCase();const candidates=(searchResult?.candidates||[]).filter((candidate)=>matching(candidate,query));
@@ -726,11 +734,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     if(!autoSelectFirst&&editableIds.length===1){await searchForCandidate(editableIds[0]);return;}
     if(autoSelectFirst){
       let linked=0,missing=0,failed=0;setSaveState(`searching Wasabi for ${editableIds.length} items…`,'saving');
-      for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index];const reference=references.get(id);setSaveState(`Wasabi ${index+1}/${editableIds.length} · ${reference?.title||id}`,'saving');try{const result=await findWasabiCandidates(id);const candidate=result.candidates[0];if(!candidate){missing+=1;continue;}await linkWasabiCandidate(id,candidate,{deferRender:true,follow:false});linked+=1;}catch{failed+=1;}}
-      refreshTable();renderTree(search.value);setSaveState(`${linked} linked automatically · ${missing} without match${failed?` · ${failed} failed`:''}`,failed?'error':'ready');return;
+      const replacedPaths:string[]=[];
+      for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index];const reference=references.get(id);setSaveState(`Wasabi ${index+1}/${editableIds.length} · ${reference?.title||id}`,'saving');try{const result=await findWasabiCandidates(id);const candidate=result.candidates[0];if(!candidate){missing+=1;continue;}const replacement=await linkWasabiCandidate(id,candidate,{deferRender:true,follow:false});if(replacement.replaced?.length)replacedPaths.push(...(replacement.sanitizePaths||[]));linked+=1;}catch{failed+=1;}}
+      refreshTable();renderTree(search.value);setSaveState(`${linked} linked automatically · ${missing} without match${failed?` · ${failed} failed`:''}`,failed?'error':'ready');if(replacedPaths.length)void openWasabiOrphanDialog({paths:[...new Set(replacedPaths)],title:`Replaced files · ${linked} items`,report:(message,kind)=>setSaveState(message,kind==='error'?'error':kind==='saving'?'saving':'ready')});return;
     }
     const dialog=dialogShell(`Wasabi candidates · ${editableIds.length} selected items`);dialog.classList.add('candidate-dialog');const body=document.createElement('div');body.className='candidate-search';const summary=document.createElement('p');summary.textContent='Searching selected items in Wasabi…';body.appendChild(summary);dialog.appendChild(body);let found=0;
-    for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');setInlineTitle(heading,reference?.title||id);const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{await linkWasabiCandidate(id,candidate);section.dataset.linked='true';setInlineTitle(heading,`${reference?.title||id} · linked`);setSaveState('candidate linked; extraction queued');}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
+    for(let index=0;index<editableIds.length;index+=1){const id=editableIds[index],reference=references.get(id);summary.textContent=`Searching ${index+1} / ${editableIds.length}…`;const section=document.createElement('section');section.className='candidate-batch-item';const heading=document.createElement('h3');setInlineTitle(heading,reference?.title||id);const list=document.createElement('div');list.className='candidate-list';section.append(heading,list);body.appendChild(section);try{const result=await findWasabiCandidates(id);const candidates=result.candidates.slice(0,5);found+=candidates.length;if(!candidates.length){const empty=document.createElement('p');empty.className='candidate-empty';empty.textContent='No plausible candidate found.';list.appendChild(empty);continue;}candidates.forEach((candidate)=>{const row=document.createElement('button');row.type='button';row.className='candidate-option';const score=document.createElement('i');score.textContent=String(candidate.score);const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=candidate.filename;const path=document.createElement('small');path.textContent=candidate.path;copy.append(name,path);row.append(score,copy);row.addEventListener('click',async()=>{list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=true);try{const replacement=await linkWasabiCandidate(id,candidate);section.dataset.linked='true';setInlineTitle(heading,`${reference?.title||id} · linked`);setSaveState('candidate linked; extraction queued');if(replacement.replaced?.length){dialog.close();reviewWasabiReplacement(replacement,reference?.title||id);}}catch(error){list.querySelectorAll<HTMLButtonElement>('button').forEach((button)=>button.disabled=false);setSaveState(error instanceof Error?error.message:'Candidate could not be linked.','error');}});list.appendChild(row);});}catch(error){const failed=document.createElement('p');failed.className='candidate-empty';failed.textContent=error instanceof Error?error.message:'Candidate search failed';list.appendChild(failed);}}
     summary.textContent=`${found} candidates across ${editableIds.length} selected items`;setSaveState(`${found} candidates found`);
   };
   const duplicateGroupFor = (ids:string[]) => {
@@ -4095,9 +4104,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       {label:`Other local items (${auditState.counts.local})`,checked:inboxAuditScope==='local',action:()=>activateInboxAudit('local')},
     ]));
     smartSection.appendChild(auditButton);
+    const orphanButton=document.createElement('button');orphanButton.type='button';orphanButton.className='smart-folder-node virtual-folder-node orphan-folder-node';orphanButton.title='Wasabi documents without an active item link · click to audit';
+    const orphanIcon=document.createElement('span');orphanIcon.className='smart-folder-icon';orphanIcon.innerHTML='<svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1.5 3.5h5l1.4-2h3.1l1.3 2h4.2v9H1.5z"/><path d="M6 7.2h6M7.2 9.4h3.6"/><circle cx="14.2" cy="10.7" r="2.1"/></svg>';
+    const orphanLabel=document.createElement('span');orphanLabel.textContent='Orphans';const orphanTotal=document.createElement('b');orphanTotal.textContent=orphanCount===null?'…':String(orphanCount);orphanButton.append(orphanIcon,orphanLabel,orphanTotal);
+    orphanButton.addEventListener('click',()=>void openWasabiOrphanDialog({title:'Orphan files',report:(message,kind)=>setSaveState(message,kind==='error'?'error':kind==='saving'?'saving':'ready')}));
+    smartSection.appendChild(orphanButton);
     tree.appendChild(smartSection);
     treeRevealReferenceId = null;
   };
+  window.addEventListener('seshat:wasabi-orphans-changed',((event:CustomEvent<{count?:number;scope?:string}>)=>{if(event.detail?.scope==='root')orphanCount=Math.max(0,Number(event.detail.count||0));else orphanCount=null;renderTree(search.value);}) as EventListener);
 
   const locateReference = (referenceId: string | null) => {
     if(!referenceId)return;
@@ -4229,6 +4244,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'File replacement failed.');
       const row = rowFromCatalogReference(result.reference); upsertRow(row);
+      reviewWasabiReplacement(result,reference.title);
       updateActivity(activityId, { state: 'working', referenceId, message: `${reference.title} · extracting replacement text and structure` });
       void followPipeline(referenceId, activityId, file.name).catch((error) => {
         updateActivity(activityId, { state: 'error', message: `${reference.title} · ${error instanceof Error ? error.message : 'status unavailable'}` });

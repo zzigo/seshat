@@ -2227,7 +2227,15 @@ export class PostgresCatalog {
           input.artifact.objectKey, input.artifact.bucket, input.artifact.mimeType,
           input.artifact.sizeBytes, input.artifact.sha256, input.artifact.etag],
       );
-      for (const job of buildInitialJobs(id)) await this.insertJob(client, id, job);
+      await client.query(
+        `INSERT INTO catalog_jobs (id,reference_id,stage,status,attempts,payload,created_at,updated_at)
+         SELECT $1 || ':' || stage, $1, stage,
+           CASE WHEN stage='extract' THEN 'queued' ELSE 'blocked' END,
+           0, '{}'::jsonb, now(), now()
+         FROM unnest(ARRAY['extract','scholarly','identify','summarize','relate']::text[]) stage
+         ON CONFLICT (reference_id,stage) DO NOTHING`,
+        [id],
+      );
       await client.query(
         `UPDATE catalog_jobs SET
            status=CASE WHEN stage='extract' THEN 'queued' ELSE 'blocked' END,
