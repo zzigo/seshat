@@ -2,6 +2,7 @@ import 'foliate-js/view.js';
 import { epubDocumentAppearance, epubDocumentThemeCss } from '../lib/epub-appearance';
 import type { NarrationHeading } from '../lib/narration-structure';
 import type { ReaderCommandDetail, ReaderControlsState, ReaderPlayFromDetail } from '../lib/reader-controls';
+import { normalizeReaderSearchText, readerTextMatchOffsets, type ReaderSearchRequestDetail, type ReaderSearchResultDetail } from '../lib/reader-search';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 import { annotationColors, type Annotation } from './annotations';
 
@@ -72,6 +73,7 @@ export async function mountEpubReader(
   let sectionRanges: Array<{ index: number; start: number; end: number }> = [];
   let readerHeadings: NarrationHeading[] = [];
   let pendingLocation: { index: number; text: string } | null = null;
+  let searchQuery = '',searchMatches:Array<{sectionIndex:number;offset:number}>=[],activeSearchMatch=-1,pendingSearch:{sectionIndex:number;query:string}|null=null;
   let currentSectionIndex = 0;
   let currentChapter = 'cap';
   let epubAnnotations: Annotation[] = [];
@@ -201,6 +203,28 @@ export async function mountEpubReader(
     clearReadingMarker(); const target = readingBlock(doc, text); if (!target) return;
     target.setAttribute('data-seshat-read-aloud', ''); target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   };
+  const clearSearchMarkers=()=>contentDocuments.forEach((doc)=>doc.querySelectorAll('[data-seshat-search-active]').forEach((node)=>node.removeAttribute('data-seshat-search-active')));
+  const markSearch=(doc:Document,query:string)=>{clearSearchMarkers();const target=readingBlock(doc,query);if(!target)return;target.setAttribute('data-seshat-search-active','');target.scrollIntoView({block:'center',inline:'center',behavior:'smooth'});};
+  const emitSearch=(detail:Omit<ReaderSearchResultDetail,'query'>)=>pod?.dispatchEvent(new CustomEvent<ReaderSearchResultDetail>('seshat:reader-search-results',{detail:{query:searchQuery,...detail}}));
+  const showSearchMatch=(direction:-1|0|1)=>{
+    if(!searchMatches.length){activeSearchMatch=-1;pendingSearch=null;clearSearchMarkers();emitSearch({current:0,total:0});return;}
+    activeSearchMatch=direction===0&&activeSearchMatch>=0?activeSearchMatch:(activeSearchMatch+direction+searchMatches.length)%searchMatches.length;if(activeSearchMatch<0)activeSearchMatch=0;
+    const match=searchMatches[activeSearchMatch];pendingSearch={sectionIndex:match.sectionIndex,query:searchQuery};const visible=view.renderer?.getContents?.().find((item)=>item.index===match.sectionIndex);
+    if(visible)markSearch(visible.doc,searchQuery);else void view.goTo(match.sectionIndex).then(()=>window.requestAnimationFrame(()=>{const content=view.renderer?.getContents?.().find((item)=>item.index===match.sectionIndex);if(content)markSearch(content.doc,searchQuery);}));
+    emitSearch({current:activeSearchMatch+1,total:searchMatches.length});
+  };
+  const searchDocument=async(detail:ReaderSearchRequestDetail)=>{
+    const query=detail.query.trim(),normalized=normalizeReaderSearchText(query);
+    if(!normalized){searchQuery='';searchMatches=[];activeSearchMatch=-1;pendingSearch=null;clearSearchMarkers();emitSearch({current:0,total:0});return;}
+    if(normalized===normalizeReaderSearchText(searchQuery)){showSearchMatch(detail.direction||0);return;}
+    searchQuery=query;searchMatches=[];activeSearchMatch=-1;pendingSearch=null;clearSearchMarkers();emitSearch({current:0,total:0,searching:true});
+    try{
+      const source=await loadReaderText();
+      for(const section of sectionRanges){readerTextMatchOffsets(source.slice(section.start,section.end),query,Math.max(0,5000-searchMatches.length)).forEach((offset)=>searchMatches.push({sectionIndex:section.index,offset}));if(searchMatches.length>=5000)break;}
+      showSearchMatch(0);
+    }catch(error){emitSearch({current:0,total:0,error:error instanceof Error?error.message:'Search failed'});}
+  };
+  const handleReaderSearch=(event:Event)=>void searchDocument((event as CustomEvent<ReaderSearchRequestDetail>).detail||{query:''});
   const provideReaderSource = (event: Event) => { const detail = (event as CustomEvent<ReaderSourceDetail>).detail; if (!detail || detail.load) return; detail.kind = 'epub'; detail.load = loadReaderText; detail.headings=async()=>{await loadReaderText();return readerHeadings;}; };
   const locateReaderText = (event: Event) => {
     const detail = (event as CustomEvent<ReaderLocationDetail>).detail || {}; const start = Number(detail.start); const text = String(detail.text || '');
@@ -240,7 +264,8 @@ export async function mountEpubReader(
   };
   const readerCommand = (event: Event) => {
     const command = (event as CustomEvent<ReaderCommandDetail>).detail?.command;
-    if (command === 'toggle-toc') tocButton.click(); else if (command === 'previous-page') previous.click(); else if (command === 'next-page') next.click();
+    if(command==='search')pod?.dispatchEvent(new CustomEvent('seshat:reader-search-open'));
+    else if (command === 'toggle-toc') tocButton.click(); else if (command === 'previous-page') previous.click(); else if (command === 'next-page') next.click();
     else if (command === 'previous-section' || command === 'next-section') {
       const sections = view.book?.sections || []; const direction = command === 'previous-section' ? -1 : 1;
       let target = currentSectionIndex + direction;
@@ -255,6 +280,7 @@ export async function mountEpubReader(
   pod?.addEventListener('seshat:epub-reader-clear', clearReaderText);
   pod?.addEventListener('seshat:reader-section-shift', shiftReaderSection);
   pod?.addEventListener('seshat:reader-command', readerCommand);
+  pod?.addEventListener('seshat:reader-search',handleReaderSearch);
 
   const applyFont = () => {
     scale.textContent = `${Math.round(preferences.fontScale * 100)}%`;
@@ -266,7 +292,7 @@ export async function mountEpubReader(
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
     const appearance = epubDocumentAppearance(inverted);
-    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
     doc.documentElement.style.backgroundColor = appearance.background;
     if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
@@ -312,6 +338,7 @@ export async function mountEpubReader(
   larger.addEventListener('click', () => { preferences.fontScale = clampScale(preferences.fontScale + .1); applyFont(); save(); emitControls(); });
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement | null)?.matches?.('input,textarea,select,[contenteditable="true"]')) return;
+    if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='f'){event.preventDefault();event.stopPropagation();pod?.dispatchEvent(new CustomEvent('seshat:reader-search-open'));return;}
     const sourceDoc=(event.target as HTMLElement|null)?.ownerDocument||(event.currentTarget as Document|null);
     const palette=sourceDoc?.querySelector?.<HTMLElement>('.seshat-annotation-palette');
     if(palette){const key=event.key.toLowerCase();const annotationKey=/^[1-8]$/.test(key)||key==='m'?key:'';if(annotationKey){event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();palette.querySelector<HTMLButtonElement>(`[data-annotation-key="${annotationKey}"]`)?.click();return;}}
@@ -325,7 +352,7 @@ export async function mountEpubReader(
     applyFont();
     const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
     const index = Number((event as CustomEvent<{ index?: number }>).detail?.index);
-    if (doc) { applyAppearance(doc); if (Number.isFinite(index)) contentIndexes.set(doc, index); if (!contentDocuments.has(doc)) { contentDocuments.add(doc); doc.addEventListener('keydown', readerKeyboard); doc.addEventListener('pointerdown', contentPointerDown); doc.addEventListener('pointerup', contentPointerUp); } renderEpubAnnotations(doc, Number.isFinite(index) ? index : undefined); if (pendingLocation && (!Number.isFinite(index) || index === pendingLocation.index)) markReading(doc, pendingLocation.text); }
+    if (doc) { applyAppearance(doc); if (Number.isFinite(index)) contentIndexes.set(doc, index); if (!contentDocuments.has(doc)) { contentDocuments.add(doc); doc.addEventListener('keydown', readerKeyboard); doc.addEventListener('pointerdown', contentPointerDown); doc.addEventListener('pointerup', contentPointerUp); } renderEpubAnnotations(doc, Number.isFinite(index) ? index : undefined); if (pendingLocation && (!Number.isFinite(index) || index === pendingLocation.index)) markReading(doc, pendingLocation.text);if(pendingSearch&&(!Number.isFinite(index)||index===pendingSearch.sectionIndex))markSearch(doc,pendingSearch.query); }
   };
   view.addEventListener('load', handleLoad);
   view.addEventListener('relocate', ((event: CustomEvent<RelocateDetail>) => {
@@ -386,6 +413,7 @@ export async function mountEpubReader(
     pod?.removeEventListener('seshat:epub-reader-clear', clearReaderText);
     pod?.removeEventListener('seshat:reader-section-shift', shiftReaderSection);
     pod?.removeEventListener('seshat:reader-command', readerCommand);
+    pod?.removeEventListener('seshat:reader-search',handleReaderSearch);
     view.removeEventListener('load', handleLoad); view.removeEventListener('keydown', readerKeyboard);
     clearAnnotationPalettes(); contentDocuments.forEach((doc) => { doc.removeEventListener('keydown', readerKeyboard); doc.removeEventListener('pointerdown', contentPointerDown); doc.removeEventListener('pointerup', contentPointerUp); }); contentDocuments.clear();
     view.close();

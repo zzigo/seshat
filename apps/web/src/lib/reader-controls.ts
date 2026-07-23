@@ -11,12 +11,14 @@ export type ReaderCommandName =
   | 'zoom-reset'
   | 'toggle-book'
   | 'toggle-grid'
+  | 'goto-page'
+  | 'search'
   | 'read'
   | 'read-settings'
   | 'play-rendered'
   | 'open-original';
 
-export type ReaderCommandDetail = { command: ReaderCommandName };
+export type ReaderCommandDetail = { command: ReaderCommandName; page?:number };
 
 export type ReaderControlsState = {
   format: 'pdf' | 'epub' | 'text';

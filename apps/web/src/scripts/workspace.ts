@@ -8,6 +8,8 @@ import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD
 import { mountAnnotationWorkspace } from './annotations';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
+import { mountReaderPageInput } from '../lib/reader-page-input';
+import { mountReaderSearch } from '../lib/reader-search';
 import { mountHtmlReader } from './html-reader';
 import { referenceFileType } from '../lib/reference-file';
 import { belongsToLibraryBranch, collectLibraryBranchIds } from '../lib/library-scope';
@@ -180,6 +182,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   let activeReference: string | null = payload.references[0]?.id || null;
   let previewRender: ((referenceId: string) => void) | null = null;
   const documentDisposers = new WeakMap<HTMLElement, () => void>();
+  const readerSearchDisposers = new WeakMap<HTMLElement, () => void>();
   const selectedReferences = new Set<string>();
   const pendingAnnotationEdits = new Map<string,string>();
   let treeSelectionAnchor: string | null = null;
@@ -1443,6 +1446,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       let totalPages = 1;
       let isDouble = false;
       let isMosaic = false;
+      const pageGoto=mountReaderPageInput(pageIndicator,(page)=>element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page,behavior:'auto'}})));
 
       prevBtn.addEventListener('click', () => {
         if (currentPage > 1) {
@@ -1459,7 +1463,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       element.addEventListener('seshat:pdf-page-changed', (e: any) => {
         currentPage = e.detail.page;
         totalPages = e.detail.total || totalPages;
-        pageIndicator.textContent = `${currentPage} / ${totalPages}`;
+        pageGoto.update(currentPage,totalPages);
       });
 
       // Double Page layout Toggle Button
@@ -1498,8 +1502,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         }
       });
 
-      element.addEventListener('seshat:pdf-request-mode',((event:CustomEvent<{mode?:string}>) => {
-        if (event.detail?.mode === 'grid') mosaicBtn.click();
+      element.addEventListener('seshat:pdf-request-mode',((event:CustomEvent<{mode?:string;page?:number}>) => {
+        if (event.detail?.mode === 'grid'&&!isMosaic) mosaicBtn.click();
+        if (event.detail?.mode === 'page') {
+          if(isMosaic)mosaicBtn.click();
+          const page=Math.max(1,Math.min(totalPages,Number(event.detail.page||currentPage)));
+          window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{element.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page,behavior:'auto'}}));element.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));}));
+        }
         if (event.detail?.mode === 'book') doubleBtn.click();
       }) as EventListener);
 
@@ -1523,6 +1532,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     });
 
     toolbar.appendChild(docControls);
+
+    readerSearchDisposers.get(element)?.();
+    if(['pdf','djvu','djv','epub'].includes(String(reference.format||'').toLowerCase())){
+      const searchButton=document.createElement('button');searchButton.type='button';searchButton.className='reader-search-trigger';searchButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>';searchButton.title='Search within item · Ctrl/Command F';searchButton.ariaLabel=searchButton.title;
+      toolbar.appendChild(searchButton);readerSearchDisposers.set(element,mountReaderSearch(element,searchButton));
+    }
 
     const readButton=document.createElement('button');readButton.type='button';readButton.className='read-aloud-button';readButton.textContent='Read';const stopReadButton=document.createElement('button');stopReadButton.type='button';stopReadButton.className='read-aloud-stop';stopReadButton.textContent='Stop';stopReadButton.hidden=true;readAloud.attach({referenceId:reference.id,language:reference.language||navigator.language,container:element,button:readButton,stopButton:stopReadButton,report:setSaveState,chirpEnabled:payload.chirpEnabled});toolbar.append(readButton,stopReadButton);
     if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const rendered=document.createElement('button');rendered.type='button';rendered.className='rendered-narration-button';rendered.textContent='▶ OGG';rendered.title=`Play rendered ${provider} narration`;rendered.addEventListener('click',()=>element.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}})));toolbar.appendChild(rendered);}
@@ -1565,6 +1580,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const renderDocument = (element: HTMLElement, referenceId: string, panelId?: string) => {
     documentDisposers.get(element)?.(); documentDisposers.delete(element);
+    readerSearchDisposers.get(element)?.(); readerSearchDisposers.delete(element);
     element.replaceChildren();
     const reference = references.get(referenceId);
     if (!reference) { element.textContent = 'Reference not found.'; return; }
@@ -1597,12 +1613,12 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
 
   const documentRenderer = (referenceId: string, panelId?: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { renderDocument(element, referenceId, panelId); }, dispose() { element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
+    return { element, init() { renderDocument(element, referenceId, panelId); }, dispose() { element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element);readerSearchDisposers.get(element)?.();readerSearchDisposers.delete(element); } };
   };
 
   const previewRenderer = (panelId?: string): IContentRenderer => {
     const element = panel('document-pod');
-    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId, panelId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element); } };
+    return { element, init() { previewRender = (referenceId) => renderDocument(element, referenceId, panelId); if (activeReference) previewRender(activeReference); }, dispose() { previewRender = null; element.classList.remove('maximized-pod'); documentDisposers.get(element)?.(); documentDisposers.delete(element);readerSearchDisposers.get(element)?.();readerSearchDisposers.delete(element); } };
   };
 
   const mountText = async (element: HTMLElement, referenceId: string, kind: 'markdown' | 'structure') => {

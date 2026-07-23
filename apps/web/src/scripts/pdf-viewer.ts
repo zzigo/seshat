@@ -3,6 +3,7 @@ import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { annotationColors, mountAnnotationWorkspace, type Annotation } from './annotations';
 import { currentPhoneResourceProfile } from '../lib/client-resources';
 import { adjacentPdfPage, pdfPageScrollTop, pdfSpreadStart } from '../lib/pdf-navigation';
+import { normalizeReaderSearchText, readerTextMatchOffsets, type ReaderSearchRequestDetail, type ReaderSearchResultDetail } from '../lib/reader-search';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 import { openDjVuDocument, type DjVuTextZone } from '../lib/djvu-document';
 
@@ -91,6 +92,9 @@ export async function mountPdfViewer(
   if (annotationResponse.ok) annotations = (await annotationResponse.json()).annotations || [];
   const readingState=readingStateResponse.ok?await readingStateResponse.json() as {location?:ReadingLocation;preferences?:Record<string,unknown>}:{location:{},preferences:{}};
   let readingLocation:ReadingLocation=readingState.location||{};const readingPreferences=readingState.preferences||{};let readingSaveTimer=0;let readingPersistReady=false;
+  const total=pdf.numPages,pendingPage=pendingPdfPages.get(referenceId);
+  const savedPage=Math.max(1,Math.min(total,Math.floor(Number(pendingPage||readingLocation.lastPage||readingLocation.page||1))));
+  let currentPage=savedPage,selectedGridPage=savedPage;
   const disposeIndex = await mountAnnotationWorkspace(sidebar, referenceId, title, report, { indexOnly: true });
   sidebar.prepend(resizeHandle);
   progress.remove();
@@ -119,6 +123,53 @@ export async function mountPdfViewer(
       });
     });
   };
+
+  const pageTextCache=new Map<number,string>();let searchQuery='',searchMatches:Array<{page:number;offset:number}>=[],activeSearchMatch=-1,searchGeneration=0;
+  const emitSearch=(detail:Omit<ReaderSearchResultDetail,'query'>)=>parent.dispatchEvent(new CustomEvent<ReaderSearchResultDetail>('seshat:reader-search-results',{detail:{query:searchQuery,...detail}}));
+  const clearSearchHighlight=()=>pages.querySelectorAll<HTMLElement>('.seshat-pdf-page').forEach((page)=>{page.classList.remove('is-search-result');page.querySelectorAll('.pdf-search-text').forEach((span)=>span.classList.remove('pdf-search-text'));});
+  const renderSearchHighlight=(pageElement:HTMLElement)=>{
+    pageElement.classList.remove('is-search-result');pageElement.querySelectorAll('.pdf-search-text').forEach((span)=>span.classList.remove('pdf-search-text'));
+    const match=searchMatches[activeSearchMatch];if(!searchQuery||!match||Number(pageElement.dataset.page)!==match.page)return;
+    pageElement.classList.add('is-search-result');const needle=normalizeReaderSearchText(searchQuery),words=needle.split(' ').filter(Boolean);
+    pageElement.querySelectorAll<HTMLElement>('.textLayer span').forEach((span)=>{const candidate=normalizeReaderSearchText(span.textContent||'');if(candidate&&(candidate.includes(needle)||words.some((word)=>word.length>2&&candidate.includes(word))))span.classList.add('pdf-search-text');});
+  };
+  const searchablePageText=async(pageNumber:number)=>{
+    if(pageTextCache.has(pageNumber))return pageTextCache.get(pageNumber)!;
+    const overlay=djvuTextLayer?.pages?.[pageNumber-1];let text='';
+    if(overlay?.words?.length)text=overlay.words.map((word)=>word.text).join(' ');
+    else{
+      const page=await pdf.getPage(pageNumber);
+      if(sourceKind==='djvu'&&typeof page.getDjVuTextZones==='function')text=(page.getDjVuTextZones() as DjVuTextZone[]).map((zone)=>zone.text).join(' ');
+      else if(typeof page.getTextContent==='function'){const content=await page.getTextContent();text=(content.items||[]).map((item:any)=>String(item.str||'')).join(' ');}
+    }
+    pageTextCache.set(pageNumber,text);return text;
+  };
+  const showSearchMatch=(direction:-1|0|1)=>{
+    if(!searchMatches.length){activeSearchMatch=-1;clearSearchHighlight();emitSearch({current:0,total:0});return;}
+    activeSearchMatch=direction===0&&activeSearchMatch>=0?activeSearchMatch:(activeSearchMatch+direction+searchMatches.length)%searchMatches.length;
+    if(activeSearchMatch<0)activeSearchMatch=0;const match=searchMatches[activeSearchMatch];currentPage=match.page;selectedGridPage=match.page;
+    if(pages.classList.contains('mosaic-page-view'))parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{detail:{mode:'page',page:match.page}}));
+    else parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:match.page,behavior:'auto'}}));
+    const pageElement=pages.querySelector<HTMLElement>(`[data-page="${match.page}"]`);if(pageElement){schedulePageRender(pageElement);window.setTimeout(()=>renderSearchHighlight(pageElement),80);}
+    emitSearch({current:activeSearchMatch+1,total:searchMatches.length});
+  };
+  const searchDocument=async(detail:ReaderSearchRequestDetail)=>{
+    const query=detail.query.trim(),normalized=normalizeReaderSearchText(query);
+    if(!normalized){searchGeneration+=1;searchQuery='';searchMatches=[];activeSearchMatch=-1;clearSearchHighlight();emitSearch({current:0,total:0});return;}
+    if(normalized===normalizeReaderSearchText(searchQuery)){showSearchMatch(detail.direction||0);return;}
+    searchQuery=query;searchMatches=[];activeSearchMatch=-1;clearSearchHighlight();const generation=++searchGeneration;emitSearch({current:0,total:0,searching:true});
+    try{
+      for(let page=1;page<=total;page+=1){
+        const text=await searchablePageText(page);if(generation!==searchGeneration)return;
+        readerTextMatchOffsets(text,query,Math.max(0,5000-searchMatches.length)).forEach((offset)=>searchMatches.push({page,offset}));
+        if(page===total||page%12===0)emitSearch({current:0,total:searchMatches.length,searching:page<total});
+        if(searchMatches.length>=5000)break;
+      }
+      if(generation===searchGeneration)showSearchMatch(0);
+    }catch(error){if(generation===searchGeneration)emitSearch({current:0,total:0,error:error instanceof Error?error.message:'Search failed'});}
+  };
+  const handleReaderSearch=(event:Event)=>void searchDocument((event as CustomEvent<ReaderSearchRequestDetail>).detail||{query:''});
+  parent.addEventListener('seshat:reader-search',handleReaderSearch);
 
   let phoneRenderQueue = Promise.resolve();
   const schedulePageRender = (pageElement: HTMLElement) => {
@@ -156,7 +207,7 @@ export async function mountPdfViewer(
       const textLayer = new TextLayer({ textContentSource: await page.getTextContent(), container: textLayerElement, viewport });
       await textLayer.render();
     }
-    renderHighlights(pageElement); pageElement.classList.add('rendered');
+    renderHighlights(pageElement);renderSearchHighlight(pageElement); pageElement.classList.add('rendered');
     parent.dispatchEvent(new CustomEvent('seshat:pdf-page-rendered',{detail:{page:pageNumber}}));
     }finally{delete pageElement.dataset.rendering;}
   };
@@ -377,6 +428,7 @@ export async function mountPdfViewer(
   const handleToggleMosaic = (e: any) => {
     const active = e.detail.active;
     pages.classList.toggle('mosaic-page-view', active);
+    pages.querySelectorAll<HTMLElement>('.seshat-pdf-page').forEach((page)=>page.classList.toggle('is-grid-selected',active&&Number(page.dataset.page)===selectedGridPage));
     viewer.dispatchEvent(new Event('scroll'));
   };
 
@@ -392,13 +444,9 @@ export async function mountPdfViewer(
   parent.addEventListener('seshat:pdf-toggle-mosaic', handleToggleMosaic);
   parent.addEventListener('seshat:doc-toggle-invert', handleToggleInvert);
   window.addEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
-  const pendingPage = pendingPdfPages.get(referenceId);
   if (pendingPage) handleReferencePage(new CustomEvent('pending', { detail: { referenceId, page: pendingPage } }));
 
   // Active page change observer
-  const total = pdf.numPages;
-  const savedPage=Math.max(1,Math.min(total,Math.floor(Number(pendingPage||readingLocation.lastPage||readingLocation.page||1))));
-  let currentPage = savedPage;
   const releaseDistantDjVuPages=(center:number)=>{
     if(sourceKind!=='djvu')return;const radius=phoneResourceProfile?2:5;
     pages.querySelectorAll<HTMLElement>('.seshat-pdf-page.rendered').forEach((pageElement)=>{
@@ -418,6 +466,14 @@ export async function mountPdfViewer(
     },500);
   };
   const announcePage=(page:number)=>{parent.dispatchEvent(new CustomEvent('seshat:pdf-page-changed',{detail:{page,total}}));persistPage(page);};
+  const selectGridPage=(page:number)=>{
+    selectedGridPage=Math.max(1,Math.min(total,page));currentPage=selectedGridPage;announcePage(currentPage);
+    pages.querySelectorAll<HTMLElement>('.seshat-pdf-page').forEach((item)=>item.classList.toggle('is-grid-selected',Number(item.dataset.page)===selectedGridPage));
+  };
+  pages.querySelectorAll<HTMLElement>('.seshat-pdf-page').forEach((pageElement)=>{
+    pageElement.addEventListener('click',(event)=>{if(!pages.classList.contains('mosaic-page-view'))return;event.stopPropagation();selectGridPage(Number(pageElement.dataset.page));});
+    pageElement.addEventListener('dblclick',(event)=>{if(!pages.classList.contains('mosaic-page-view'))return;event.preventDefault();event.stopPropagation();selectGridPage(Number(pageElement.dataset.page));parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{detail:{mode:'page',page:selectedGridPage}}));});
+  });
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement)?.matches('input,textarea,select,[contenteditable="true"]')) return;
     let page: number | null = null;
@@ -427,7 +483,7 @@ export async function mountPdfViewer(
     else if (event.key === '0') page = 1;
     else if (event.key === 'G') page = total;
     else if (event.key === '1' && !pending) { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')); return; }
-    else if (event.key === 'g') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'grid' } })); return; }
+    else if (event.key === 'g') { event.preventDefault();const grid=pages.classList.contains('mosaic-page-view');parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:grid?'page':'grid',page:selectedGridPage||currentPage } })); return; }
     else if (event.key === 'b') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'book' } })); return; }
     if (page === null) return;
     event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: Math.max(1, Math.min(total, page)) } }));
@@ -471,6 +527,7 @@ export async function mountPdfViewer(
   // Double tap/click to reset zoom to 1:1
   const handleDoubleClicks = (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a, input, select')) return;
+    if (pages.classList.contains('mosaic-page-view')) return;
     parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));
   };
 
@@ -497,6 +554,7 @@ export async function mountPdfViewer(
     parent.removeEventListener('seshat:pdf-toggle-double', handleToggleDouble);
     parent.removeEventListener('seshat:pdf-toggle-mosaic', handleToggleMosaic);
     parent.removeEventListener('seshat:doc-toggle-invert', handleToggleInvert);
+    parent.removeEventListener('seshat:reader-search',handleReaderSearch);
     window.removeEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
     viewer.removeEventListener('click', handleMarginClicks);
     viewer.removeEventListener('dblclick', handleDoubleClicks);

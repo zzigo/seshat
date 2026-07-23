@@ -79,6 +79,8 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
     <script is:inline type="application/json" id="dashboard-reader-data" set:html={serialized}></script>
     <script>
       import { adjacentPdfPage } from '../../lib/pdf-navigation';
+      import { mountReaderPageInput } from '../../lib/reader-page-input';
+      import { mountReaderSearch } from '../../lib/reader-search';
       import type { ReaderCommandDetail, ReaderControlsState } from '../../lib/reader-controls';
       import { READER_COMMAND_MESSAGE, READER_STATE_MESSAGE } from '../../lib/reader-controls';
       import { normalizeThemeMode, themePresetForMode } from '../../lib/theme-preferences';
@@ -103,6 +105,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       const structureBody=root.querySelector<HTMLElement>('[data-reader-structure-body]')!;
       const annotations=root.querySelector<HTMLElement>('[data-reader-annotations]')!;
       const annotationsBody=root.querySelector<HTMLElement>('[data-reader-annotations-body]')!;
+      mountReaderSearch(root);
       const closeProperties=()=>{properties.hidden=true;root.querySelector('.pdf-properties-toggle')?.setAttribute('aria-expanded','false');};
       const closeStructure=()=>{structure.hidden=true;root.querySelector('.pdf-structure-toggle')?.setAttribute('aria-expanded','false');};
       const closeAnnotations=()=>{annotations.hidden=true;};
@@ -115,7 +118,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       const naturalStructureText=(value:string)=>{const letters=[...value].filter((character)=>/\p{L}/u.test(character));if(letters.length<2||letters.some((character)=>character!==character.toLocaleUpperCase()))return value;return value.toLocaleLowerCase().replace(/(^|[\s:–—-])\p{L}/gu,(match)=>match.toLocaleUpperCase());};
       const loadStructure=async()=>{if(structureLoaded)return;structureLoaded=true;try{const response=await fetch(`/api/library/${encodeURIComponent(data.id)}/artifact/structure`);if(!response.ok)throw new Error('unavailable');const outline=await response.json() as {sections?:Array<{id:string;level?:number;title?:string;page?:number;kind?:string}>};const list=document.createElement('ol');list.className='dashboard-reader-structure-list';for(const section of (outline.sections||[]).slice(0,1000)){const item=document.createElement('li');item.style.setProperty('--outline-level',String(Math.min(5,Math.max(0,Number(section.level||1)-1))));const button=document.createElement('button');button.type='button';button.disabled=!section.page;const glyph=document.createElement('i');glyph.textContent=section.kind==='references'?'R':section.kind==='appendix'?'A':'§';const title=document.createElement('span');title.textContent=naturalStructureText(section.title||'Untitled section');const page=document.createElement('small');page.textContent=section.page?`p. ${section.page}`:`h${section.level||1}`;button.append(glyph,title,page);button.addEventListener('click',()=>{if(section.page)root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:section.page}}));});item.appendChild(button);list.appendChild(item);}structureBody.replaceChildren(list);}catch{structureLoaded=false;structureBody.textContent='Structure is not available yet.';}};
       window.addEventListener('seshat:toggle-structure',((event:CustomEvent<{referenceId?:string;open?:boolean}>)=>{if(event.detail?.referenceId&&event.detail.referenceId!==data.id)return;const open=typeof event.detail?.open==='boolean'?event.detail.open:structure.hidden;if(open){closeProperties();closeAnnotations();structure.hidden=false;void loadStructure();}else closeStructure();}) as EventListener);
-      root.addEventListener('dblclick',(event)=>{event.preventDefault();event.stopPropagation();},{capture:true});
+      root.addEventListener('dblclick',(event)=>{if(mosaic&&(event.target as HTMLElement).closest('.seshat-pdf-page'))return;event.preventDefault();event.stopPropagation();},{capture:true});
       const report=(message:string,tone:'ready'|'saving'|'error'='ready')=>{status.textContent=message;status.dataset.tone=tone;};
       let annotationsMounted=false;
       const openAnnotations=async(annotationId?:string)=>{
@@ -134,15 +137,19 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       root.querySelector('[data-reader-zoom]')?.addEventListener('click',()=>root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')));
       let currentPage=1,totalPages=1,double=false,mosaic=false;
       const page=root.querySelector<HTMLElement>('[data-reader-page]');
+      const pageGoto=page?mountReaderPageInput(page,(target)=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:target,behavior:'auto'}}))):null;
       const movePdf=(delta:-1|1)=>root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:adjacentPdfPage(currentPage,delta,totalPages,double&&!mosaic)}}));
-      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;const label=`${currentPage} / ${totalPages}`;if(page)page.textContent=label;postState({pageLabel:label,progress:currentPage/Math.max(1,totalPages)});}) as EventListener);
+      root.addEventListener('seshat:pdf-page-changed',((event:CustomEvent<{page:number;total:number}>)=>{currentPage=event.detail.page;totalPages=event.detail.total||totalPages;const label=`${currentPage} / ${totalPages}`;pageGoto?.update(currentPage,totalPages);postState({pageLabel:label,progress:currentPage/Math.max(1,totalPages)});}) as EventListener);
       root.querySelector('[data-reader-prev]')?.addEventListener('click',()=>movePdf(-1));
       root.querySelector('[data-reader-next]')?.addEventListener('click',()=>movePdf(1));
       const book=root.querySelector<HTMLButtonElement>('[data-reader-book]');const grid=root.querySelector<HTMLButtonElement>('[data-reader-grid]');
       book?.addEventListener('click',()=>{double=!double;if(double&&mosaic){mosaic=false;grid?.classList.remove('active');root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:false}}));}book.classList.toggle('active',double);book.textContent=double?'1 page':'Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:double}}));});
       grid?.addEventListener('click',()=>{mosaic=!mosaic;if(mosaic&&double){double=false;book?.classList.remove('active');if(book)book.textContent='Book';root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-double',{detail:{active:false}}));}grid.classList.toggle('active',mosaic);root.dispatchEvent(new CustomEvent('seshat:pdf-toggle-mosaic',{detail:{active:mosaic}}));});
-      const runCommand=(command:ReaderCommandDetail['command'])=>{
+      root.addEventListener('seshat:pdf-request-mode',((event:CustomEvent<{mode?:string;page?:number}>)=>{if(event.detail.mode==='grid'&&!mosaic)grid?.click();if(event.detail.mode==='page'){if(mosaic)grid?.click();const target=Math.max(1,Math.min(totalPages,Number(event.detail.page||currentPage)));window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:target,behavior:'auto'}}));root.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset'));}));}}) as EventListener);
+      const runCommand=(command:ReaderCommandDetail['command'],detail:ReaderCommandDetail={command})=>{
         if(command==='read-settings'){readAloud.openVoices();return;}
+        if(command==='search'){root.dispatchEvent(new CustomEvent('seshat:reader-search-open'));return;}
+        if(command==='goto-page'&&pdfLike){root.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:Math.max(1,Math.min(totalPages,Number(detail.page||currentPage))),behavior:'auto'}}));return;}
         if(command==='read'){read.click();return;}
         if(command==='previous-section'||command==='next-section'){
           const delta=command==='previous-section'?-1:1;
@@ -161,7 +168,7 @@ const propertyPersons = contributorSummary(reference.contributors as Parameters<
       window.addEventListener('message',(event)=>{
         if(event.origin!==window.location.origin||event.source!==window.parent)return;
         if(event.data?.type==='seshat:reader-theme'){const mode=normalizeThemeMode(event.data.mode),nextPreset=themePresetForMode(mode,event.data.preset);documentThemeDark=mode==='dark';document.documentElement.setAttribute('data-theme',mode);document.documentElement.setAttribute('data-theme-preset',nextPreset);document.documentElement.classList.toggle('dark-theme',documentThemeDark);root.dispatchEvent(new CustomEvent('seshat:doc-toggle-invert',{detail:{active:documentThemeDark}}));return;}
-        if(event.data?.type===READER_COMMAND_MESSAGE)runCommand(event.data.command as ReaderCommandDetail['command']);
+        if(event.data?.type===READER_COMMAND_MESSAGE)runCommand(event.data.command as ReaderCommandDetail['command'],event.data as ReaderCommandDetail);
       });
       new MutationObserver(()=>postState({readLabel:read.textContent||'Read',readState:read.dataset.readerState||'idle'})).observe(read,{attributes:true,childList:true,subtree:true,attributeFilter:['data-reader-state']});
       const mount=async()=>{
