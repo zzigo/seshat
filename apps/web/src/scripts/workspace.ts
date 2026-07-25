@@ -189,6 +189,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   const pendingAnnotationEdits = new Map<string,string>();
   let treeSelectionAnchor: string | null = null;
   let treeRevealReferenceId: string | null = null;
+  let dragSelectionBackup: string[] | null = null;
   let altLocateArmed = false;
   const committed = new Map(payload.references.map((reference) => [reference.id, { ...reference }]));
   const saveTimers = new Map<string, number>();
@@ -1165,7 +1166,13 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       const physicalRow = coords ? catalogTable.toPhysicalRow(coords.row) : -1;
       const row = physicalRow >= 0 ? catalogTable.getSourceDataAtRow(physicalRow) as ReferenceRow : undefined;
       if (!row) { event.preventDefault(); return; }
-      if (!selectedReferences.has(row.id)) { selectedReferences.clear(); selectedReferences.add(row.id); }
+      if (dragSelectionBackup && dragSelectionBackup.includes(row.id)) {
+        selectedReferences.clear();
+        dragSelectionBackup.forEach((id) => selectedReferences.add(id));
+        syncTreeSelection();
+      } else if (!selectedReferences.has(row.id)) {
+        selectedReferences.clear(); selectedReferences.add(row.id);
+      }
       setOpenDragData(event.dataTransfer,[...selectedReferences]);
     });
     const fileRenderer: BaseRenderer = (instance, td, row, column, prop, value, cellProperties) => {
@@ -1256,6 +1263,16 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       fillHandle: true,
       contextMenu: false,
       outsideClickDeselects: false,
+      beforeOnCellMouseDown: (_event, coords) => {
+        if (coords.row < 0) return;
+        const physicalRow = catalogTable?.toPhysicalRow(coords.row) ?? coords.row;
+        const row = catalogTable?.getSourceDataAtRow(physicalRow) as ReferenceRow | undefined;
+        if (row && selectedReferences.has(row.id)) {
+          dragSelectionBackup = [...selectedReferences];
+        } else {
+          dragSelectionBackup = null;
+        }
+      },
       beforeBeginEditing: () => {
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         if (isTouchDevice && !isLongPressEditing) {
@@ -1292,6 +1309,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if (event.button === 2 && !selectedReferences.has(row.id)) {
           selectedReferences.clear();
           selectedReferences.add(row.id);
+          treeSelectionAnchor = row.id;
           catalogTable?.selectCell(coords.row, Math.max(0, coords.col));
           syncTreeSelection();
         }
@@ -1305,7 +1323,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
           const selected = catalogTable?.getSourceDataAtRow(physical) as ReferenceRow | undefined;
           if (selected?.id) selectedReferences.add(selected.id);
         }
-        const first = [...selectedReferences][0]; if (first) { activeReference = first; renderProperties(first); }
+        const first = [...selectedReferences][0]; if (first) { activeReference = first; treeSelectionAnchor = first; renderProperties(first); }
         syncTreeSelection(); setSaveState(`${selectedReferences.size} selected`);
       },
     });
@@ -3773,46 +3791,56 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       setSaveState(`${rows.length} references exported as Better BibTeX`);
     };
-    const appendReference = (reference:ReferenceRow, container:HTMLElement, selectionRows:ReferenceRow[], contextLibraryId:string|null) => {
-      const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
-      item.classList.toggle('selected', selectedReferences.has(reference.id));
-      item.draggable = reference.access !== 'viewer';
-      const glyph=createTreeReferenceGlyph(reference);
-      const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
-      const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
-      if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
-      if (isProcessingReference(reference)) {
-        const spinner = document.createElement('i'); spinner.className = 'tree-spinner'; spinner.title = 'Processing…';
-        item.classList.add('is-processing'); item.appendChild(spinner);
-      }
-      item.appendChild(title);
-      if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const play=document.createElement('span');play.className='tree-narration-play';play.textContent='▶';play.title=`Play rendered ${provider} narration`;play.setAttribute('aria-label',play.title);const activate=(event:Event)=>{event.preventDefault();event.stopPropagation();controller.openDocument(reference.id);window.setTimeout(()=>{const pod=root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(reference.id)}"]`);pod?.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}}));},60);};play.addEventListener('pointerdown',(event)=>event.stopPropagation());play.addEventListener('touchend',(event)=>event.stopPropagation(),{passive:true});play.addEventListener('click',activate);item.appendChild(play);}
-      item.addEventListener('click', (event) => {
-        if (event.detail > 1) return;
-        if (event.shiftKey && treeSelectionAnchor) {
-          const anchorIndex = selectionRows.findIndex((item) => item.id === treeSelectionAnchor);
-          const referenceIndex = selectionRows.findIndex((item) => item.id === reference.id);
-          if (anchorIndex >= 0 && referenceIndex >= 0) {
-            if (!event.metaKey && !event.ctrlKey) selectedReferences.clear();
-            const start = Math.min(anchorIndex, referenceIndex);
-            const end = Math.max(anchorIndex, referenceIndex);
-            selectionRows.slice(start, end + 1).forEach((item) => selectedReferences.add(item.id));
-          } else {
-            selectedReferences.clear(); selectedReferences.add(reference.id);
-            treeSelectionAnchor = reference.id;
-          }
-        } else if (event.metaKey || event.ctrlKey) {
-          if (selectedReferences.has(reference.id)) selectedReferences.delete(reference.id);
-          else selectedReferences.add(reference.id);
-          treeSelectionAnchor = reference.id;
-        } else {
-          selectedReferences.clear(); selectedReferences.add(reference.id);
-          treeSelectionAnchor = reference.id;
+  const selectTreeContiguousRange = (targetId: string, event: MouseEvent) => {
+    if (event.shiftKey && treeSelectionAnchor) {
+      const elements = Array.from(tree.querySelectorAll<HTMLElement>('.tree-reference'));
+      const anchorElement = elements.find(el => el.dataset.referenceId === treeSelectionAnchor);
+      const clickedElement = elements.find(el => el.dataset.referenceId === targetId);
+      if (anchorElement && clickedElement) {
+        const anchorIndex = elements.indexOf(anchorElement);
+        const referenceIndex = elements.indexOf(clickedElement);
+        if (!event.metaKey && !event.ctrlKey) selectedReferences.clear();
+        const start = Math.min(anchorIndex, referenceIndex);
+        const end = Math.max(anchorIndex, referenceIndex);
+        for (let i = start; i <= end; i++) {
+          const id = elements[i].dataset.referenceId;
+          if (id) selectedReferences.add(id);
         }
-        activeReference = reference.id; renderProperties(reference.id);
-        syncTreeSelection();
-        setSaveState(`${selectedReferences.size} selected`);
-      });
+      } else {
+        selectedReferences.clear(); selectedReferences.add(targetId);
+        treeSelectionAnchor = targetId;
+      }
+    } else if (event.metaKey || event.ctrlKey) {
+      if (selectedReferences.has(targetId)) selectedReferences.delete(targetId);
+      else selectedReferences.add(targetId);
+      treeSelectionAnchor = targetId;
+    } else {
+      selectedReferences.clear(); selectedReferences.add(targetId);
+      treeSelectionAnchor = targetId;
+    }
+  };
+
+  const appendReference = (reference:ReferenceRow, container:HTMLElement, contextLibraryId:string|null) => {
+    const item = document.createElement('button'); item.type = 'button'; item.className = 'tree-reference'; item.title = plainInlineTitle(reference.title); item.dataset.referenceId = reference.id;
+    item.classList.toggle('selected', selectedReferences.has(reference.id));
+    item.draggable = reference.access !== 'viewer';
+    const glyph=createTreeReferenceGlyph(reference);
+    const title = document.createElement('span'); title.className='tree-reference-title'; setInlineTitle(title,reference.title); item.appendChild(glyph);
+    const coloredKeyword = reference.keywords.find((keyword) => payload.keywordStyles[keyword]);
+    if (coloredKeyword) { const dot = document.createElement('i'); dot.className = 'tree-keyword-dot'; dot.style.setProperty('--keyword-color',payload.keywordStyles[coloredKeyword]); dot.title = coloredKeyword; item.appendChild(dot); }
+    if (isProcessingReference(reference)) {
+      const spinner = document.createElement('i'); spinner.className = 'tree-spinner'; spinner.title = 'Processing…';
+      item.classList.add('is-processing'); item.appendChild(spinner);
+    }
+    item.appendChild(title);
+    if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const play=document.createElement('span');play.className='tree-narration-play';play.textContent='▶';play.title=`Play rendered ${provider} narration`;play.setAttribute('aria-label',play.title);const activate=(event:Event)=>{event.preventDefault();event.stopPropagation();controller.openDocument(reference.id);window.setTimeout(()=>{const pod=root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(reference.id)}"]`);pod?.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}}));},60);};play.addEventListener('pointerdown',(event)=>event.stopPropagation());play.addEventListener('touchend',(event)=>event.stopPropagation(),{passive:true});play.addEventListener('click',activate);item.appendChild(play);}
+    item.addEventListener('click', (event) => {
+      if (event.detail > 1) return;
+      selectTreeContiguousRange(reference.id, event);
+      activeReference = reference.id; renderProperties(reference.id);
+      syncTreeSelection();
+      setSaveState(`${selectedReferences.size} selected`);
+    });
       item.addEventListener('dblclick', (event) => controller.openDocument(reference.id, event.altKey));
       item.addEventListener('touchend', (event) => {
         if(event.changedTouches.length!==1)return;const touch=event.changedTouches[0];const now=Date.now();const previous=lastTreeTap;const isDouble=Boolean(previous&&previous.referenceId===reference.id&&now-previous.time<450&&Math.hypot(touch.clientX-previous.x,touch.clientY-previous.y)<28);
@@ -3976,26 +4004,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if(reference.hasKokoroNarration||reference.hasChirpNarration){const provider=reference.hasKokoroNarration?'kokoro':'chirp';const play=document.createElement('span');play.className='tree-narration-play';play.textContent='▶';play.title=`Play rendered ${provider} narration`;play.setAttribute('aria-label',play.title);const activate=(event:Event)=>{event.preventDefault();event.stopPropagation();controller.openDocument(reference.id);window.setTimeout(()=>{const pod=root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(reference.id)}"]`);pod?.dispatchEvent(new CustomEvent('seshat:play-rendered',{detail:{provider}}));},60);};play.addEventListener('pointerdown',(event)=>event.stopPropagation());play.addEventListener('touchend',(event)=>event.stopPropagation(),{passive:true});play.addEventListener('click',activate);item.appendChild(play);}
         item.addEventListener('click', (event) => {
           if (event.detail > 1) return;
-          if (event.shiftKey && treeSelectionAnchor) {
-            const anchorIndex = visibleReferences.findIndex((item) => item.id === treeSelectionAnchor);
-            const referenceIndex = visibleReferences.findIndex((item) => item.id === reference.id);
-            if (anchorIndex >= 0 && referenceIndex >= 0) {
-              if (!event.metaKey && !event.ctrlKey) selectedReferences.clear();
-              const start = Math.min(anchorIndex, referenceIndex);
-              const end = Math.max(anchorIndex, referenceIndex);
-              visibleReferences.slice(start, end + 1).forEach((item) => selectedReferences.add(item.id));
-            } else {
-              selectedReferences.clear(); selectedReferences.add(reference.id);
-              treeSelectionAnchor = reference.id;
-            }
-          } else if (event.metaKey || event.ctrlKey) {
-            if (selectedReferences.has(reference.id)) selectedReferences.delete(reference.id);
-            else selectedReferences.add(reference.id);
-            treeSelectionAnchor = reference.id;
-          } else {
-            selectedReferences.clear(); selectedReferences.add(reference.id);
-            treeSelectionAnchor = reference.id;
-          }
+          selectTreeContiguousRange(reference.id, event);
           activeReference = reference.id; renderProperties(reference.id);
           syncTreeSelection();
           setSaveState(`${selectedReferences.size} selected`);
@@ -4056,7 +4065,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         : 'No matching items';
       flatResults.appendChild(resultStatus);
       const visibleResults = [...matched].sort(sortReferences).slice(0, 500);
-      visibleResults.forEach((reference) => appendReference(reference, flatResults, visibleResults, null));
+      visibleResults.forEach((reference) => appendReference(reference, flatResults, null));
       if (matched.length > visibleResults.length) {
         const overflow = document.createElement('p'); overflow.textContent = `${matched.length - visibleResults.length} more · refine the search`; flatResults.appendChild(overflow);
       }

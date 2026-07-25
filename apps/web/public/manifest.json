@@ -2,7 +2,7 @@
   "name": "Seshat",
   "short_name": "Seshat",
   "description": "Cultivate what you read - Curatorial bibliography workspace",
-  "start_url": "/workspace",
+  "start_url": "/work",
   "display": "fullscreen",
   "orientation": "any",
   "background_color": "#f5f2e8",
