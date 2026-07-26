@@ -837,15 +837,15 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
       setSaveState(`${completed} ${completed===1?'item':'items'} ${add?'added':'moved'}${destination?` to ${destination.name}`:' to Inbox'}`);
     }catch(error){refreshTable();renderTree(search.value);syncTreeSelection();setSaveState(`${completed?`${completed} moved · `:''}${error instanceof Error?error.message:'Move failed'}`,'error');}
   };
-  const moveDestinationItems=(ids:string[]):ContextMenuItem[]=>{
+  const moveDestinationItems=(ids:string[],add=false):ContextMenuItem[]=>{
     const editableIds=ids.filter((id)=>references.get(id)?.access!=='viewer');
     const trees=buildCollectionDestinationTree(payload.libraries.filter((library)=>library.access!=='viewer'&&!isInboxLibraryId(library.id)));
     const makeItem=(node:(typeof trees)[number],path:string[]):ContextMenuItem=>{
       const fullPath=[...path,node.name];
-      return{label:node.name,searchText:fullPath.join(' '),checked:Boolean(editableIds.length)&&editableIds.every((id)=>references.get(id)?.libraryIds.includes(node.id)),children:node.children.map((child)=>makeItem(child,fullPath)),action:()=>moveReferencesToCollection(editableIds,node.id)};
+      return{label:node.name,searchText:fullPath.join(' '),checked:Boolean(editableIds.length)&&editableIds.every((id)=>references.get(id)?.libraryIds.includes(node.id)),children:node.children.map((child)=>makeItem(child,fullPath)),action:()=>moveReferencesToCollection(editableIds,node.id,add)};
     };
     return[
-      {label:'Inbox / Unfiled',searchText:'Inbox Unfiled remove collections',checked:Boolean(editableIds.length)&&editableIds.every((id)=>isUnfiledReference(references.get(id)!)),action:()=>moveReferencesToCollection(editableIds,null)},
+      ...(add?[]:[{label:'Inbox / Unfiled',searchText:'Inbox Unfiled remove collections',checked:Boolean(editableIds.length)&&editableIds.every((id)=>isUnfiledReference(references.get(id)!)),action:()=>moveReferencesToCollection(editableIds,null,add)}]),
       ...trees.map((node)=>makeItem(node,[])),
     ];
   };
@@ -862,6 +862,7 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     { label: `Merge duplicate group…`, disabled: duplicateGroupFor(editableIds).length < 2, action: () => openDuplicateMerge(editableIds) },
     ...(auditCandidate ? [{ label: 'Locate possible Zotero match', action: () => locateReference(auditCandidate) }] : []),
     { label: `Move selected item${editableIds.length===1?'':`s (${editableIds.length})`}…`, disabled:!editableIds.length,searchable:true,searchPlaceholder:'Filter collections…',children:moveDestinationItems(editableIds) },
+    { label: `Copy selected item${editableIds.length===1?'':`s (${editableIds.length})`}…`, disabled:!editableIds.length,searchable:true,searchPlaceholder:'Filter collections…',children:moveDestinationItems(editableIds,true) },
     { label: 'Edit persons and roles…', disabled: editableIds.length !== 1 || ids.length !== 1, action: () => { const row = references.get(editableIds[0]); if (row) openContributorEditor(row); } },
     { label: `Case Fix${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => caseFixReferences(editableIds) },
     { label: `Repair bibliographic year…${editableIds.length > 1 ? ` (${editableIds.length})` : ''}`, disabled: !editableIds.length, action: () => openYearRepair(editableIds) },
