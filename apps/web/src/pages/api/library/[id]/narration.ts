@@ -10,6 +10,7 @@ import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { chirpAccessAllowed } from '../../../../lib/chirp-access';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 import { assertManagedStorageQuota } from '../../../../lib/user-accounts';
+import { storageRootFor } from '../../../../lib/bibliography-paths';
 
 const exec = promisify(execFile);
 const safePart = (value: string, fallback: string) => value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
@@ -44,6 +45,7 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
   if (!email) return Response.json({ error: 'authentication_required' }, { status: 401 });
   const ownerKey = ownerKeyFor(email); const catalog = getCatalog(); const reference = await catalog.get(ownerKey, params.id || '');
   if (!reference || reference.access !== 'owner') return Response.json({ error: 'not_found' }, { status: 404 });
+  const defaultRoot = storageRootFor({ email, name: String((locals.session as any)?.user?.name || '') }).root;
   const voice = safePart(url.searchParams.get('voice') || '', 'voice');
   const language = safePart(url.searchParams.get('language') || reference.language || '', 'und');
   const provider = url.searchParams.get('provider') === 'chirp' ? 'chirp' : 'kokoro';
@@ -66,7 +68,7 @@ export const POST: APIRoute = async ({ request, locals, params, url }) => {
     try { await assertManagedStorageQuota(ownerKey,bytes.length); }
     catch { return Response.json({error:'managed_storage_quota_exceeded'},{status:413}); }
     const bucket = getWasabiBucket();
-    const storageRoot = String((reference.source as any)?.wasabiStorageRoot || `${process.env.WASABI_KEY_PREFIX || 'zzttuntref'}/seshat-derived/${ownerKey}`).replace(/\/+$/g, '');
+    const storageRoot = String((reference.source as any)?.wasabiStorageRoot || defaultRoot).replace(/\/+$/g, '');
     const offsets=endOffset>startOffset?`-${startOffset}-${endOffset}`:'';
     const objectKey = `${storageRoot}/.seshat/${reference.id}/narration/${provider}/${language}-${voice}/${String(segment).padStart(4,'0')}${offsets}.ogg`;
     const sha256 = createHash('sha256').update(bytes).digest('hex');

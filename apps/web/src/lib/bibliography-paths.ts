@@ -43,7 +43,7 @@ export const storageRootFor = (identity: SeshatUserIdentity): { root: string; pr
   const privileged = hasLibraryRoot(identity);
   if (privileged) return { root: `${prefix}/libros`, privileged };
   const username = safeStorageSegment(String(identity.email || identity.name || '').split('@')[0]);
-  return { root: `${prefix}/lseshat/${username}`, privileged };
+  return { root: `${prefix}/seshat-users/${username}`, privileged };
 };
 
 export const extractBibAttachmentPath = (raw: unknown): string | null => {

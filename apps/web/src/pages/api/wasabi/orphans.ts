@@ -77,7 +77,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
           const key = String(object.Key || '');
           const identity = key.normalize('NFC');
           const filename = key.split('/').at(-1) || '';
-          if (!key || seen.has(identity) || !supportedDocument.test(filename) || key.includes('/.seshat-derived/')) continue;
+          if (!key || seen.has(identity) || !supportedDocument.test(filename) || key.includes('/.seshat/') || key.includes('/.seshat-derived/') || key.includes('/seshat-derived/')) continue;
           seen.add(identity);
           if (linkedKeys.has(identity)) continue;
           const path = key.startsWith(`${root}/`) ? key.slice(root.length + 1) : key;

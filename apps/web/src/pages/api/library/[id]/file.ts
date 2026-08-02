@@ -4,6 +4,7 @@ import type { APIRoute } from 'astro';
 import { getCatalog, ownerKeyFor } from '../../../../lib/catalog';
 import { getWasabiBucket, getWasabiClient } from '../../../../lib/wasabi';
 import { assertManagedStorageQuota } from '../../../../lib/user-accounts';
+import { storageRootFor } from '../../../../lib/bibliography-paths';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const allowed = new Set(['pdf', 'docx', 'txt', 'epub', 'webarchive', 'djvu', 'djv']);
@@ -31,6 +32,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   const catalog = getCatalog();
   const reference = await catalog.get(ownerKey, params.id || '');
   if (!reference || reference.access !== 'owner') return Response.json({ error: 'not_found' }, { status: 404 });
+  const defaultRoot = storageRootFor({ email, name: String((locals.session as any)?.user?.name || '') }).root;
 
   const form = await request.formData().catch(() => null);
   const file = form?.get('file');
@@ -50,7 +52,7 @@ export const POST: APIRoute = async ({ request, locals, params }) => {
   }
 
   const bucket = getWasabiBucket();
-  const storageRoot = String((reference.source as any).wasabiStorageRoot || process.env.WASABI_KEY_PREFIX || 'zzttuntref');
+  const storageRoot = String((reference.source as any).wasabiStorageRoot || defaultRoot);
   const objectKey = `${storageRoot}/.seshat/${reference.id}/original/${Date.now()}-${safeName(file.name)}`;
   const mimeType = file.type || mediaTypes[ext] || 'application/octet-stream';
   const storage = getWasabiClient();
