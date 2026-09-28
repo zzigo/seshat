@@ -57,14 +57,49 @@ export async function mountHtmlReader(
     const registry=(CSS as any).highlights,Highlight=(window as any).Highlight;if(!registry||typeof Highlight!=='function')return;
     renderedNames.forEach((name)=>registry.delete(name));renderedNames.clear();let style=document.getElementById(styleId) as HTMLStyleElement|null;
     if(!style){style=document.createElement('style');style.id=styleId;document.head.appendChild(style);}const rules:string[]=[];
-    annotations.forEach((annotation)=>{const range=rangeForAnnotation(annotation);if(!range)return;const name=highlightName(annotation.id);registry.set(name,new Highlight(range));renderedNames.add(name);rules.push(`::highlight(${name}){background-color:color-mix(in srgb,${annotation.color} 42%,transparent);color:inherit}`);});style.textContent=rules.join('');
+    annotations.forEach((annotation)=>{
+      const range=rangeForAnnotation(annotation);if(!range)return;const name=highlightName(annotation.id);registry.set(name,new Highlight(range));renderedNames.add(name);
+      if(annotation.noteType==='reading-mark'){rules.push(`::highlight(${name}){background-color:rgba(239,68,68,0.25);text-decoration:underline 2px #ef4444;text-underline-offset:3px;color:inherit}`);}
+      else{rules.push(`::highlight(${name}){background-color:color-mix(in srgb,${annotation.color} 42%,transparent);color:inherit}`);}
+    });
+    style.textContent=rules.join('');
+    content.querySelectorAll('.seshat-reading-mark').forEach((n)=>n.remove());
+    annotations.forEach((annotation)=>{
+      if(annotation.noteType==='reading-mark'){
+        const range=rangeForAnnotation(annotation);if(!range)return;
+        try{
+          const flag=document.createElement('span');flag.className='seshat-reading-mark';flag.dataset.annotationId=annotation.id;flag.title='Reading mark';
+          flag.innerHTML='<svg viewBox="0 0 14 18" width="12" height="15" aria-hidden="true" style="fill:#ef4444;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.4));display:inline-block;vertical-align:-2px;margin-right:4px;"><path d="M0 0h14v18l-7-5-7 5V0z"/></svg>';
+          flag.addEventListener('click',(e)=>{e.stopPropagation();window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation',{detail:{referenceId,annotationId:annotation.id}}));});
+          const flagRange=range.cloneRange();flagRange.collapse(true);flagRange.insertNode(flag);
+        }catch{}
+      }
+    });
   };
   renderHighlights();
 
   let pending:HtmlAnchor|null=null;const palette=document.createElement('div');palette.className='annotation-palette html-annotation-palette';palette.hidden=true;
-  annotationColors.forEach((color,index)=>{const button=document.createElement('button');button.type='button';button.title=`${index+1} · ${color.label}`;button.dataset.annotationKey=String(index+1);button.style.setProperty('--annotation-color',color.hex);const dot=document.createElement('i');const key=document.createElement('small');key.textContent=String(index+1);button.append(dot,key);button.addEventListener('click',()=>{if(pending)void save(pending,color);});palette.appendChild(button);});
-  const comment=document.createElement('button');comment.type='button';comment.className='annotation-comment';comment.dataset.annotationKey='m';comment.textContent='M';comment.title='M · Comment';comment.addEventListener('click',()=>{if(pending)void saveComment(pending);});palette.appendChild(comment);document.body.appendChild(palette);
-  const selectionAnchor=():HtmlAnchor|null=>{const selection=window.getSelection();if(!selection?.rangeCount||selection.isCollapsed)return null;const range=selection.getRangeAt(0);if(!content.contains(range.commonAncestorContainer))return null;const quote=selection.toString();if(!quote.trim())return null;const before=document.createRange();before.selectNodeContents(content);before.setEnd(range.startContainer,range.startOffset);const source=readerText(),startOffset=before.toString().length,endOffset=startOffset+quote.length;return{quote:source.slice(startOffset,endOffset),startOffset,endOffset,prefix:source.slice(Math.max(0,startOffset-250),startOffset),suffix:source.slice(endOffset,endOffset+250),sourceKind:'html',locator:'webarchive-reader',rects:[]};};
+  palette.addEventListener('pointerdown',(e)=>e.stopPropagation());
+  annotationColors.forEach((color,index)=>{
+    const button=document.createElement('button');button.type='button';button.title=`${index+1} · ${color.label}`;button.dataset.annotationKey=String(index+1);button.style.setProperty('--annotation-color',color.hex);
+    const dot=document.createElement('i');const key=document.createElement('small');key.textContent=String(index+1);button.append(dot,key);
+    const trigger=(e:Event)=>{e.preventDefault();e.stopPropagation();if(pending)void save(pending,color);};
+    button.addEventListener('pointerup',trigger);button.addEventListener('click',trigger);
+    palette.appendChild(button);
+  });
+  const comment=document.createElement('button');comment.type='button';comment.className='annotation-comment';comment.dataset.annotationKey='m';comment.textContent='M';comment.title='M · Comment';
+  const triggerComment=(e:Event)=>{e.preventDefault();e.stopPropagation();if(pending)void saveComment(pending);};
+  comment.addEventListener('pointerup',triggerComment);comment.addEventListener('click',triggerComment);
+  palette.appendChild(comment);document.body.appendChild(palette);
+  const selectionAnchor=():HtmlAnchor|null=>{
+    const selection=window.getSelection();if(!selection?.rangeCount||selection.isCollapsed)return null;
+    const range=selection.getRangeAt(0);if(!content.contains(range.commonAncestorContainer))return null;
+    const quote=selection.toString();if(!quote.trim())return null;
+    const nodes=textNodes();let startOffset=0;
+    for(const node of nodes){if(node===range.startContainer){startOffset+=range.startOffset;break;}startOffset+=node.data.length;}
+    const source=readerText(),endOffset=startOffset+quote.length;
+    return{quote:source.slice(startOffset,endOffset)||quote,startOffset,endOffset,prefix:source.slice(Math.max(0,startOffset-250),startOffset),suffix:source.slice(endOffset,endOffset+250),sourceKind:'html',locator:'webarchive-reader',rects:[]};
+  };
   const showPalette=()=>{pending=selectionAnchor();if(!pending){palette.hidden=true;return;}const range=window.getSelection()!.getRangeAt(0),rect=range.getBoundingClientRect();palette.hidden=false;const bounds=palette.getBoundingClientRect(),lift=matchMedia('(pointer:coarse)').matches?58:8;palette.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-bounds.width-8))}px`;palette.style.top=`${Math.max(8,rect.top-bounds.height-lift)}px`;};
   async function save(anchor:HtmlAnchor,color:typeof annotationColors[number],details:Record<string,unknown>={}){palette.hidden=true;report('saving WebArchive annotation…','saving');const response=await fetch(`/api/library/${encodeURIComponent(referenceId)}/annotations`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...anchor,color:color.hex,category:color.category,...details})});const result=await response.json().catch(()=>({}));if(!response.ok){report(result.error||'Annotation could not be saved','error');return null;}annotations.push(result.annotation);pending=null;window.getSelection()?.removeAllRanges();renderHighlights();window.dispatchEvent(new CustomEvent('seshat:annotations-changed',{detail:{referenceId}}));report('WebArchive annotation saved');return result.annotation as Annotation;}
   async function saveComment(anchor:HtmlAnchor){const annotation=await save(anchor,annotationColors[7],{note:'',reviewStatus:'captured'});if(annotation)window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation',{detail:{referenceId,annotationId:annotation.id}}));}
@@ -75,12 +110,45 @@ export async function mountHtmlReader(
   const provideSource=(event:Event)=>{const detail=(event as CustomEvent<ReaderSourceDetail>).detail;if(!detail||detail.load)return;detail.kind='html';detail.load=async()=>readerText();detail.headings=async()=>readerHeadings();};
   const clearWord=()=>document.getElementById('seshat-html-word-dot')?.remove();
   const locate=(event:Event)=>{const detail=(event as CustomEvent<ReaderLocationDetail>).detail||{},start=Math.max(0,Number(detail.start)||0),end=Math.max(start+1,Number(detail.end)||start+String(detail.text||'').length),range=rangeAt(start,end);if(!range)return;const registry=(CSS as any).highlights,Highlight=(window as any).Highlight;if(registry&&typeof Highlight==='function')registry.set('seshat-read-aloud',new Highlight(range));(range.startContainer.parentElement||content).scrollIntoView({block:'center',behavior:'smooth'});};
-  const locateWord=(event:Event)=>{const detail=(event as CustomEvent<{sentenceText:string;word?:string;charIndex:number;start:number;end:number}>).detail;if(!detail)return;const wordStart=Math.max(0,(Number(detail.start)||0)+(Number(detail.charIndex)||0)),wordEnd=wordStart+Math.max(1,String(detail.word||'').length),range=rangeAt(wordStart,wordEnd);if(!range)return;let dot=document.getElementById('seshat-html-word-dot') as HTMLElement|null;if(!dot){dot=document.createElement('div');dot.id='seshat-html-word-dot';dot.style.cssText='position:fixed;width:7px;height:7px;border-radius:50%;background-color:#818cf8;opacity:0.8;box-shadow:0 0 3px rgba(129,140,248,0.8),0 0 1px rgba(0,0,0,0.35);pointer-events:none;z-index:2147483646;transform:translate(-50%,-50%);transition:left 70ms linear,top 70ms linear;';document.body.appendChild(dot);}const rect=range.getBoundingClientRect();if(rect.width>0||rect.height>0){dot.style.left=`${rect.left+2}px`;dot.style.top=`${rect.bottom-2}px`;dot.style.display='block';}};
+  const locateWord=(event:Event)=>{const detail=(event as CustomEvent<{sentenceText:string;word?:string;charIndex:number;start:number;end:number}>).detail;if(!detail)return;const wordStart=Math.max(0,(Number(detail.start)||0)+(Number(detail.charIndex)||0)),wordEnd=wordStart+Math.max(1,String(detail.word||'').length),range=rangeAt(wordStart,wordEnd);if(!range)return;let dot=document.getElementById('seshat-html-word-dot') as HTMLElement|null;if(!dot){dot=document.createElement('div');dot.id='seshat-html-word-dot';dot.style.cssText='position:fixed;width:7px;height:7px;border-radius:50%;background-color:#818cf8;opacity:0.8;box-shadow:0 0 3px rgba(129,140,248,0.8),0 0 1px rgba(0,0,0,0.35);pointer-events:none;z-index:2147483646;transform:translate(-50%,-50%);transition:left 70ms linear,top 70ms linear;';document.body.appendChild(dot);}const rect=range.getBoundingClientRect();if(rect.width>0||rect.height>0){dot.style.left=`${rect.left+2}px`;dot.style.top=`${rect.bottom-2}px`;dot.style.display='block';element.dispatchEvent(new CustomEvent('seshat:reader-cursor-position',{detail:{ratioY:rect.top/Math.max(1,window.innerHeight)}}));}};
   const clearLocate=()=>{clearWord();(CSS as any).highlights?.delete?.('seshat-read-aloud');};
   const invert=(event:Event)=>shell.classList.toggle('is-inverted',Boolean((event as CustomEvent<{active?:boolean}>).detail?.active));
   const persist=(keepalive=false)=>{const max=Math.max(1,scroll.scrollHeight-scroll.clientHeight),fraction=Math.max(0,Math.min(1,scroll.scrollTop/max));readingLocation=updateReadingLocation(readingLocation,{format:'html',fraction});void fetch(`/api/library/${encodeURIComponent(referenceId)}/reading-state`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({location:readingLocation,preferences:{}}),...(keepalive?{keepalive:true}:{signal:controller.signal})}).catch(()=>undefined);element.dispatchEvent(new CustomEvent('seshat:reader-controls',{detail:{format:'text',progress:fraction}}));};
   const onScroll=()=>{window.clearTimeout(saveTimer);saveTimer=window.setTimeout(persist,500);};
-  scroll.addEventListener('mouseup',()=>window.setTimeout(showPalette));scroll.addEventListener('touchend',()=>window.setTimeout(showPalette));scroll.addEventListener('keyup',(event)=>{if(event.key==='Shift'||event.key.startsWith('Arrow'))showPalette();});scroll.addEventListener('scroll',onScroll,{passive:true});document.addEventListener('keydown',keyboard);window.addEventListener('seshat:annotations-changed',annotationsChanged);element.addEventListener('seshat:reader-source',provideSource);element.addEventListener('seshat:html-reader-locate',locate);element.addEventListener('seshat:html-reader-word',locateWord);element.addEventListener('seshat:html-reader-clear',clearLocate);element.addEventListener('seshat:doc-toggle-invert',invert);
+  const handleRequestMark=async(event:Event)=>{
+    event.preventDefault();
+    const detail=(event as CustomEvent<{sentence?:{raw:string;start:number;end:number}}>).detail;
+    const sentence=detail?.sentence;if(!sentence)return;
+    const quote=sentence.raw.trim();
+    report('saving reading mark…','saving');
+    const response=await fetch(`/api/library/${encodeURIComponent(referenceId)}/annotations`,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+        quote,
+        startOffset:sentence.start,
+        endOffset:sentence.end,
+        sourceKind:'html',
+        locator:'webarchive-reader',
+        rects:[],
+        color:'#ff6666',
+        category:'misc',
+        noteType:'reading-mark',
+        reviewStatus:'reading'
+      })
+    });
+    if(!response.ok){
+      const err=await response.json().catch(()=>({}));
+      report(err.error||'Reading mark could not be saved','error');
+      return;
+    }
+    const result=await response.json().catch(()=>({}));
+    if(result.annotation){annotations.push(result.annotation);renderHighlights();}
+    element.querySelector('.read-aloud-caption')?.classList.add('is-marked');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed',{detail:{referenceId}}));
+    report('reading mark saved · marked in red');
+  };
+  scroll.addEventListener('mouseup',()=>window.setTimeout(showPalette));scroll.addEventListener('touchend',()=>window.setTimeout(showPalette));scroll.addEventListener('keyup',(event)=>{if(event.key==='Shift'||event.key.startsWith('Arrow'))showPalette();});scroll.addEventListener('scroll',onScroll,{passive:true});document.addEventListener('keydown',keyboard);window.addEventListener('seshat:annotations-changed',annotationsChanged);element.addEventListener('seshat:reader-source',provideSource);element.addEventListener('seshat:html-reader-locate',locate);element.addEventListener('seshat:html-reader-word',locateWord);element.addEventListener('seshat:html-reader-clear',clearLocate);element.addEventListener('seshat:doc-toggle-invert',invert);element.addEventListener('seshat:reader-request-mark',handleRequestMark);
   requestAnimationFrame(()=>{const fraction=Math.max(0,Math.min(1,Number(readingLocation.fraction||readingLocation.progress||0)));scroll.scrollTop=fraction*Math.max(0,scroll.scrollHeight-scroll.clientHeight);});report('WebArchive reader ready');
-  return()=>{if(disposed)return;window.clearTimeout(saveTimer);persist(true);disposed=true;controller.abort();clearWord();palette.remove();document.getElementById(styleId)?.remove();renderedNames.forEach((name)=>(CSS as any).highlights?.delete?.(name));document.removeEventListener('keydown',keyboard);window.removeEventListener('seshat:annotations-changed',annotationsChanged);element.removeEventListener('seshat:reader-source',provideSource);element.removeEventListener('seshat:html-reader-locate',locate);element.removeEventListener('seshat:html-reader-word',locateWord);element.removeEventListener('seshat:html-reader-clear',clearLocate);element.removeEventListener('seshat:doc-toggle-invert',invert);};
+  return()=>{if(disposed)return;window.clearTimeout(saveTimer);persist(true);disposed=true;controller.abort();clearWord();palette.remove();document.getElementById(styleId)?.remove();renderedNames.forEach((name)=>(CSS as any).highlights?.delete?.(name));document.removeEventListener('keydown',keyboard);window.removeEventListener('seshat:annotations-changed',annotationsChanged);element.removeEventListener('seshat:reader-source',provideSource);element.removeEventListener('seshat:html-reader-locate',locate);element.removeEventListener('seshat:html-reader-word',locateWord);element.removeEventListener('seshat:html-reader-clear',clearLocate);element.removeEventListener('seshat:doc-toggle-invert',invert);element.removeEventListener('seshat:reader-request-mark',handleRequestMark);};
 }

@@ -5,6 +5,7 @@ import type { ReaderCommandDetail, ReaderControlsState, ReaderPlayFromDetail } f
 import { normalizeReaderSearchText, readerTextMatchOffsets, type ReaderSearchRequestDetail, type ReaderSearchResultDetail } from '../lib/reader-search';
 import { updateReadingLocation, type ReadingLocation } from '../lib/reading-progress';
 import { annotationColors, type Annotation } from './annotations';
+import type { Sentence } from './read-aloud';
 
 type SaveState = (message: string, tone?: 'ready' | 'saving' | 'error') => void;
 type ReadingPreferences = { flow: 'paginated' | 'scrolled'; fontScale: number };
@@ -147,7 +148,37 @@ export async function mountEpubReader(
       if (parent?.closest('.seshat-annotation-palette,script,style,noscript')) continue;
       nodes.push(node as Text);
     }
-    const source = nodes.map((item) => item.data).join(''); const start = expectedStart >= 0 && source.slice(expectedStart, expectedStart + quote.length) === quote ? expectedStart : source.indexOf(quote); if (start < 0) return null;
+    const source = nodes.map((item) => item.data).join('');
+    let start = expectedStart >= 0 && source.slice(expectedStart, expectedStart + quote.length) === quote ? expectedStart : source.indexOf(quote);
+    if (start < 0) {
+      const trimmed = quote.trim();
+      start = source.indexOf(trimmed);
+      if (start >= 0) quote = trimmed;
+    }
+    if (start < 0) {
+      const normQuote = quote.replace(/\s+/g, ' ').trim();
+      let normSource = '';
+      const indexMap: number[] = [];
+      for (let i = 0; i < source.length; i++) {
+        const char = source[i];
+        if (/\s/.test(char)) {
+          if (normSource.length > 0 && normSource[normSource.length - 1] !== ' ') {
+            indexMap.push(i);
+            normSource += ' ';
+          }
+        } else {
+          indexMap.push(i);
+          normSource += char;
+        }
+      }
+      const normIdx = normSource.indexOf(normQuote);
+      if (normIdx >= 0) {
+        start = indexMap[normIdx];
+        const endMapped = indexMap[Math.min(indexMap.length - 1, normIdx + normQuote.length - 1)] ?? (start + quote.length);
+        quote = source.slice(start, endMapped + 1);
+      }
+    }
+    if (start < 0) return null;
     const end = start + quote.length; let cursor = 0; let startNode: Text | null = null; let endNode: Text | null = null; let startInNode = 0; let endInNode = 0;
     for (const item of nodes) {
       const next = cursor + item.data.length;
@@ -159,27 +190,91 @@ export async function mountEpubReader(
     const range = doc.createRange(); range.setStart(startNode, startInNode); range.setEnd(endNode, endInNode); return range;
   };
   const renderEpubAnnotations = (doc: Document, index = contentIndexes.get(doc) ?? currentSectionIndex) => {
-    const registry = (doc.defaultView as any)?.CSS?.highlights; const Highlight = (doc.defaultView as any)?.Highlight;
-    if (!registry || typeof Highlight !== 'function') return;
+    doc.querySelectorAll('.seshat-reading-mark').forEach((node) => node.remove());
+    const registry = (doc.defaultView as any)?.CSS?.highlights;
+    const Highlight = (doc.defaultView as any)?.Highlight;
     const matching = epubAnnotations.filter((item) => item.sourceKind === 'epub' && item.locator === `epub-section:${index}`);
+    if (!matching.length) return;
+
     let style = doc.getElementById('seshat-epub-annotation-styles') as HTMLStyleElement | null;
-    if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-annotation-styles'; (doc.head || doc.documentElement).appendChild(style); }
+    if (!style) {
+      style = doc.createElement('style');
+      style.id = 'seshat-epub-annotation-styles';
+      (doc.head || doc.documentElement).appendChild(style);
+    }
     const rules: string[] = [];
+    const collected: Array<{ annotation: Annotation; range: Range }> = [];
     matching.forEach((annotation) => {
-      const name = annotationHighlightName(annotation.id); registry.delete(name); const range = textRangeForQuote(doc, annotation.quote, annotation.startOffset); if (!range) return;
-      registry.set(name, new Highlight(range)); rules.push(`::highlight(${name}){background-color:color-mix(in srgb,${annotation.color} 42%,transparent)!important;color:inherit!important}`);
+      const range = textRangeForQuote(doc, annotation.quote, annotation.startOffset);
+      if (range) collected.push({ annotation, range });
     });
-    style.textContent = rules.join('');
+
+    if (registry && typeof Highlight === 'function') {
+      collected.forEach(({ annotation, range }) => {
+        const name = annotationHighlightName(annotation.id);
+        registry.delete(name);
+        registry.set(name, new Highlight(range));
+        if (annotation.noteType === 'reading-mark') {
+          rules.push(`::highlight(${name}){background-color:rgba(239,68,68,0.25)!important;text-decoration:underline 2px #ef4444!important;text-underline-offset:3px!important;color:inherit!important}`);
+        } else {
+          rules.push(`::highlight(${name}){background-color:color-mix(in srgb,${annotation.color} 42%,transparent)!important;color:inherit!important}`);
+        }
+      });
+      style.textContent = rules.join('');
+    }
+
+    collected.forEach(({ annotation, range }) => {
+      if (annotation.noteType === 'reading-mark') {
+        try {
+          const flag = doc.createElement('span');
+          flag.className = 'seshat-reading-mark';
+          flag.dataset.annotationId = annotation.id;
+          flag.title = 'Reading mark · click to edit note';
+          flag.setAttribute('aria-label', 'Reading mark');
+          flag.innerHTML = `<svg viewBox="0 0 14 18" width="12" height="15" aria-hidden="true" style="fill:#ef4444;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.4));display:inline-block;vertical-align:-2px;margin-right:4px;"><path d="M0 0h14v18l-7-5-7 5V0z"/></svg>`;
+          flag.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation', { detail: { referenceId, annotationId: annotation.id } }));
+          });
+          const flagRange = range.cloneRange();
+          flagRange.collapse(true);
+          flagRange.insertNode(flag);
+        } catch {}
+      }
+    });
   };
   const anchorFromEpubSelection = (doc: Document): EpubAnchor | null => {
-    const selection = doc.defaultView?.getSelection(); if (!selection?.rangeCount || selection.isCollapsed) return null;
-    const range = selection.getRangeAt(0); if (!doc.body?.contains(range.commonAncestorContainer)) return null;
-    const quote = selection.toString(); if (!quote.trim()) return null;
-    const sectionText = doc.body.textContent || ''; const before = doc.createRange(); before.selectNodeContents(doc.body); before.setEnd(range.startContainer, range.startOffset);
-    const localStart = Math.max(0, before.toString().length); const localEnd = localStart + quote.length;
+    const selection = doc.defaultView?.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (!doc.body?.contains(range.commonAncestorContainer)) return null;
+    const quote = selection.toString();
+    if (!quote.trim()) return null;
+    const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT);
+    let localStart = 0;
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (parent?.closest('.seshat-annotation-palette,.seshat-reading-mark,script,style,noscript')) continue;
+      if (node === range.startContainer) {
+        localStart += range.startOffset;
+        break;
+      }
+      localStart += (node.textContent || '').length;
+    }
+    const localEnd = localStart + quote.length;
+    const sectionText = doc.body.textContent || '';
     const index = contentIndexes.get(doc) ?? currentSectionIndex;
-    return { quote, startOffset: localStart, endOffset: localEnd, sourceKind: 'epub', locator: `epub-section:${index}`, rects: [],
-      prefix: sectionText.slice(Math.max(0, localStart - 250), localStart), suffix: sectionText.slice(localEnd, localEnd + 250) };
+    return {
+      quote,
+      startOffset: localStart,
+      endOffset: localEnd,
+      sourceKind: 'epub',
+      locator: `epub-section:${index}`,
+      rects: [],
+      prefix: sectionText.slice(Math.max(0, localStart - 250), localStart),
+      suffix: sectionText.slice(localEnd, localEnd + 250)
+    };
   };
   const saveEpubAnnotation = async (doc: Document, anchor: EpubAnchor, color: typeof annotationColors[number], details:Record<string,unknown> = {}):Promise<Annotation|null> => {
     doc.querySelectorAll('.seshat-annotation-palette').forEach((node)=>node.remove());clearAnnotationPalettes(); setSaveState('saving EPUB annotation…', 'saving');
@@ -194,20 +289,74 @@ export async function mountEpubReader(
     const annotation=await saveEpubAnnotation(doc,anchor,annotationColors[7],{note:'',reviewStatus:'captured'});if(!annotation)return;
     window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation',{detail:{referenceId,annotationId:annotation.id}}));
   };
-  const showEpubAnnotationPalette = (doc: Document): boolean => {
-    const anchor = anchorFromEpubSelection(doc); if (!anchor || !doc.body) return false;
-    clearPlayTooltip(); clearAnnotationPalettes(); const selection = doc.defaultView!.getSelection()!; const rect = selection.getRangeAt(0).getBoundingClientRect();
-    const palette = doc.createElement('div'); palette.className = 'seshat-annotation-palette'; palette.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); });
-    annotationColors.forEach((color, index) => {
-      const button = doc.createElement('button'); button.type = 'button'; button.title = `${index + 1} · ${color.label}`; button.setAttribute('aria-label', button.title);
-      button.dataset.annotationKey=String(index+1);
-      const dot = doc.createElement('i'); dot.style.background = color.hex; const key = doc.createElement('small'); key.textContent = String(index + 1); button.append(dot, key);
-      button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); void saveEpubAnnotation(doc, anchor, color); }); palette.appendChild(button);
+  const showEpubAnnotationPalette = (doc: Document, pointer?: { clientX: number; clientY: number }): boolean => {
+    const anchor = anchorFromEpubSelection(doc);
+    if (!anchor || !doc.body) return false;
+    clearPlayTooltip();
+    clearAnnotationPalettes();
+    const selection = doc.defaultView!.getSelection()!;
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const palette = doc.createElement('div');
+    palette.className = 'seshat-annotation-palette';
+    palette.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
     });
-    const comment=doc.createElement('button');comment.type='button';comment.className='seshat-annotation-comment';comment.dataset.annotationKey='m';comment.title='M · Comment';comment.setAttribute('aria-label',comment.title);comment.textContent='M';comment.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();void saveEpubComment(doc,anchor);});palette.appendChild(comment);
-    doc.body.appendChild(palette); const bounds = palette.getBoundingClientRect(); const width = doc.defaultView?.innerWidth || 320;
+
+    annotationColors.forEach((color, index) => {
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.title = `${index + 1} · ${color.label}`;
+      button.setAttribute('aria-label', button.title);
+      button.dataset.annotationKey = String(index + 1);
+      const dot = doc.createElement('i');
+      dot.style.background = color.hex;
+      const key = doc.createElement('small');
+      key.textContent = String(index + 1);
+      button.append(dot, key);
+      const trigger = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void saveEpubAnnotation(doc, anchor, color);
+      };
+      button.addEventListener('pointerup', trigger);
+      button.addEventListener('click', trigger);
+      palette.appendChild(button);
+    });
+
+    const comment = doc.createElement('button');
+    comment.type = 'button';
+    comment.className = 'seshat-annotation-comment';
+    comment.dataset.annotationKey = 'm';
+    comment.title = 'M · Comment';
+    comment.setAttribute('aria-label', comment.title);
+    comment.textContent = 'M';
+    const triggerComment = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void saveEpubComment(doc, anchor);
+    };
+    comment.addEventListener('pointerup', triggerComment);
+    comment.addEventListener('click', triggerComment);
+    palette.appendChild(comment);
+
+    doc.body.appendChild(palette);
+    const bounds = palette.getBoundingClientRect();
+    const width = doc.defaultView?.innerWidth || 320;
+    const height = doc.defaultView?.innerHeight || 480;
     const mobileLift = doc.defaultView?.matchMedia('(pointer: coarse)').matches ? 58 : 8;
-    palette.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`; return true;
+
+    const renderer = view.renderer as any;
+    const pageSize = typeof renderer?.size === 'number' && renderer.size > 0 ? renderer.size : 0;
+    let targetX = pointer ? pointer.clientX - bounds.width / 2 : (pageSize > 0 ? (rect.left % pageSize) : rect.left);
+    let targetY = pointer ? pointer.clientY - bounds.height - mobileLift : (rect.top - bounds.height - mobileLift);
+
+    if (targetY < 8) {
+      targetY = pointer ? pointer.clientY + 18 : Math.min(height - bounds.height - 8, rect.bottom + 8);
+    }
+    palette.style.left = `${Math.max(8, Math.min(targetX, width - bounds.width - 8))}px`;
+    palette.style.top = `${Math.max(8, Math.min(height - bounds.height - 8, targetY))}px`;
+    return true;
   };
   const markReading = (doc: Document, text: string) => {
     const target = readingBlock(doc, text); if (!target) return;
@@ -336,6 +485,13 @@ export async function mountEpubReader(
       dot.style.left = `${activeRect.left + 2}px`;
       dot.style.top = `${activeRect.bottom - 2}px`;
       dot.style.display = 'block';
+
+      const iframe = doc.defaultView?.frameElement as HTMLElement | null;
+      const iframeRect = iframe?.getBoundingClientRect();
+      const containerRect = pod?.getBoundingClientRect() || { top: 0, height: window.innerHeight };
+      const wordScreenY = (iframeRect ? iframeRect.top : 0) + activeRect.top;
+      const ratioY = (wordScreenY - containerRect.top) / Math.max(1, containerRect.height);
+      pod?.dispatchEvent(new CustomEvent('seshat:reader-cursor-position', { detail: { ratioY } }));
     }
 
     if (preferences.flow === 'paginated') {
@@ -492,7 +648,71 @@ export async function mountEpubReader(
     doc.body.appendChild(tooltip); window.setTimeout(() => tooltip.remove(), 5000);
   };
   const contentPointerDown = (event: Event) => { const pointer = event as PointerEvent; pointerStarts.set(pointer.currentTarget as Document, { x: pointer.clientX, y: pointer.clientY }); };
-  const contentPointerUp = (event: Event) => { const pointer = event as PointerEvent; const doc = pointer.currentTarget as Document; window.setTimeout(() => { if (!showEpubAnnotationPalette(doc)) void offerPlayFrom(pointer, doc); }); };
+  const contentPointerUp = (event: Event) => {
+    const pointer = event as PointerEvent;
+    const doc = (pointer.currentTarget as Document) || (pointer.target as Node)?.ownerDocument;
+    if (!doc) return;
+    window.setTimeout(() => {
+      if (!showEpubAnnotationPalette(doc, { clientX: pointer.clientX, clientY: pointer.clientY })) {
+        void offerPlayFrom(pointer, doc);
+      }
+    }, 40);
+  };
+  const handleRequestMark = async (event: Event) => {
+    event.preventDefault();
+    const detail = (event as CustomEvent<{ sentence?: Sentence }>).detail;
+    const sentence = detail?.sentence;
+    if (!sentence) return;
+    const quote = sentence.raw.trim();
+    const section = sectionRanges.find((item) => sentence.start >= item.start && sentence.start <= item.end)
+      || sectionRanges.find((item) => item.index === currentSectionIndex);
+    const sectionIndex = section?.index ?? currentSectionIndex;
+    const localStart = section ? Math.max(0, sentence.start - section.start) : 0;
+    const localEnd = localStart + quote.length;
+    const locator = `epub-section:${sectionIndex}`;
+
+    setSaveState('saving reading mark…', 'saving');
+    const response = await fetch(`/api/library/${referenceId}/annotations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        quote,
+        startOffset: localStart,
+        endOffset: localEnd,
+        sourceKind: 'epub',
+        locator,
+        rects: [],
+        color: '#ff6666',
+        category: 'misc',
+        noteType: 'reading-mark',
+        reviewStatus: 'reading'
+      })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      setSaveState(err.error || 'Reading mark could not be saved', 'error');
+      return;
+    }
+    const result = await response.json().catch(() => ({}));
+    if (result.annotation) {
+      epubAnnotations.push(result.annotation);
+      for (const content of view.renderer?.getContents?.() || []) {
+        renderEpubAnnotations(content.doc, content.index);
+      }
+    }
+    pod?.querySelector('.read-aloud-caption')?.classList.add('is-marked');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed', { detail: { referenceId } }));
+    setSaveState('reading mark saved · marked in red');
+  };
+  const annotationsChanged = async (event: Event) => {
+    if ((event as CustomEvent).detail?.referenceId !== referenceId) return;
+    const response = await fetch(`/api/library/${referenceId}/annotations`);
+    if (!response.ok) return;
+    epubAnnotations = ((await response.json()).annotations || []).filter((item: Annotation) => item.sourceKind === 'epub');
+    for (const content of view.renderer?.getContents?.() || []) {
+      renderEpubAnnotations(content.doc, content.index);
+    }
+  };
   const shiftReaderSection = (event: Event) => {
     const detail = (event as CustomEvent<ReaderSectionShiftDetail>).detail; if (!detail || !sectionRanges.length) return;
     const current = sectionRanges.findIndex((item) => Number.isFinite(detail.currentOffset) && Number(detail.currentOffset) >= item.start && Number(detail.currentOffset) <= item.end);
@@ -519,6 +739,8 @@ export async function mountEpubReader(
   pod?.addEventListener('seshat:reader-section-shift', shiftReaderSection);
   pod?.addEventListener('seshat:reader-command', readerCommand);
   pod?.addEventListener('seshat:reader-search',handleReaderSearch);
+  pod?.addEventListener('seshat:reader-request-mark', handleRequestMark);
+  window.addEventListener('seshat:annotations-changed', annotationsChanged);
 
   const applyFont = () => {
     scale.textContent = `${Math.round(preferences.fontScale * 100)}%`;
@@ -591,7 +813,31 @@ export async function mountEpubReader(
     lastNavigatedPage = -1;
     const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
     const index = Number((event as CustomEvent<{ index?: number }>).detail?.index);
-    if (doc) { applyAppearance(doc); if (Number.isFinite(index)) contentIndexes.set(doc, index); if (!contentDocuments.has(doc)) { contentDocuments.add(doc); doc.addEventListener('keydown', readerKeyboard); doc.addEventListener('pointerdown', contentPointerDown); doc.addEventListener('pointerup', contentPointerUp); } renderEpubAnnotations(doc, Number.isFinite(index) ? index : undefined); if (pendingLocation && (!Number.isFinite(index) || index === pendingLocation.index)) markReading(doc, pendingLocation.text);if(pendingSearch&&(!Number.isFinite(index)||index===pendingSearch.sectionIndex))markSearch(doc,pendingSearch.query); }
+    if (doc) {
+      applyAppearance(doc);
+      if (Number.isFinite(index)) contentIndexes.set(doc, index);
+      if (!contentDocuments.has(doc)) {
+        contentDocuments.add(doc);
+        doc.addEventListener('keydown', readerKeyboard);
+        doc.addEventListener('pointerdown', contentPointerDown);
+        doc.addEventListener('pointerup', contentPointerUp);
+        doc.addEventListener('mouseup', contentPointerUp);
+        doc.addEventListener('touchend', contentPointerUp);
+        let selTimer = 0;
+        doc.addEventListener('selectionchange', () => {
+          window.clearTimeout(selTimer);
+          selTimer = window.setTimeout(() => {
+            const sel = doc.defaultView?.getSelection();
+            if (sel && !sel.isCollapsed && sel.toString().trim()) {
+              showEpubAnnotationPalette(doc);
+            }
+          }, 150);
+        });
+      }
+      renderEpubAnnotations(doc, Number.isFinite(index) ? index : undefined);
+      if (pendingLocation && (!Number.isFinite(index) || index === pendingLocation.index)) markReading(doc, pendingLocation.text);
+      if (pendingSearch && (!Number.isFinite(index) || index === pendingSearch.sectionIndex)) markSearch(doc, pendingSearch.query);
+    }
   };
   view.addEventListener('load', handleLoad);
   view.addEventListener('relocate', ((event: CustomEvent<RelocateDetail>) => {
@@ -654,8 +900,10 @@ export async function mountEpubReader(
     pod?.removeEventListener('seshat:reader-section-shift', shiftReaderSection);
     pod?.removeEventListener('seshat:reader-command', readerCommand);
     pod?.removeEventListener('seshat:reader-search',handleReaderSearch);
+    pod?.removeEventListener('seshat:reader-request-mark', handleRequestMark);
+    window.removeEventListener('seshat:annotations-changed', annotationsChanged);
     view.removeEventListener('load', handleLoad); view.removeEventListener('keydown', readerKeyboard);
-    clearAnnotationPalettes(); contentDocuments.forEach((doc) => { doc.removeEventListener('keydown', readerKeyboard); doc.removeEventListener('pointerdown', contentPointerDown); doc.removeEventListener('pointerup', contentPointerUp); }); contentDocuments.clear();
+    clearAnnotationPalettes(); contentDocuments.forEach((doc) => { doc.removeEventListener('keydown', readerKeyboard); doc.removeEventListener('pointerdown', contentPointerDown); doc.removeEventListener('pointerup', contentPointerUp); doc.removeEventListener('mouseup', contentPointerUp); doc.removeEventListener('touchend', contentPointerUp); }); contentDocuments.clear();
     view.close();
   };
 }

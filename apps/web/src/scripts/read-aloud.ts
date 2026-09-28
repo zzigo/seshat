@@ -18,7 +18,7 @@ import { READER_VOICE_LONG_PRESS_MS, type ReaderPlayFromDetail } from '../lib/re
 
 type ReaderEngine = 'native' | 'kokoro' | 'chirp' | 'rendered';
 type ReaderState = 'idle' | 'loading' | 'reading' | 'paused';
-type Sentence = NarrationSentence;
+export type Sentence = NarrationSentence;
 type ReaderMount = { referenceId:string; language:string; container:HTMLElement; button:HTMLButtonElement; stopButton?:HTMLButtonElement; report:(message:string,tone?:'ready'|'saving'|'error')=>void; chirpEnabled:boolean };
 type NarrationProvider='kokoro'|'chirp';
 export type NarrationSegment={index:number;url:string;sizeBytes:number;startOffset:number|null;endOffset:number|null};
@@ -114,7 +114,7 @@ export const splitReadingSentences=(source:string,language='en',headings:Narrati
 };
 
 class ReadAloudController{
-  state:ReaderState='idle';activeEngine:ReaderEngine|null=null;mount:ReaderMount|null=null;loadedReferenceId='';sourceKind='markdown';sentences:Sentence[]=[];index=0;current:Sentence|null=null;token=0;audio:HTMLAudioElement|null=null;audioSourceRate=1;audioContext:AudioContext|null=null;audioSources=new Set<AudioScheduledSourceNode>();audioTimeline:Array<{start:number;end:number;sentence:Sentence;index:number}>=[];audioTimelineTimer=0;beaconTimer=0;scheduledUntil=0;source='';dialog:HTMLDialogElement|null=null;playTooltip:HTMLButtonElement|null=null;captionResizeObserver:ResizeObserver|null=null;kokoro:any=null;kokoroRendering=false;voiceData=new Map<string,Float32Array>();renderedProvider:NarrationProvider='kokoro';renderedSegments:NarrationSegment[]=[];renderedAudios:HTMLAudioElement[]=[];renderedDurations:number[]=[];renderedTotal=0;renderedElapsed=0;renderedChapters:ReaderChapter[]=[];renderedSeek:number|null=null;renderedInterrupt:(()=>void)|null=null;lastPdfPage=0;requestedPdfPage=0;
+  state:ReaderState='idle';activeEngine:ReaderEngine|null=null;mount:ReaderMount|null=null;loadedReferenceId='';sourceKind='markdown';sentences:Sentence[]=[];index=0;current:Sentence|null=null;token=0;audio:HTMLAudioElement|null=null;audioSourceRate=1;audioContext:AudioContext|null=null;audioSources=new Set<AudioScheduledSourceNode>();audioTimeline:Array<{start:number;end:number;sentence:Sentence;index:number}>=[];audioTimelineTimer=0;beaconTimer=0;scheduledUntil=0;source='';dialog:HTMLDialogElement|null=null;playTooltip:HTMLButtonElement|null=null;captionResizeObserver:ResizeObserver|null=null;activeCursorHandler:((e:Event)=>void)|null=null;kokoro:any=null;kokoroRendering=false;voiceData=new Map<string,Float32Array>();renderedProvider:NarrationProvider='kokoro';renderedSegments:NarrationSegment[]=[];renderedAudios:HTMLAudioElement[]=[];renderedDurations:number[]=[];renderedTotal=0;renderedElapsed=0;renderedChapters:ReaderChapter[]=[];renderedSeek:number|null=null;renderedInterrupt:(()=>void)|null=null;lastPdfPage=0;requestedPdfPage=0;
   constructor(){if(typeof document==='undefined')return;document.addEventListener('keydown',(event)=>{const target=event.target as HTMLElement|null;if(target?.matches('input,textarea,select,[contenteditable="true"]')||event.metaKey||event.ctrlKey||event.altKey)return;if(event.key.toLowerCase()==='m'&&this.current&&this.state!=='idle'){event.preventDefault();void this.mark();}});}
   attach(mount:ReaderMount){
     if(this.mount&&this.mount.referenceId!==mount.referenceId&&this.state!=='idle')this.stop();this.mount=mount;let timer=0,long=false;
@@ -340,55 +340,117 @@ class ReadAloudController{
     caption.dataset.readerPositioned='true';caption.style.left=`${center.x}px`;caption.style.top=`${center.y}px`;caption.style.bottom='auto';caption.style.transform='translate(-50%,-50%)';
     return{x:bounds.width?center.x/bounds.width:.5,y:bounds.height?center.y/bounds.height:.5};
   }
+  syncToolbarOffset(caption:HTMLElement){
+    const container=this.mount?.container;if(!container)return;
+    const toolbar=container.querySelector<HTMLElement>('.pod-toolbar');
+    if(toolbar&&!toolbar.hidden&&toolbar.offsetHeight>0&&!container.classList.contains('maximized-pod')){
+      caption.style.setProperty('--pod-toolbar-offset',`${toolbar.offsetHeight}px`);
+    }else if(container.classList.contains('show-maximized-toolbar')&&toolbar){
+      caption.style.setProperty('--pod-toolbar-offset',`${toolbar.offsetHeight}px`);
+    }else{
+      caption.style.setProperty('--pod-toolbar-offset','0px');
+    }
+  }
+  updateDockPosition(ratioY:number){
+    const caption=this.mount?.container?.querySelector<HTMLElement>('.read-aloud-caption');
+    if(!caption||caption.classList.contains('is-positioning'))return;
+    const isTop=caption.classList.contains('dock-top');
+    if(isTop&&ratioY<=.45){caption.classList.remove('dock-top');caption.classList.add('dock-bottom');}
+    else if(!isTop&&ratioY>=.52){caption.classList.remove('dock-bottom');caption.classList.add('dock-top');this.syncToolbarOffset(caption);}
+  }
   installCaptionDrag(caption:HTMLElement,handle:HTMLButtonElement){
-    const placeSaved=()=>{const saved=this.savedCaptionPosition();if(saved)this.positionCaption(caption,saved);};
-    const currentCenter=()=>{
-      const container=this.mount?.container;if(!container)return{x:.5,y:.5};
-      const bounds=container.getBoundingClientRect(),panel=caption.getBoundingClientRect();
-      return{x:panel.left-bounds.left+panel.width/2,y:panel.top-bounds.top+panel.height/2};
-    };
-    const nudge=(deltaX:number,deltaY:number)=>{
-      const container=this.mount?.container;if(!container)return;const bounds=container.getBoundingClientRect(),panel=caption.getBoundingClientRect(),current=currentCenter();
-      const center=boundedReaderCaptionCenter(current.x+deltaX,current.y+deltaY,bounds.width,bounds.height,panel.width,panel.height);
-      const normalized={x:bounds.width?center.x/bounds.width:.5,y:bounds.height?center.y/bounds.height:.5};this.positionCaption(caption,normalized);this.saveCaptionPosition(normalized);
-    };
-    handle.addEventListener('dblclick',(event)=>{event.preventDefault();this.resetCaptionPosition(caption);});
-    handle.addEventListener('keydown',(event)=>{
-      if(event.key==='Home'){event.preventDefault();this.resetCaptionPosition(caption);return;}
-      const movement=event.shiftKey?48:16,deltas:Record<string,[number,number]>={ArrowLeft:[-movement,0],ArrowRight:[movement,0],ArrowUp:[0,-movement],ArrowDown:[0,movement]};
-      if(deltas[event.key]){event.preventDefault();nudge(...deltas[event.key]);}
+    const container=this.mount?.container;if(!container)return;
+    handle.addEventListener('click',(event)=>{
+      event.preventDefault();event.stopPropagation();
+      const isTop=caption.classList.contains('dock-top');
+      caption.classList.toggle('dock-top',!isTop);caption.classList.toggle('dock-bottom',isTop);
+      if(!isTop)this.syncToolbarOffset(caption);
     });
     handle.addEventListener('pointerdown',(event)=>{
-      if(event.button!==0)return;event.preventDefault();event.stopPropagation();const container=this.mount?.container;if(!container)return;
-      const bounds=container.getBoundingClientRect(),panel=caption.getBoundingClientRect(),start=currentCenter(),startX=event.clientX,startY=event.clientY;let moved=false;
+      if(event.button!==0)return;event.preventDefault();event.stopPropagation();
+      const bounds=container.getBoundingClientRect(),startY=event.clientY;let moved=false;
       handle.setPointerCapture(event.pointerId);caption.classList.add('is-positioning');
       const move=(moveEvent:PointerEvent)=>{
-        if(moveEvent.pointerId!==event.pointerId)return;const center=boundedReaderCaptionCenter(start.x+moveEvent.clientX-startX,start.y+moveEvent.clientY-startY,bounds.width,bounds.height,panel.width,panel.height);
-        if(Math.hypot(moveEvent.clientX-startX,moveEvent.clientY-startY)>3)moved=true;
-        this.positionCaption(caption,{x:bounds.width?center.x/bounds.width:.5,y:bounds.height?center.y/bounds.height:.5});
+        if(moveEvent.pointerId!==event.pointerId)return;
+        if(Math.abs(moveEvent.clientY-startY)>6)moved=true;
+        const currentY=moveEvent.clientY-bounds.top;
+        if(currentY<bounds.height*.5){
+          caption.classList.remove('dock-bottom');caption.classList.add('dock-top');this.syncToolbarOffset(caption);
+        }else{
+          caption.classList.remove('dock-top');caption.classList.add('dock-bottom');
+        }
       };
       const stop=(stopEvent:PointerEvent)=>{
-        if(stopEvent.pointerId!==event.pointerId)return;caption.classList.remove('is-positioning');handle.releasePointerCapture(stopEvent.pointerId);handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',stop);handle.removeEventListener('pointercancel',stop);
-        if(moved){const center=currentCenter();this.saveCaptionPosition({x:bounds.width?center.x/bounds.width:.5,y:bounds.height?center.y/bounds.height:.5});}
+        if(stopEvent.pointerId!==event.pointerId)return;
+        caption.classList.remove('is-positioning');handle.releasePointerCapture(stopEvent.pointerId);
+        handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',stop);handle.removeEventListener('pointercancel',stop);
+        if(!moved){
+          const isTop=caption.classList.contains('dock-top');
+          caption.classList.toggle('dock-top',!isTop);caption.classList.toggle('dock-bottom',isTop);
+          if(!isTop)this.syncToolbarOffset(caption);
+        }
       };
       handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',stop);handle.addEventListener('pointercancel',stop);
     });
-    this.captionResizeObserver?.disconnect();this.captionResizeObserver=typeof ResizeObserver==='function'?new ResizeObserver(()=>{if(!caption.isConnected){this.captionResizeObserver?.disconnect();return;}placeSaved();}):null;
-    this.captionResizeObserver?.observe(caption);if(this.mount?.container)this.captionResizeObserver?.observe(this.mount.container);window.requestAnimationFrame(placeSaved);
+    handle.addEventListener('dblclick',(event)=>{event.preventDefault();caption.classList.remove('dock-top');caption.classList.add('dock-bottom');});
+    handle.addEventListener('keydown',(event)=>{
+      if(event.key==='Home'){event.preventDefault();caption.classList.remove('dock-top');caption.classList.add('dock-bottom');}
+      else if(event.key==='ArrowUp'){event.preventDefault();caption.classList.remove('dock-bottom');caption.classList.add('dock-top');this.syncToolbarOffset(caption);}
+      else if(event.key==='ArrowDown'){event.preventDefault();caption.classList.remove('dock-top');caption.classList.add('dock-bottom');}
+    });
   }
-  trackTextSentence(pre:HTMLElement,sentence:Sentence){const css=(CSS as any).highlights;if(!css||typeof (window as any).Highlight!=='function')return;const walker=document.createTreeWalker(pre,NodeFilter.SHOW_TEXT);let node:Node|null;while(node=walker.nextNode()){const text=node.textContent||'';let index=text.indexOf(sentence.raw.trim());if(index<0&&node===pre.firstChild)index=Math.max(0,Math.min(text.length-1,sentence.start));if(index<0)continue;const range=document.createRange();range.setStart(node,index);range.setEnd(node,Math.min(text.length,index+Math.max(1,sentence.raw.trim().length)));css.set('seshat-read-aloud',new (window as any).Highlight(range));const surface=pre.closest<HTMLElement>('.pod-reading-surface');if(surface){const target=range.getBoundingClientRect(),bounds=surface.getBoundingClientRect(),caption=this.mount?.container.querySelector<HTMLElement>('.read-aloud-caption');const lower=bounds.bottom-(caption?.offsetHeight||0)-24;if(target.top<bounds.top+24||target.bottom>lower)surface.scrollBy({top:target.top-bounds.top-bounds.height*.32,behavior:'smooth'});}break;}}
-  trackPdfSentence(sentence:Sentence){if(!this.mount)return;this.mount.container.querySelectorAll('.read-aloud-active,.read-aloud-anchor').forEach((item)=>item.classList.remove('read-aloud-active','read-aloud-anchor'));const pages=[...this.mount.container.querySelectorAll<HTMLElement>('.seshat-pdf-page')];if(!pages.length)return;const total=pages.length,estimated=Math.max(1,Math.min(total,Math.floor((sentence.start/Math.max(1,this.source.length))*total)+1));const rendered=pages.filter((page)=>page.classList.contains('rendered'));const candidates=rendered.filter((page)=>{const number=Number(page.dataset.page);return Math.abs(number-estimated)<=2||(this.lastPdfPage>0&&Math.abs(number-this.lastPdfPage)<=1);});let best:{page:HTMLElement;spans:HTMLElement[];start:number;end:number;score:number}|null=null;for(const page of candidates){const spans=[...page.querySelectorAll<HTMLElement>('.textLayer span')],match=bestReadingSpanRun(spans.map((span)=>span.textContent||''),sentence.text);if(match&&(!best||match.score>best.score))best={page,spans,start:match.start,end:match.end,score:match.score};}if(!best){if(this.requestedPdfPage!==estimated){this.requestedPdfPage=estimated;this.mount.container.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:estimated}}));}return;}const pageNumber=Number(best.page.dataset.page),previous=this.lastPdfPage;for(let index=best.start;index<=best.end;index+=1)best.spans[index]?.classList.add('read-aloud-active');best.spans[best.start]?.classList.add('read-aloud-anchor');this.lastPdfPage=pageNumber;this.requestedPdfPage=pageNumber;if(previous!==pageNumber)this.mount.container.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:pageNumber}}));else{const target=best.spans[best.start]?.getBoundingClientRect(),viewer=best.page.closest<HTMLElement>('.seshat-pdf-viewer'),bounds=viewer?.getBoundingClientRect(),caption=this.mount.container.querySelector<HTMLElement>('.read-aloud-caption');if(target&&viewer&&bounds){const lower=bounds.bottom-(caption?.offsetHeight||0)-18;if(target.top<bounds.top+18||target.bottom>lower)viewer.scrollBy({top:target.top-bounds.top-bounds.height*.36,behavior:'smooth'});}}}
+  trackTextSentence(pre:HTMLElement,sentence:Sentence){const css=(CSS as any).highlights;if(!css||typeof (window as any).Highlight!=='function')return;const walker=document.createTreeWalker(pre,NodeFilter.SHOW_TEXT);let node:Node|null;while(node=walker.nextNode()){const text=node.textContent||'';let index=text.indexOf(sentence.raw.trim());if(index<0&&node===pre.firstChild)index=Math.max(0,Math.min(text.length-1,sentence.start));if(index<0)continue;const range=document.createRange();range.setStart(node,index);range.setEnd(node,Math.min(text.length,index+Math.max(1,sentence.raw.trim().length)));css.set('seshat-read-aloud',new (window as any).Highlight(range));const surface=pre.closest<HTMLElement>('.pod-reading-surface');if(surface){const target=range.getBoundingClientRect(),bounds=surface.getBoundingClientRect(),caption=this.mount?.container.querySelector<HTMLElement>('.read-aloud-caption');const lower=bounds.bottom-(caption?.offsetHeight||0)-24;this.updateDockPosition((target.top-bounds.top)/Math.max(1,bounds.height));if(target.top<bounds.top+24||target.bottom>lower)surface.scrollBy({top:target.top-bounds.top-bounds.height*.32,behavior:'smooth'});}break;}}
+  trackPdfSentence(sentence:Sentence){if(!this.mount)return;this.mount.container.querySelectorAll('.read-aloud-active,.read-aloud-anchor').forEach((item)=>item.classList.remove('read-aloud-active','read-aloud-anchor'));const pages=[...this.mount.container.querySelectorAll<HTMLElement>('.seshat-pdf-page')];if(!pages.length)return;const total=pages.length,estimated=Math.max(1,Math.min(total,Math.floor((sentence.start/Math.max(1,this.source.length))*total)+1));const rendered=pages.filter((page)=>page.classList.contains('rendered'));const candidates=rendered.filter((page)=>{const number=Number(page.dataset.page);return Math.abs(number-estimated)<=2||(this.lastPdfPage>0&&Math.abs(number-this.lastPdfPage)<=1);});let best:{page:HTMLElement;spans:HTMLElement[];start:number;end:number;score:number}|null=null;for(const page of candidates){const spans=[...page.querySelectorAll<HTMLElement>('.textLayer span')],match=bestReadingSpanRun(spans.map((span)=>span.textContent||''),sentence.text);if(match&&(!best||match.score>best.score))best={page,spans,start:match.start,end:match.end,score:match.score};}if(!best){if(this.requestedPdfPage!==estimated){this.requestedPdfPage=estimated;this.mount.container.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:estimated}}));}return;}const pageNumber=Number(best.page.dataset.page),previous=this.lastPdfPage;for(let index=best.start;index<=best.end;index+=1)best.spans[index]?.classList.add('read-aloud-active');best.spans[best.start]?.classList.add('read-aloud-anchor');this.lastPdfPage=pageNumber;this.requestedPdfPage=pageNumber;if(previous!==pageNumber)this.mount.container.dispatchEvent(new CustomEvent('seshat:pdf-goto-page',{detail:{page:pageNumber}}));else{const target=best.spans[best.start]?.getBoundingClientRect(),viewer=best.page.closest<HTMLElement>('.seshat-pdf-viewer'),bounds=viewer?.getBoundingClientRect(),caption=this.mount.container.querySelector<HTMLElement>('.read-aloud-caption');if(target&&viewer&&bounds){this.updateDockPosition((target.top-bounds.top)/Math.max(1,bounds.height));const lower=bounds.bottom-(caption?.offsetHeight||0)-18;if(target.top<bounds.top+18||target.bottom>lower)viewer.scrollBy({top:target.top-bounds.top-bounds.height*.36,behavior:'smooth'});}}}
   showSentence(sentence:Sentence){
     this.current=sentence;if(!this.mount)return;this.clearHighlight();
-    const caption=document.createElement('div');caption.className='read-aloud-caption';caption.setAttribute('role','toolbar');caption.setAttribute('aria-label','Read aloud controls');
-    const dragHandle=document.createElement('button');dragHandle.type='button';dragHandle.className='caption-drag-handle';dragHandle.innerHTML=readerIcon('drag');dragHandle.title='Move reading controls · double-click or press Home to reset';dragHandle.ariaLabel=dragHandle.title;
-    const controls=document.createElement('div');controls.className='read-aloud-caption-controls';const comment=document.createElement('button');comment.type='button';comment.className='caption-comment';comment.innerHTML=readerIcon('bookmark');comment.title='Mark and classify this reading position';comment.ariaLabel=comment.title;let commentTouch=0;comment.addEventListener('pointerup',(event)=>{event.stopPropagation();if(event.pointerType!=='touch'&&event.pointerType!=='pen')return;event.preventDefault();commentTouch=performance.now();void this.mark();});comment.addEventListener('click',(event)=>{event.stopPropagation();if(performance.now()-commentTouch<700)return;void this.mark();});
+    const caption=document.createElement('div');caption.className='read-aloud-caption dock-bottom';caption.setAttribute('role','toolbar');caption.setAttribute('aria-label','Read aloud controls');
+    const dragHandle=document.createElement('button');dragHandle.type='button';dragHandle.className='caption-drag-handle';dragHandle.innerHTML=readerIcon('drag');dragHandle.title='Move reading controls · click to flip top/bottom, drag, or double-click to reset';dragHandle.ariaLabel=dragHandle.title;
+    const controls=document.createElement('div');controls.className='read-aloud-caption-controls';const comment=document.createElement('button');comment.type='button';comment.className='caption-comment';comment.innerHTML=readerIcon('bookmark');comment.title='Mark reading position in red';comment.ariaLabel=comment.title;let commentTouch=0;comment.addEventListener('pointerup',(event)=>{event.stopPropagation();if(event.pointerType!=='touch'&&event.pointerType!=='pen')return;event.preventDefault();commentTouch=performance.now();void this.mark();});comment.addEventListener('click',(event)=>{event.stopPropagation();if(performance.now()-commentTouch<700)return;void this.mark();});
     const previousSection=document.createElement('button');previousSection.type='button';previousSection.className='caption-section';previousSection.innerHTML=readerIcon('sectionPrevious');previousSection.title='Previous section';previousSection.ariaLabel=previousSection.title;previousSection.onclick=()=>void this.shiftSection(-1);const nextSection=document.createElement('button');nextSection.type='button';nextSection.className='caption-section';nextSection.innerHTML=readerIcon('sectionNext');nextSection.title='Next section';nextSection.ariaLabel=nextSection.title;nextSection.onclick=()=>void this.shiftSection(1);
     const slower=document.createElement('button');slower.type='button';slower.className='caption-speed';slower.innerHTML=readerIcon('slower');slower.title='Decrease reading speed by 0.25';slower.ariaLabel=slower.title;slower.onclick=()=>this.adjustRate(-.25);const speed=document.createElement('output');speed.dataset.readerSpeed='';speed.ariaLabel='Reading speed';speed.value=`${readSettings().rate.toFixed(2)}×`;const faster=document.createElement('button');faster.type='button';faster.className='caption-speed';faster.innerHTML=readerIcon('faster');faster.title='Increase reading speed by 0.25';faster.ariaLabel=faster.title;faster.onclick=()=>this.adjustRate(.25);const transport=document.createElement('button');transport.type='button';transport.className='caption-transport';transport.dataset.readerTransport='';transport.onclick=()=>this.captionTransport();const voices=document.createElement('button');voices.type='button';voices.className='caption-voices';voices.innerHTML='<span aria-hidden="true">V</span>';voices.title='Choose voice and reading engine';voices.ariaLabel=voices.title;voices.onclick=()=>this.openVoices();controls.append(comment,previousSection,nextSection,slower,speed,faster,transport,voices);caption.append(dragHandle,controls);this.mount.container.appendChild(caption);this.installCaptionDrag(caption,dragHandle);this.paintButton();
+    const cursorListener=(e:Event)=>{const r=(e as CustomEvent<{ratioY?:number}>).detail?.ratioY;if(typeof r==='number')this.updateDockPosition(r);};
+    this.activeCursorHandler=cursorListener;
+    this.mount.container.addEventListener('seshat:reader-cursor-position',cursorListener);
     const pre=this.mount.container.querySelector<HTMLElement>('pre');if(pre)this.trackTextSentence(pre,sentence);else if(this.mount.container.querySelector('.seshat-epub-shell'))this.mount.container.dispatchEvent(new CustomEvent('seshat:epub-reader-locate',{detail:{text:sentence.text,start:sentence.start,end:sentence.end}}));else if(this.mount.container.querySelector('.seshat-html-reader'))this.mount.container.dispatchEvent(new CustomEvent('seshat:html-reader-locate',{detail:{text:sentence.text,start:sentence.start,end:sentence.end}}));else this.trackPdfSentence(sentence);if(this.activeEngine==='rendered')this.mountRenderedTimeline(caption);
   }
-  clearHighlight(){this.captionResizeObserver?.disconnect();this.captionResizeObserver=null;document.querySelectorAll('.read-aloud-caption').forEach((item)=>item.remove());document.querySelectorAll('.read-aloud-active,.read-aloud-anchor').forEach((item)=>item.classList.remove('read-aloud-active','read-aloud-anchor'));this.mount?.container.dispatchEvent(new CustomEvent('seshat:epub-reader-clear'));this.mount?.container.dispatchEvent(new CustomEvent('seshat:html-reader-clear'));(CSS as any).highlights?.delete?.('seshat-read-aloud');}
-  async mark(){if(!this.mount||!this.current)return;const sentence=this.current;const response=await fetch(`/api/library/${encodeURIComponent(this.mount.referenceId)}/annotations`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({quote:sentence.raw.trim(),startOffset:sentence.start,endOffset:sentence.end,sourceKind:this.sourceKind,rects:[],color:'#aaaaaa',category:'misc',noteType:'reading-mark',locator:this.sourceKind==='html'?'webarchive-reader':`sentence ${this.index+1}`,reviewStatus:'reading'})});if(!response.ok){const result=await response.json().catch(()=>({}));this.mount.report(result.error||'Reading mark could not be saved','error');return;}this.mount.container.querySelector('.read-aloud-caption')?.classList.add('is-marked');window.dispatchEvent(new CustomEvent('seshat:annotations-changed',{detail:{referenceId:this.mount.referenceId}}));this.mount.report(`reading mark saved · open Annotations to classify it`);}
+  clearHighlight(){
+    if(this.activeCursorHandler&&this.mount?.container){this.mount.container.removeEventListener('seshat:reader-cursor-position',this.activeCursorHandler as EventListener);this.activeCursorHandler=null;}
+    this.captionResizeObserver?.disconnect();this.captionResizeObserver=null;document.querySelectorAll('.read-aloud-caption').forEach((item)=>item.remove());document.querySelectorAll('.read-aloud-active,.read-aloud-anchor').forEach((item)=>item.classList.remove('read-aloud-active','read-aloud-anchor'));this.mount?.container.dispatchEvent(new CustomEvent('seshat:epub-reader-clear'));this.mount?.container.dispatchEvent(new CustomEvent('seshat:html-reader-clear'));(CSS as any).highlights?.delete?.('seshat-read-aloud');
+  }
+  async mark(){
+    if(!this.mount||!this.current)return;
+    const sentence=this.current;
+    const requestMarkEvent=new CustomEvent('seshat:reader-request-mark',{bubbles:true,cancelable:true,detail:{sentence,current:this.current,index:this.index}});
+    const handled=!this.mount.container.dispatchEvent(requestMarkEvent);
+    if(handled){
+      this.mount.container.querySelector('.read-aloud-caption')?.classList.add('is-marked');
+      return;
+    }
+    const response=await fetch(`/api/library/${encodeURIComponent(this.mount.referenceId)}/annotations`,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+        quote:sentence.raw.trim(),
+        startOffset:sentence.start,
+        endOffset:sentence.end,
+        sourceKind:this.sourceKind,
+        rects:[],
+        color:'#ff6666',
+        category:'misc',
+        noteType:'reading-mark',
+        locator:this.sourceKind==='html'?'webarchive-reader':`sentence ${this.index+1}`,
+        reviewStatus:'reading'
+      })
+    });
+    if(!response.ok){
+      const result=await response.json().catch(()=>({}));
+      this.mount.report(result.error||'Reading mark could not be saved','error');
+      return;
+    }
+    this.mount.container.querySelector('.read-aloud-caption')?.classList.add('is-marked');
+    window.dispatchEvent(new CustomEvent('seshat:annotations-changed',{detail:{referenceId:this.mount.referenceId}}));
+    this.mount.report(`reading mark saved · marked in red`);
+  }
   openVoices(){
     if(!this.mount)return;this.dialog?.close();const settings=readSettings();
     const dialog=document.createElement('dialog');dialog.className='reader-voice-dialog';this.dialog=dialog;
