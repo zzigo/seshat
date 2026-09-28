@@ -24,7 +24,7 @@ type NarrationProvider='kokoro'|'chirp';
 export type NarrationSegment={index:number;url:string;sizeBytes:number;startOffset:number|null;endOffset:number|null};
 type SpeechGroup={text:string;startOffset:number;endOffset:number;sentences:Sentence[]};
 type ReaderChapter={title:string;offset:number;time:number};
-type ReaderSourceDetail={kind?:string;load?:()=>Promise<string>;headings?:()=>Promise<NarrationHeading[]>};
+type ReaderSourceDetail={kind?:string;load?:()=>Promise<string>;headings?:()=>Promise<NarrationHeading[]>;initialOffset?:()=>Promise<number|null>|number|null};
 type ReaderCaptionPosition={x:number;y:number};
 type ReaderCaptionPositions={compact?:ReaderCaptionPosition;regular?:ReaderCaptionPosition};
 
@@ -128,7 +128,7 @@ class ReadAloudController{
     const playFromEvent=(event:Event)=>{this.mount=mount;void this.playFromQuote((event as CustomEvent<ReaderPlayFromDetail>).detail);};
     const pageRendered=()=>{if(this.mount?.referenceId===mount.referenceId&&this.current&&this.state!=='idle')window.requestAnimationFrame(()=>this.current&&this.trackPdfSentence(this.current));};
     mount.button.addEventListener('pointerdown',down);mount.button.addEventListener('pointerup',clear);mount.button.addEventListener('pointercancel',clear);mount.button.addEventListener('pointermove',move);
-    mount.button.addEventListener('click',(event)=>{if(long){long=false;return;}this.mount=mount;if(event.shiftKey){this.openVoices();return;}void this.toggle();});
+    mount.button.addEventListener('click',(event)=>{if(long){long=false;return;}this.mount=mount;try{if(this.audioContext&&this.audioContext.state==='suspended')void this.audioContext.resume().catch(()=>{});}catch{}if(event.shiftKey){this.openVoices();return;}void this.toggle();});
     mount.stopButton?.addEventListener('click',()=>{this.mount=mount;this.stop();mount.report('reading stopped');});mount.container.addEventListener('pointerup',position);mount.container.addEventListener('seshat:play-rendered',rendered);mount.container.addEventListener('seshat:reader-play-from',playFromEvent);mount.container.addEventListener('seshat:pdf-page-rendered',pageRendered);
     mount.button.title='Read aloud · Shift-click or hold 2 seconds for voices · M marks the current sentence';this.paintButton();
     return()=>{clear();mount.container.removeEventListener('pointerup',position);mount.container.removeEventListener('seshat:play-rendered',rendered);mount.container.removeEventListener('seshat:reader-play-from',playFromEvent);mount.container.removeEventListener('seshat:pdf-page-rendered',pageRendered);this.playTooltip?.remove();this.playTooltip=null;if(this.mount?.button===mount.button&&this.state==='idle')this.mount=null;};
@@ -156,9 +156,21 @@ class ReadAloudController{
     if(changed){this.lastPdfPage=0;this.requestedPdfPage=0;}
     if(!this.sentences.length)throw new Error('No readable sentences were found.');
     this.index=0;
-    const annotations=await fetch(`/api/library/${encodeURIComponent(this.mount.referenceId)}/annotations`).then((result)=>result.ok?result.json():null).catch(()=>null);
-    const mark=(annotations?.annotations||[]).filter((item:any)=>item.noteType==='reading-mark').sort((a:any,b:any)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
-    if(mark){const next=this.sentences.findIndex((sentence)=>sentence.start>=Number(mark.endOffset||0));if(next>=0)this.index=next;}
+    let initialSet=false;
+    if(sourceRequest.initialOffset){
+      try{
+        const offset=await sourceRequest.initialOffset();
+        if(Number.isFinite(offset)&&offset!>=0){
+          const matching=this.sentences.findIndex((sentence)=>sentence.start>=offset!);
+          if(matching>=0){this.index=matching;initialSet=true;}
+        }
+      }catch(err){console.warn('[seshat:read-aloud] initialOffset failed:',err);}
+    }
+    if(!initialSet){
+      const annotations=await fetch(`/api/library/${encodeURIComponent(this.mount.referenceId)}/annotations`).then((result)=>result.ok?result.json():null).catch(()=>null);
+      const mark=(annotations?.annotations||[]).filter((item:any)=>item.noteType==='reading-mark').sort((a:any,b:any)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+      if(mark){const next=this.sentences.findIndex((sentence)=>sentence.start>=Number(mark.endOffset||0));if(next>=0)this.index=next;}
+    }
   }
   async start(fromIndex?:number){if(!this.mount)return;if(this.state!=='idle')this.stop(false);const stored=readSettings(),settings={...stored,engine:stored.engine==='chirp'&&!this.mount.chirpEnabled?'native':stored.engine} as ReaderSettings;if(settings.engine==='kokoro'&&this.kokoroRendering){this.mount.report('Kokoro is rendering · choose Browser/Microsoft or Chirp for simultaneous reading','error');return;}this.activeEngine=settings.engine;this.state='loading';this.paintButton();this.mount.report('preparing read aloud…','saving');try{await this.loadText();if(Number.isFinite(fromIndex))this.index=Math.max(0,Math.min(this.sentences.length-1,Math.floor(fromIndex!)));const token=++this.token;if(settings.engine==='kokoro')await this.runKokoro(token);else if(settings.engine==='chirp')await this.runChirp(token);else await this.runNative(token);}catch(error){this.activeEngine=null;this.state='idle';this.paintButton();this.mount?.report(error instanceof Error?error.message:'Read aloud failed','error');}}
   async offerPlayFrom(event:PointerEvent,mount:ReaderMount){const target=event.target as HTMLElement|null;if(!target||target.closest('button,a,input,select,textarea,dialog,.read-aloud-caption,.play-from-tooltip'))return;const htmlContent=target.closest<HTMLElement>('.webarchive-reader-content');const textTarget=target.closest<HTMLElement>('pre,.textLayer span')||(htmlContent?target.closest<HTMLElement>('p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th')||target:null);if(!textTarget)return;if(window.getSelection()?.toString().trim())return;this.mount=mount;if(this.loadedReferenceId!==mount.referenceId||!this.sentences.length)try{await this.loadText();}catch{return;}let sentenceIndex=-1;const sourceRoot=textTarget.closest<HTMLElement>('pre')||htmlContent;if(sourceRoot){const doc=document as any;const caret=doc.caretPositionFromPoint?.(event.clientX,event.clientY);const rangeAtPoint=caret?null:doc.caretRangeFromPoint?.(event.clientX,event.clientY);const node=caret?.offsetNode||rangeAtPoint?.startContainer,offset=caret?.offset??rangeAtPoint?.startOffset;if(node&&sourceRoot.contains(node)&&Number.isFinite(offset)){const range=document.createRange();range.selectNodeContents(sourceRoot);try{range.setEnd(node,offset);const sourceOffset=range.toString().length;sentenceIndex=this.sentences.findIndex((sentence)=>sourceOffset>=sentence.start&&sourceOffset<=sentence.end);}catch{}}}if(sentenceIndex<0){const clicked=cleanSpeech(textTarget.textContent||'').toLowerCase(),words=new Set(clicked.split(/\s+/).filter((word)=>word.length>3));let best=-1,bestScore=0;this.sentences.forEach((sentence,index)=>{const candidate=sentence.text.toLowerCase();const score=(clicked&&candidate.includes(clicked)?100:0)+[...words].filter((word)=>candidate.includes(word)).length-Math.abs(index-this.index)*.0001;if(score>bestScore){bestScore=score;best=index;}});sentenceIndex=best;}if(sentenceIndex<0)return;this.playTooltip?.remove();const tooltip=document.createElement('button');tooltip.type='button';tooltip.className='play-from-tooltip';tooltip.textContent='Play from here';tooltip.style.left=`${Math.max(8,Math.min(window.innerWidth-132,event.clientX+8))}px`;tooltip.style.top=`${Math.max(8,Math.min(window.innerHeight-42,event.clientY+8))}px`;tooltip.onclick=(click)=>{click.preventDefault();click.stopPropagation();tooltip.remove();if(this.playTooltip===tooltip)this.playTooltip=null;void this.playFrom(sentenceIndex);};this.playTooltip=tooltip;(document.fullscreenElement||document.body).appendChild(tooltip);window.setTimeout(()=>{if(this.playTooltip===tooltip){tooltip.remove();this.playTooltip=null;}},5000);}
@@ -184,9 +196,9 @@ class ReadAloudController{
           if(speechSynthesis.paused){
             console.log('[seshat:beacon] resuming paused speechSynthesis');
             speechSynthesis.resume();
-          }else if(elapsedSinceAdvance>6000&&!speechSynthesis.speaking&&!speechSynthesis.pending){
-            console.warn('[seshat:beacon] speech synthesis halted unexpectedly, poking resume');
-            speechSynthesis.resume();
+          }else if(elapsedSinceAdvance>5000&&!speechSynthesis.speaking&&!speechSynthesis.pending){
+            console.warn('[seshat:beacon] speech synthesis halted unexpectedly, unblocking reader');
+            browserSpeech.stop();
           }
         }
       }else if(this.activeEngine==='chirp'){
@@ -238,7 +250,13 @@ class ReadAloudController{
     const duration=this.boundaryDurationMs(index);if(!duration||token!==this.token)return;
     const sentence=this.sentences[index],settings=readSettings();
     if(sentence&&settings.structure.earcons&&sentence.boundaryBefore==='chapter'){
-      const context=this.ensureAudioContext();await context.resume();this.scheduleEarcon(index,context.currentTime+.03);
+      try{
+        const context=this.ensureAudioContext();
+        await context.resume();
+        this.scheduleEarcon(index,context.currentTime+.03);
+      }catch(earconErr){
+        console.warn('[seshat:read-aloud] earcon playback skipped:',earconErr);
+      }
     }
     await this.waitNarration(duration,token);
   }
@@ -248,7 +266,7 @@ class ReadAloudController{
     const profile=deterministicEarconProfile(referenceId,sentence,settings.structure),earcon=synthesizeEarconSamples(profile,sampleRate),output=silenceSamples(Math.max(pause,profile.durationMs),sampleRate);output.set(earcon.subarray(0,output.length));return output;
   }
   async speakNative(sentence:Sentence,voice:SpeechSynthesisVoice,language:string,token:number){const chunks=browserSpeechChunks(sentence.text);let started=false;let chunkSearchOffset=0;for(const text of chunks){if(token!==this.token)return;const chunkStart=sentence.text.indexOf(text,chunkSearchOffset);if(chunkStart>=0)chunkSearchOffset=chunkStart+text.length;const baseOffset=chunkStart>=0?chunkStart:0;await browserSpeech.speak({text,voice,language,rate:readSettings().rate,isCurrent:()=>token===this.token,onStart:()=>{if(!started){started=true;this.showSentence(sentence);}this.mount?.report(`speaking · ${voice.name} · ${voice.lang}`,'saving');},onWord:(charIndex,charLength)=>{if(token!==this.token)return;const sentenceCharIndex=baseOffset+charIndex;const rawWord=text.slice(charIndex,charIndex+(charLength||6)).trim().split(/\s+/)[0]||'';this.trackWord(sentence,sentenceCharIndex,charLength||rawWord.length||1,rawWord);}});if(token===this.token)await new Promise((resolve)=>window.setTimeout(resolve,30));}}
-  async runNative(token:number){if(!('speechSynthesis'in window))throw new Error('SpeechSynthesis is not available.');const settings=readSettings();const voices=await this.nativeVoices();const language=this.mount?.language||navigator.language;const code=normalizeReaderLanguage(language);const allowed=settings.nativeVoices.length?voices.filter((item)=>settings.nativeVoices.includes(item.name)):voices;const preferred=voices.find((item)=>item.name===settings.voice);const preferredForLanguage=preferred&&allowed.includes(preferred)&&normalizeReaderLanguage(preferred.lang)===code?preferred:null;const voice=preferredForLanguage||allowed.filter((item)=>normalizeReaderLanguage(item.lang)===code).sort((a,b)=>Number(/Microsoft.*Natural/i.test(b.name))-Number(/Microsoft.*Natural/i.test(a.name)))[0]||(preferred&&allowed.includes(preferred)?preferred:null)||allowed[0]||preferred||voices[0];if(!voice)throw new Error('No browser voices are installed.');this.mount?.report(`queued · ${voice.name} · ${voice.lang}`,'saving');this.state='reading';this.paintButton();this.startBeacon(token);for(;this.index<this.sentences.length&&token===this.token;this.index+=1){await this.playBoundary(this.index,token);if(token!==this.token)return;const sentence=this.sentences[this.index];try{await this.speakNative(sentence,voice,language,token);}catch(sentenceErr){console.warn('[seshat:read-aloud] speakNative sentence skipped due to error:',sentenceErr);if(token!==this.token)return;await new Promise((resolve)=>window.setTimeout(resolve,80));}}if(token===this.token)this.finish();}
+  async runNative(token:number){if(!('speechSynthesis'in window))throw new Error('SpeechSynthesis is not available.');const settings=readSettings();const voices=await this.nativeVoices();const language=this.mount?.language||navigator.language;const code=normalizeReaderLanguage(language);const allowed=settings.nativeVoices.length?voices.filter((item)=>settings.nativeVoices.includes(item.name)):voices;const preferred=voices.find((item)=>item.name===settings.voice);const preferredForLanguage=preferred&&allowed.includes(preferred)&&normalizeReaderLanguage(preferred.lang)===code?preferred:null;const voice=preferredForLanguage||allowed.filter((item)=>normalizeReaderLanguage(item.lang)===code).sort((a,b)=>Number(/Microsoft.*Natural/i.test(b.name))-Number(/Microsoft.*Natural/i.test(a.name)))[0]||(preferred&&allowed.includes(preferred)?preferred:null)||allowed[0]||preferred||voices[0];if(!voice)throw new Error('No browser voices are installed.');this.mount?.report(`queued · ${voice.name} · ${voice.lang}`,'saving');this.state='reading';this.paintButton();this.startBeacon(token);for(;this.index<this.sentences.length&&token===this.token;this.index+=1){try{await this.playBoundary(this.index,token);}catch(boundaryErr){console.warn('[seshat:read-aloud] playBoundary skipped:',boundaryErr);}if(token!==this.token)return;const sentence=this.sentences[this.index];try{await this.speakNative(sentence,voice,language,token);}catch(sentenceErr){console.warn('[seshat:read-aloud] speakNative sentence skipped due to error:',sentenceErr);if(token!==this.token)return;await new Promise((resolve)=>window.setTimeout(resolve,80));}}if(token===this.token)this.finish();}
   async nativeVoices(){return browserSpeech.voices();}
   async loadKokoro(){if(this.kokoro)return this.kokoro;this.mount?.report('downloading Kokoro local model · first use ≈95 MB','saving');const [{KokoroTTS},{env}]=await Promise.all([import('kokoro-js'),import('@huggingface/transformers')]);const wasm=env.backends.onnx.wasm as any;wasm.wasmPaths=undefined;wasm.proxy=true;wasm.numThreads=1;this.kokoro=await KokoroTTS.from_pretrained(MODEL_ID,{dtype:'q8',device:'wasm',progress_callback:(progress:any)=>{if(progress?.status==='progress'&&Number.isFinite(progress.progress))this.mount?.report(`loading Kokoro · ${Math.round(progress.progress)}%`,'saving');}});return this.kokoro;}
   async kokoroAudio(sentence:string,voice:string,rate:number){const tts=await this.loadKokoro();if(!voice.startsWith('e'))return tts.generate(sentence,{voice:voice as any,speed:rate});const [{phonemizeSpanish},{Tensor,RawAudio}]=await Promise.all([import('./spanish-phonemizer'),import('@huggingface/transformers')]);const phonemes=await phonemizeSpanish(sentence);const {input_ids}=tts.tokenizer(phonemes,{truncation:true});let voices=this.voiceData.get(voice);if(!voices){const url=`https://huggingface.co/${MODEL_ID}/resolve/main/voices/${voice}.bin`;const response=await fetch(url);if(!response.ok)throw new Error(`Voice ${voice} could not be downloaded.`);voices=new Float32Array(await response.arrayBuffer());this.voiceData.set(voice,voices);}const offset=256*Math.min(Math.max(Number(input_ids.dims.at(-1))-2,0),509);const style=voices.slice(offset,offset+256);const {waveform}=await tts.model({input_ids,style:new Tensor('float32',style,[1,256]),speed:new Tensor('float32',[rate],[1])});return new RawAudio(waveform.data as Float32Array,24000);}

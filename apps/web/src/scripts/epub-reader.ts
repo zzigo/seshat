@@ -11,7 +11,12 @@ type ReadingPreferences = { flow: 'paginated' | 'scrolled'; fontScale: number };
 type TocItem = { label?: string; href?: string; subitems?: TocItem[] };
 type RelocateDetail = { cfi?: string; fraction?: number; index?: number; tocItem?: { label?: string } };
 type EpubSection = { linear?: string; createDocument?: () => Promise<Document> };
-type ReaderSourceDetail = { kind?: string; load?: () => Promise<string>; headings?: () => Promise<NarrationHeading[]> };
+type ReaderSourceDetail = {
+  kind?: string;
+  load?: () => Promise<string>;
+  headings?: () => Promise<NarrationHeading[]>;
+  initialOffset?: () => Promise<number | null> | number | null;
+};
 type ReaderLocationDetail = { text?: string; start?: number };
 type ReaderSectionShiftDetail = { delta: number; currentOffset?: number; targetOffset?: number };
 type EpubAnchor = {
@@ -76,6 +81,8 @@ export async function mountEpubReader(
   let searchQuery = '',searchMatches:Array<{sectionIndex:number;offset:number}>=[],activeSearchMatch=-1,pendingSearch:{sectionIndex:number;query:string}|null=null;
   let currentSectionIndex = 0;
   let currentChapter = 'cap';
+  let lastNavigatedPage = -1;
+  let lastNavigatedTime = 0;
   let epubAnnotations: Annotation[] = [];
   const contentIndexes = new WeakMap<Document, number>();
   const pointerStarts = new WeakMap<Document, { x: number; y: number }>();
@@ -332,17 +339,37 @@ export async function mountEpubReader(
     }
 
     if (preferences.flow === 'paginated') {
-      const winWidth = doc.defaultView?.innerWidth || window.innerWidth;
-      const winHeight = doc.defaultView?.innerHeight || window.innerHeight;
-      const isWordVisibleOnScreen = (activeRect.width > 0 || activeRect.height > 0) &&
-        activeRect.left >= 0 &&
-        activeRect.left < winWidth &&
-        activeRect.top >= 0 &&
-        activeRect.top < winHeight;
+      const renderer = view.renderer as any;
+      const iframe = doc.defaultView?.frameElement as HTMLElement | null;
+      const containerRect = (view as HTMLElement).getBoundingClientRect();
 
-      if (!isWordVisibleOnScreen && (activeRect.width > 0 || activeRect.height > 0)) {
-        if ((view.renderer as any)?.scrollToAnchor) {
-          void (view.renderer as any).scrollToAnchor(initialRange);
+      let targetPage = -1;
+      if (renderer && typeof renderer.size === 'number' && renderer.size > 0) {
+        targetPage = Math.floor(activeRect.left / renderer.size) + 1;
+      }
+      const currentPage = (renderer && typeof renderer.page === 'number') ? renderer.page : 1;
+
+      let shouldTurn = false;
+      if (targetPage > 0) {
+        if (targetPage !== currentPage && targetPage !== lastNavigatedPage) {
+          shouldTurn = true;
+          lastNavigatedPage = targetPage;
+        }
+      } else if (iframe && containerRect.width > 0) {
+        const iframeRect = iframe.getBoundingClientRect();
+        const wordScreenX = iframeRect.left + activeRect.left;
+        if (wordScreenX < containerRect.left - 5 || wordScreenX >= containerRect.right - 5) {
+          const now = Date.now();
+          if (now - lastNavigatedTime > 600) {
+            shouldTurn = true;
+            lastNavigatedTime = now;
+          }
+        }
+      }
+
+      if (shouldTurn && (activeRect.width > 0 || activeRect.height > 0)) {
+        if (renderer?.scrollToAnchor) {
+          void renderer.scrollToAnchor(initialRange);
         }
       }
     } else {
@@ -382,14 +409,67 @@ export async function mountEpubReader(
     }catch(error){emitSearch({current:0,total:0,error:error instanceof Error?error.message:'Search failed'});}
   };
   const handleReaderSearch=(event:Event)=>void searchDocument((event as CustomEvent<ReaderSearchRequestDetail>).detail||{query:''});
-  const provideReaderSource = (event: Event) => { const detail = (event as CustomEvent<ReaderSourceDetail>).detail; if (!detail || detail.load) return; detail.kind = 'epub'; detail.load = loadReaderText; detail.headings=async()=>{await loadReaderText();return readerHeadings;}; };
+  const provideReaderSource = (event: Event) => {
+    const detail = (event as CustomEvent<ReaderSourceDetail>).detail;
+    if (!detail || detail.load) return;
+    detail.kind = 'epub';
+    detail.load = loadReaderText;
+    detail.headings = async () => {
+      await loadReaderText();
+      return readerHeadings;
+    };
+    detail.initialOffset = async () => {
+      await loadReaderText();
+      const content = view.renderer?.getContents?.()[0];
+      const activeIdx = content?.index ?? currentSectionIndex;
+      const section = sectionRanges.find((item) => item.index === activeIdx);
+      if (!section) return 0;
+      if (content?.doc?.body) {
+        try {
+          const doc = content.doc;
+          const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+          let node: Text | null;
+          const renderer = view.renderer as any;
+          const currentPage = typeof renderer?.page === 'number' ? renderer.page : 1;
+          const pageSize = typeof renderer?.size === 'number' && renderer.size > 0 ? renderer.size : 0;
+          while ((node = walker.nextNode() as Text | null)) {
+            const text = node.data.trim();
+            if (text.length >= 6) {
+              const range = doc.createRange();
+              range.selectNodeContents(node);
+              const rect = range.getBoundingClientRect();
+              if (pageSize > 0) {
+                const page = Math.floor(rect.left / pageSize) + 1;
+                if (page >= currentPage) {
+                  const nodeOffset = doc.body.textContent?.indexOf(text) ?? 0;
+                  return section.start + Math.max(0, nodeOffset);
+                }
+              } else {
+                return section.start;
+              }
+            }
+          }
+        } catch {}
+      }
+      return section.start;
+    };
+  };
   const locateReaderText = (event: Event) => {
-    const detail = (event as CustomEvent<ReaderLocationDetail>).detail || {}; const start = Number(detail.start); const text = String(detail.text || '');
-    const section = sectionRanges.find((item) => start >= item.start && start <= item.end); if (!section || !text) return;
+    const detail = (event as CustomEvent<ReaderLocationDetail>).detail || {};
+    const start = Number(detail.start);
+    const text = String(detail.text || '');
+    const section = sectionRanges.find((item) => start >= item.start && start <= item.end);
+    if (!section || !text) return;
     pendingLocation = { index: section.index, text };
     const visible = view.renderer?.getContents?.().find((item) => item.index === section.index);
-    if (visible) markReading(visible.doc, text);
-    else void view.goTo(section.index).then(() => window.requestAnimationFrame(() => { const content = view.renderer?.getContents?.().find((item) => item.index === section.index); if (content) markReading(content.doc, text); }));
+    if (visible) {
+      markReading(visible.doc, text);
+    } else {
+      void view.goTo(section.index).then(() => window.requestAnimationFrame(() => {
+        const content = view.renderer?.getContents?.().find((item) => item.index === section.index);
+        if (content) markReading(content.doc, text);
+      }));
+    }
   };
   const clearReaderText = () => { pendingLocation = null; clearReadingMarker(); };
   const sentenceAtPoint = (doc: Document, event: PointerEvent): string => {
@@ -450,7 +530,7 @@ export async function mountEpubReader(
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
     const appearance = epubDocumentAppearance(inverted);
-    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}#seshat-word-dot,.seshat-word-dot{position:fixed!important;width:6px!important;height:6px!important;border-radius:50%!important;background-color:#b07a3c!important;opacity:.7!important;box-shadow:0 0 1px rgba(0,0,0,.45)!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;transition:left 70ms linear,top 70ms linear!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{position:relative!important}[data-seshat-read-aloud]::before{content:""!important;position:absolute!important;inset-inline-start:-8px!important;left:-8px!important;top:.38em!important;bottom:.28em!important;width:1.5px!important;border-radius:1px!important;background:color-mix(in srgb,#b07a3c 45%,transparent)!important;pointer-events:none!important;z-index:1!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}#seshat-word-dot,.seshat-word-dot{position:fixed!important;width:7px!important;height:7px!important;border-radius:50%!important;background-color:#818cf8!important;opacity:.8!important;box-shadow:0 0 3px rgba(129,140,248,.8),0 0 1px rgba(0,0,0,.35)!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;transition:left 70ms linear,top 70ms linear!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
     doc.documentElement.style.backgroundColor = appearance.background;
     if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
@@ -508,6 +588,7 @@ export async function mountEpubReader(
   };
   const handleLoad = (event: Event) => {
     applyFont();
+    lastNavigatedPage = -1;
     const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
     const index = Number((event as CustomEvent<{ index?: number }>).detail?.index);
     if (doc) { applyAppearance(doc); if (Number.isFinite(index)) contentIndexes.set(doc, index); if (!contentDocuments.has(doc)) { contentDocuments.add(doc); doc.addEventListener('keydown', readerKeyboard); doc.addEventListener('pointerdown', contentPointerDown); doc.addEventListener('pointerup', contentPointerUp); } renderEpubAnnotations(doc, Number.isFinite(index) ? index : undefined); if (pendingLocation && (!Number.isFinite(index) || index === pendingLocation.index)) markReading(doc, pendingLocation.text);if(pendingSearch&&(!Number.isFinite(index)||index===pendingSearch.sectionIndex))markSearch(doc,pendingSearch.query); }

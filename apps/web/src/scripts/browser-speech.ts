@@ -18,11 +18,9 @@ export const normalizeBrowserSpeechText = (value:string):string => String(value 
   .replace(/\b(?:p(?:p)?\.?|pages?|p[áa]g(?:ina)?s?\.?)\s*\d+(?:\s*[-–—]\s*\d+)?\b/giu,' ')
   .replace(/\bISBN(?:-1[03])?\s*:?[\s-]*(?:97[89][\s-]*)?[0-9X][0-9X\s-]{7,}[0-9X]\b/giu,' ')
   .replace(/\b[0-9X](?:[0-9X\s-]*[0-9X])\b/giu,(token)=>token.replace(/[^0-9]/g,'').length>=7?' ':token)
-  .replace(/[«»“”„‟]/g,'"')
-  .replace(/[‘’‚‛]/g,"'")
-  .replace(/["']{2,}/g,'"')
-  .replace(/(?:^|\s)["']\s*(?=\S)/g,' ')
-  .replace(/(?<=\S)\s*["'](?:\s|$)/g,' ')
+  .replace(/[«»“”„‟]/g,' ')
+  .replace(/[‘’‚‛]/g,' ')
+  .replace(/["'`´]+/g,' ')
   .replace(/[-–—]{2,}/g,' — ')
   .replace(/\.{3,}/g,'…')
   .replace(/\s+/g,' ').trim();
@@ -79,7 +77,7 @@ class BrowserSpeechEngine {
         console.warn('[seshat:browser-speech] voice did not start', { voice: options.voice.name, language: utterance.lang,characters:text.length,pending: speechSynthesis.pending, speaking: speechSynthesis.speaking, paused: speechSynthesis.paused });
         if (this.utterance === utterance) speechSynthesis.cancel();
         finish(options.isCurrent() ? new Error(`Voice ${options.voice.name} did not start · pending ${speechSynthesis.pending} · paused ${speechSynthesis.paused}.`) : undefined);
-      }, 10000);
+      }, 4000);
 
       utterance.voice = options.voice;
       utterance.lang = options.voice.lang || options.language;
@@ -132,16 +130,21 @@ class BrowserSpeechEngine {
       utterance.onend = () => finish();
       utterance.onerror = (event) => {
         console.warn('[seshat:browser-speech] utterance error', { voice:options.voice.name,error:event.error,characters:text.length });
-        // Don't crash reading session on interruptions, cancel or non-fatal speech syntax errors
-        if (event.error === 'canceled' || event.error === 'interrupted' || event.error === 'text-too-long') {
+        // Don't crash reading session on interruptions, cancel, not-allowed or non-fatal speech syntax errors
+        if (event.error === 'canceled' || event.error === 'interrupted' || event.error === 'text-too-long' || event.error === 'not-allowed') {
           finish();
         } else {
           finish(new Error(`${options.voice.name} · ${event.error || 'speech synthesis failed'}`));
         }
       };
 
-      if(speechSynthesis.paused)speechSynthesis.resume();
-      speechSynthesis.speak(utterance);
+      try {
+        if(speechSynthesis.paused)speechSynthesis.resume();
+        speechSynthesis.speak(utterance);
+      } catch (speakError) {
+        console.warn('[seshat:browser-speech] speechSynthesis.speak failed:', speakError);
+        finish();
+      }
     });
   }
 }
