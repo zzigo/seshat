@@ -203,13 +203,16 @@ export async function mountEpubReader(
     palette.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`; palette.style.top = `${Math.max(8, rect.top - bounds.height - mobileLift)}px`; return true;
   };
   const markReading = (doc: Document, text: string) => {
-    clearReadingMarker(); const target = readingBlock(doc, text); if (!target) return;
+    const target = readingBlock(doc, text); if (!target) return;
+    doc.querySelectorAll('[data-seshat-read-aloud]').forEach((node) => {
+      if (node !== target) node.removeAttribute('data-seshat-read-aloud');
+    });
     target.setAttribute('data-seshat-read-aloud', '');
     if (preferences.flow !== 'paginated') {
       target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
     }
   };
-  const findWordRangeInElement = (target: HTMLElement, word: string, approximateCharOffset = 0): Range | null => {
+  const findWordRangeInElement = (target: HTMLElement, word: string, sentenceText = '', charIndexInSentence = 0): Range | null => {
     if (!target) return null;
     const cleanWord = (word || '').trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
     if (!cleanWord) return null;
@@ -226,22 +229,50 @@ export async function mountEpubReader(
       textNodes.push({ node: textNode, start, end: fullText.length });
     }
     if (!fullText) return null;
+
     const lowerFull = fullText.toLocaleLowerCase();
     const lowerWord = cleanWord.toLocaleLowerCase();
+
+    let sentenceOffset = 0;
+    const lowerSentence = (sentenceText || '').toLocaleLowerCase().trim();
+    if (lowerSentence) {
+      const snippet = lowerSentence.slice(0, Math.min(32, lowerSentence.length));
+      const found = lowerFull.indexOf(snippet);
+      if (found >= 0) sentenceOffset = found;
+    }
+    const expectedTargetOffset = sentenceOffset + Math.max(0, charIndexInSentence);
+
     let bestOffset = -1;
     let minDiff = Infinity;
-    let searchFrom = 0;
-    while (true) {
+    let searchFrom = Math.max(0, sentenceOffset - 25);
+    const searchLimit = sentenceOffset + (lowerSentence ? lowerSentence.length + 35 : 200);
+
+    while (searchFrom < searchLimit) {
       const idx = lowerFull.indexOf(lowerWord, searchFrom);
-      if (idx < 0) break;
-      const diff = Math.abs(idx - approximateCharOffset);
+      if (idx < 0 || idx > searchLimit) break;
+      const diff = Math.abs(idx - expectedTargetOffset);
       if (diff < minDiff) {
         minDiff = diff;
         bestOffset = idx;
       }
       searchFrom = idx + 1;
     }
+
+    if (bestOffset < 0) {
+      let searchAll = 0;
+      while (true) {
+        const idx = lowerFull.indexOf(lowerWord, searchAll);
+        if (idx < 0) break;
+        const diff = Math.abs(idx - expectedTargetOffset);
+        if (diff < minDiff) {
+          minDiff = diff;
+          bestOffset = idx;
+        }
+        searchAll = idx + 1;
+      }
+    }
     if (bestOffset < 0) return null;
+
     const wordStart = bestOffset;
     const wordEnd = bestOffset + cleanWord.length;
     let startNode: Text | null = null;
@@ -270,12 +301,15 @@ export async function mountEpubReader(
     return range;
   };
   const markWord = (doc: Document, detail: { sentenceText: string; word?: string; charIndex: number }) => {
-    const target = doc.querySelector<HTMLElement>('[data-seshat-read-aloud]') || readingBlock(doc, detail.sentenceText);
+    const target = readingBlock(doc, detail.sentenceText) || doc.querySelector<HTMLElement>('[data-seshat-read-aloud]');
     if (!target) return;
     if (!target.hasAttribute('data-seshat-read-aloud')) {
+      doc.querySelectorAll('[data-seshat-read-aloud]').forEach((el) => {
+        if (el !== target) el.removeAttribute('data-seshat-read-aloud');
+      });
       target.setAttribute('data-seshat-read-aloud', '');
     }
-    const wordRange = findWordRangeInElement(target, detail.word || '', detail.charIndex);
+    const wordRange = findWordRangeInElement(target, detail.word || '', detail.sentenceText, detail.charIndex);
     if (!wordRange) return;
     const initialRange = doc.createRange();
     initialRange.setStart(wordRange.startContainer, wordRange.startOffset);
@@ -283,6 +317,7 @@ export async function mountEpubReader(
     initialRange.setEnd(wordRange.startContainer, Math.min(maxEnd, wordRange.startOffset + 1));
     const rect = initialRange.getBoundingClientRect();
     const activeRect = (rect.width > 0 || rect.height > 0) ? rect : wordRange.getBoundingClientRect();
+
     let dot = doc.getElementById('seshat-word-dot') as HTMLElement | null;
     if (!dot) {
       dot = doc.createElement('div');
@@ -295,9 +330,20 @@ export async function mountEpubReader(
       dot.style.top = `${activeRect.bottom - 2}px`;
       dot.style.display = 'block';
     }
+
     if (preferences.flow === 'paginated') {
-      if ((view.renderer as any)?.scrollToAnchor) {
-        void (view.renderer as any).scrollToAnchor(wordRange);
+      const winWidth = doc.defaultView?.innerWidth || window.innerWidth;
+      const winHeight = doc.defaultView?.innerHeight || window.innerHeight;
+      const isWordVisibleOnScreen = (activeRect.width > 0 || activeRect.height > 0) &&
+        activeRect.left >= 0 &&
+        activeRect.left < winWidth &&
+        activeRect.top >= 0 &&
+        activeRect.top < winHeight;
+
+      if (!isWordVisibleOnScreen && (activeRect.width > 0 || activeRect.height > 0)) {
+        if ((view.renderer as any)?.scrollToAnchor) {
+          void (view.renderer as any).scrollToAnchor(initialRange);
+        }
       }
     } else {
       const docHeight = doc.defaultView?.innerHeight || window.innerHeight;
@@ -404,7 +450,7 @@ export async function mountEpubReader(
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
     const appearance = epubDocumentAppearance(inverted);
-    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}#seshat-word-dot,.seshat-word-dot{position:fixed!important;width:5px!important;height:5px!important;border-radius:50%!important;background-color:#b07a3c!important;opacity:.5!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;transition:left 70ms linear,top 70ms linear!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}#seshat-word-dot,.seshat-word-dot{position:fixed!important;width:6px!important;height:6px!important;border-radius:50%!important;background-color:#b07a3c!important;opacity:.7!important;box-shadow:0 0 1px rgba(0,0,0,.45)!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;transition:left 70ms linear,top 70ms linear!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
     doc.documentElement.style.backgroundColor = appearance.background;
     if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
