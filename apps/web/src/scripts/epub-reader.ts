@@ -124,7 +124,10 @@ export async function mountEpubReader(
     })();
     return textPromise;
   };
-  const clearReadingMarker = () => contentDocuments.forEach((doc) => doc.querySelectorAll('[data-seshat-read-aloud]').forEach((node) => node.removeAttribute('data-seshat-read-aloud')));
+  const clearReadingMarker = () => contentDocuments.forEach((doc) => {
+    doc.querySelectorAll('[data-seshat-read-aloud]').forEach((node) => node.removeAttribute('data-seshat-read-aloud'));
+    doc.getElementById('seshat-word-dot')?.remove();
+  });
   const clearPlayTooltip = () => contentDocuments.forEach((doc) => doc.querySelectorAll('.seshat-play-from-tooltip').forEach((node) => node.remove()));
   const clearAnnotationPalettes = () => contentDocuments.forEach((doc) => doc.querySelectorAll('.seshat-annotation-palette').forEach((node) => node.remove()));
   const annotationHighlightName = (id: string) => `seshat-epub-annotation-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -201,7 +204,115 @@ export async function mountEpubReader(
   };
   const markReading = (doc: Document, text: string) => {
     clearReadingMarker(); const target = readingBlock(doc, text); if (!target) return;
-    target.setAttribute('data-seshat-read-aloud', ''); target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    target.setAttribute('data-seshat-read-aloud', '');
+    if (preferences.flow !== 'paginated') {
+      target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    }
+  };
+  const findWordRangeInElement = (target: HTMLElement, word: string, approximateCharOffset = 0): Range | null => {
+    if (!target) return null;
+    const cleanWord = (word || '').trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (!cleanWord) return null;
+    const doc = target.ownerDocument;
+    const walker = doc.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const textNodes: Array<{ node: Text; start: number; end: number }> = [];
+    let fullText = '';
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const textNode = node as Text;
+      const str = textNode.data;
+      const start = fullText.length;
+      fullText += str;
+      textNodes.push({ node: textNode, start, end: fullText.length });
+    }
+    if (!fullText) return null;
+    const lowerFull = fullText.toLocaleLowerCase();
+    const lowerWord = cleanWord.toLocaleLowerCase();
+    let bestOffset = -1;
+    let minDiff = Infinity;
+    let searchFrom = 0;
+    while (true) {
+      const idx = lowerFull.indexOf(lowerWord, searchFrom);
+      if (idx < 0) break;
+      const diff = Math.abs(idx - approximateCharOffset);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestOffset = idx;
+      }
+      searchFrom = idx + 1;
+    }
+    if (bestOffset < 0) return null;
+    const wordStart = bestOffset;
+    const wordEnd = bestOffset + cleanWord.length;
+    let startNode: Text | null = null;
+    let startInNode = 0;
+    let endNode: Text | null = null;
+    let endInNode = 0;
+    for (const item of textNodes) {
+      if (!startNode && wordStart >= item.start && wordStart < item.end) {
+        startNode = item.node;
+        startInNode = wordStart - item.start;
+      }
+      if (!endNode && wordEnd > item.start && wordEnd <= item.end) {
+        endNode = item.node;
+        endInNode = wordEnd - item.start;
+        break;
+      }
+    }
+    if (!startNode) return null;
+    if (!endNode) {
+      endNode = startNode;
+      endInNode = Math.min(startNode.data.length, startInNode + cleanWord.length);
+    }
+    const range = doc.createRange();
+    range.setStart(startNode, startInNode);
+    range.setEnd(endNode, endInNode);
+    return range;
+  };
+  const markWord = (doc: Document, detail: { sentenceText: string; word?: string; charIndex: number }) => {
+    const target = doc.querySelector<HTMLElement>('[data-seshat-read-aloud]') || readingBlock(doc, detail.sentenceText);
+    if (!target) return;
+    if (!target.hasAttribute('data-seshat-read-aloud')) {
+      target.setAttribute('data-seshat-read-aloud', '');
+    }
+    const wordRange = findWordRangeInElement(target, detail.word || '', detail.charIndex);
+    if (!wordRange) return;
+    const initialRange = doc.createRange();
+    initialRange.setStart(wordRange.startContainer, wordRange.startOffset);
+    const maxEnd = wordRange.startContainer.textContent?.length || (wordRange.startOffset + 1);
+    initialRange.setEnd(wordRange.startContainer, Math.min(maxEnd, wordRange.startOffset + 1));
+    const rect = initialRange.getBoundingClientRect();
+    const activeRect = (rect.width > 0 || rect.height > 0) ? rect : wordRange.getBoundingClientRect();
+    let dot = doc.getElementById('seshat-word-dot') as HTMLElement | null;
+    if (!dot) {
+      dot = doc.createElement('div');
+      dot.id = 'seshat-word-dot';
+      dot.className = 'seshat-word-dot';
+      (doc.body || doc.documentElement).appendChild(dot);
+    }
+    if (activeRect.width > 0 || activeRect.height > 0) {
+      dot.style.left = `${activeRect.left + 2}px`;
+      dot.style.top = `${activeRect.bottom - 2}px`;
+      dot.style.display = 'block';
+    }
+    if (preferences.flow === 'paginated') {
+      if ((view.renderer as any)?.scrollToAnchor) {
+        void (view.renderer as any).scrollToAnchor(wordRange);
+      }
+    } else {
+      const docHeight = doc.defaultView?.innerHeight || window.innerHeight;
+      if (activeRect.bottom > docHeight - 80 || activeRect.top < 50) {
+        target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  };
+  const handleReaderWord = (event: Event) => {
+    const detail = (event as CustomEvent<{ sentenceText: string; word?: string; charIndex: number; start: number; end: number }>).detail;
+    if (!detail) return;
+    const contents = view.renderer?.getContents?.() || [];
+    for (const item of contents) {
+      markWord(item.doc, detail);
+    }
   };
   const clearSearchMarkers=()=>contentDocuments.forEach((doc)=>doc.querySelectorAll('[data-seshat-search-active]').forEach((node)=>node.removeAttribute('data-seshat-search-active')));
   const markSearch=(doc:Document,query:string)=>{clearSearchMarkers();const target=readingBlock(doc,query);if(!target)return;target.setAttribute('data-seshat-search-active','');target.scrollIntoView({block:'center',inline:'center',behavior:'smooth'});};
@@ -277,6 +388,7 @@ export async function mountEpubReader(
   };
   pod?.addEventListener('seshat:reader-source', provideReaderSource);
   pod?.addEventListener('seshat:epub-reader-locate', locateReaderText);
+  pod?.addEventListener('seshat:epub-reader-word', handleReaderWord);
   pod?.addEventListener('seshat:epub-reader-clear', clearReaderText);
   pod?.addEventListener('seshat:reader-section-shift', shiftReaderSection);
   pod?.addEventListener('seshat:reader-command', readerCommand);
@@ -292,7 +404,7 @@ export async function mountEpubReader(
     let style = doc.getElementById('seshat-epub-theme') as HTMLStyleElement | null;
     if (!style) { style = doc.createElement('style'); style.id = 'seshat-epub-theme'; (doc.head || doc.documentElement).appendChild(style); }
     const appearance = epubDocumentAppearance(inverted);
-    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
+    style.textContent = `${epubDocumentThemeCss(inverted)}[data-seshat-read-aloud]{box-shadow:inset 2px 0 #b07a3c!important;padding-inline-start:.45em!important}[data-seshat-search-active]{outline:2px solid #b07a3c!important;outline-offset:4px!important;background:color-mix(in srgb,#b07a3c 15%,transparent)!important}#seshat-word-dot,.seshat-word-dot{position:fixed!important;width:5px!important;height:5px!important;border-radius:50%!important;background-color:#b07a3c!important;opacity:.5!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;transition:left 70ms linear,top 70ms linear!important}.seshat-play-from-tooltip{position:fixed;z-index:2147483647;min-height:30px;padding:0 10px;border:1px solid #b07a3c;border-radius:5px;color:#17231d;background:#f1efe6;font:10px ui-monospace,monospace;box-shadow:0 7px 22px rgba(0,0,0,.24);cursor:pointer}.seshat-annotation-palette{position:fixed;z-index:2147483647;display:flex;gap:3px;padding:5px;border:1px solid #17231d;background:#e9e6dc;box-shadow:5px 8px 24px rgba(23,35,29,.32)}.seshat-annotation-palette button{position:relative;width:31px;height:31px;display:grid;place-items:center;padding:0;border:0;background:transparent;cursor:pointer}.seshat-annotation-palette button:hover{outline:1px solid #17231d}.seshat-annotation-palette i{width:17px;height:17px;border-radius:50%}.seshat-annotation-palette small{position:absolute;right:1px;bottom:0;color:#59645e;font:7px ui-monospace,monospace}.seshat-annotation-palette .seshat-annotation-comment{margin-left:3px;border-left:1px solid #9b9b92;color:#315d48;font:700 11px ui-monospace,monospace}`;
     doc.documentElement.style.backgroundColor = appearance.background;
     if (doc.body) { doc.body.style.backgroundColor = appearance.background; doc.body.style.color = appearance.foreground; }
   };
@@ -410,6 +522,7 @@ export async function mountEpubReader(
     pod?.removeEventListener('seshat:pdf-zoom-reset', reset);
     pod?.removeEventListener('seshat:reader-source', provideReaderSource);
     pod?.removeEventListener('seshat:epub-reader-locate', locateReaderText);
+    pod?.removeEventListener('seshat:epub-reader-word', handleReaderWord);
     pod?.removeEventListener('seshat:epub-reader-clear', clearReaderText);
     pod?.removeEventListener('seshat:reader-section-shift', shiftReaderSection);
     pod?.removeEventListener('seshat:reader-command', readerCommand);

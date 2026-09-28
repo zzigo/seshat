@@ -11,7 +11,7 @@ function folderAbbreviation(name:string){
   return Array.from(name.normalize('NFD').replace(/\p{M}/gu,'').replace(/[^\p{L}\p{N}]/gu,'')).slice(0,3).join('').toUpperCase();
 }
 
-const ROW_HEIGHT=72;
+const ROW_HEIGHT=83;
 const OVERSCAN=5;
 
 export const mountMobwork=(root:HTMLElement)=>{
