@@ -515,13 +515,20 @@ const pullAnnotationsAndNotes = async (input: {
     ]);
 
     const [attachmentRows, itemRows, existingAnnotationRows] = await Promise.all([
-      catalog.pool.query('SELECT zotero_key, parent_item_key, reference_id FROM catalog_zotero_attachments WHERE owner_key=$1', [input.ownerKey]),
+      catalog.pool.query('SELECT zotero_key, parent_item_key, reference_id, content_type FROM catalog_zotero_attachments WHERE owner_key=$1', [input.ownerKey]),
       catalog.pool.query('SELECT zotero_key, reference_id FROM catalog_zotero_items WHERE owner_key=$1', [input.ownerKey]),
       catalog.pool.query('SELECT zotero_key, annotation_id, version, synced_hash FROM catalog_zotero_annotations WHERE owner_key=$1', [input.ownerKey]),
     ]);
 
-    const attachmentMap = new Map<string, { parentItemKey: string; referenceId: string }>(
-      attachmentRows.rows.map((row: any) => [String(row.zotero_key), { parentItemKey: String(row.parent_item_key), referenceId: String(row.reference_id) }])
+    const attachmentMap = new Map<string, { parentItemKey: string; referenceId: string; contentType?: string }>(
+      attachmentRows.rows.map((row: any) => [
+        String(row.zotero_key),
+        {
+          parentItemKey: String(row.parent_item_key),
+          referenceId: String(row.reference_id),
+          contentType: row.content_type ? String(row.content_type) : undefined,
+        },
+      ])
     );
     const itemMap = new Map<string, string>(
       itemRows.rows.map((row: any) => [String(row.zotero_key), String(row.reference_id)])
@@ -551,7 +558,11 @@ const pullAnnotationsAndNotes = async (input: {
           const topLevelKey = p.data.parentItem;
           const refId = itemMap.get(topLevelKey);
           if (refId) {
-            attachmentMap.set(p.key, { parentItemKey: topLevelKey, referenceId: refId });
+            attachmentMap.set(p.key, {
+              parentItemKey: topLevelKey,
+              referenceId: refId,
+              contentType: p.data.contentType || undefined,
+            });
             await client.query(
               `INSERT INTO catalog_zotero_attachments(owner_key, zotero_key, parent_item_key, reference_id, content_type, filename, synced_at)
                VALUES($1, $2, $3, $4, $5, $6, now())
@@ -570,11 +581,14 @@ const pullAnnotationsAndNotes = async (input: {
     for (const ann of annotationSnapshot.objects) {
       const parentKey = ann.data.parentItem;
       if (!parentKey) continue;
-      const refId = attachmentMap.get(parentKey)?.referenceId || itemMap.get(parentKey);
+      const att = attachmentMap.get(parentKey);
+      const refId = att?.referenceId || itemMap.get(parentKey);
       if (!refId) continue;
 
       let page = 1;
       let rects: any[] = [];
+      let cfi = '';
+      let spineIndex: number | null = null;
       if (ann.data.annotationPosition) {
         try {
           const parsed = JSON.parse(ann.data.annotationPosition);
@@ -595,6 +609,9 @@ const pullAnnotationsAndNotes = async (input: {
               return r;
             });
           }
+          if (typeof parsed.value === 'string' && parsed.value.includes('epubcfi')) {
+            cfi = parsed.value;
+          }
         } catch {
           // fallback
         }
@@ -603,12 +620,38 @@ const pullAnnotationsAndNotes = async (input: {
         if (Number.isFinite(p) && p > 0) page = p;
       }
 
+      if (cfi) {
+        const spineMatch = cfi.match(/\/6\/(\d+)!/);
+        if (spineMatch) {
+          spineIndex = Math.max(0, Math.floor(parseInt(spineMatch[1], 10) / 2) - 1);
+        }
+      }
+      if (spineIndex === null && ann.data.annotationSortIndex) {
+        const parts = String(ann.data.annotationSortIndex).split('|');
+        const firstNum = parseInt(parts[0], 10);
+        if (Number.isFinite(firstNum)) {
+          spineIndex = firstNum;
+        }
+      }
+
+      const isEpub = att?.contentType === 'application/epub+zip' || Boolean(cfi) || spineIndex !== null;
+      const sourceKind = isEpub ? 'epub' : 'pdf';
+      let locator = `p. ${page}`;
+      if (isEpub) {
+        if (spineIndex !== null) {
+          page = spineIndex + 1;
+          locator = `epub-section:${spineIndex}`;
+        } else {
+          locator = `epub-section:${Math.max(0, page - 1)}`;
+        }
+      }
+
       let quote = String(ann.data.annotationText || '').trim();
       const comment = String(ann.data.annotationComment || '').trim();
       if (!quote && comment) {
         quote = comment.slice(0, 100);
       } else if (!quote) {
-        quote = `(Annotation p. ${page})`;
+        quote = isEpub ? `(EPUB mark §${page})` : `(Annotation p. ${page})`;
       }
       const startOffset = 0;
       const endOffset = Math.max(1, quote.length);
@@ -616,11 +659,10 @@ const pullAnnotationsAndNotes = async (input: {
       const category = categoryForZoteroColor(color);
       const noteType = ann.data.annotationType || 'highlight';
       const tags = (ann.data.tags || []).map((t: any) => String(t.tag || '').trim()).filter(Boolean);
-      const locator = `p. ${page}`;
       const version = Number(ann.version ?? ann.data.version ?? 0);
 
       const hash = createHash('sha256').update(JSON.stringify({
-        quote, comment, color, category, page, rects, tags,
+        quote, comment, color, category, page, rects, tags, sourceKind, locator,
       })).digest('hex');
 
       const existing = existingAnnotations.get(ann.key);
@@ -628,11 +670,11 @@ const pullAnnotationsAndNotes = async (input: {
         if (existing.syncedHash === hash) continue;
         await client.query(
           `UPDATE catalog_annotations SET
-             quote=$3, start_offset=$4, end_offset=$5, source_kind='pdf',
-             rects=$6::jsonb, page=$7, locator=$8, color=$9, category=$10,
-             note_type=$11, note=$12, tags=$13::text[], updated_at=COALESCE($14::timestamptz, now())
+             quote=$3, start_offset=$4, end_offset=$5, source_kind=$6,
+             rects=$7::jsonb, page=$8, locator=$9, color=$10, category=$11,
+             note_type=$12, note=$13, tags=$14::text[], updated_at=COALESCE($15::timestamptz, now())
            WHERE id=$1 AND owner_key=$2`,
-          [existing.annotationId, input.ownerKey, quote, startOffset, endOffset,
+          [existing.annotationId, input.ownerKey, quote, startOffset, endOffset, sourceKind,
            JSON.stringify(rects), page, locator, color, category,
            noteType, comment || null, tags, ann.data.dateModified || null]
         );
@@ -650,9 +692,9 @@ const pullAnnotationsAndNotes = async (input: {
             (id, reference_id, owner_key, quote, start_offset, end_offset, source_kind,
              rects, page, locator, color, category, note_type, note, tags, created_at, updated_at)
            VALUES
-            ($1, $2, $3, $4, $5, $6, 'pdf',
-             $7::jsonb, $8, $9, $10, $11, $12, $13, $14::text[], COALESCE($15::timestamptz, now()), COALESCE($16::timestamptz, now()))`,
-          [annotationId, refId, input.ownerKey, quote, startOffset, endOffset,
+            ($1, $2, $3, $4, $5, $6, $7,
+             $8::jsonb, $9, $10, $11, $12, $13, $14, $15::text[], COALESCE($16::timestamptz, now()), COALESCE($17::timestamptz, now()))`,
+          [annotationId, refId, input.ownerKey, quote, startOffset, endOffset, sourceKind,
            JSON.stringify(rects), page, locator, color, category,
            noteType, comment || null, tags, ann.data.dateAdded || null, ann.data.dateModified || null]
         );
@@ -816,27 +858,51 @@ const pushAnnotations = async (input: {
     if (!attachmentKey) continue;
 
     const page = Number(row.page) || 1;
-    const rects = (Array.isArray(row.rects) ? row.rects : []).map((r: any) => [
-      r.x1 ?? r.x ?? 0,
-      r.y1 ?? r.y ?? 0,
-      r.x2 ?? ((r.x ?? 0) + (r.width ?? 0)),
-      r.y2 ?? ((r.y ?? 0) + (r.height ?? 0)),
-    ]);
+    const isEpub = row.source_kind === 'epub';
+    let zoteroAnnotation: Record<string, unknown>;
 
-    const zoteroAnnotation = {
-      itemType: 'annotation',
-      parentItem: attachmentKey,
-      annotationType: row.note_type === 'reading-mark' ? 'highlight' : (row.note_type || 'highlight'),
-      annotationText: row.quote,
-      annotationComment: row.note || '',
-      annotationColor: row.color || '#ffd400',
-      annotationPageLabel: String(page),
-      annotationPosition: JSON.stringify({
-        pageIndex: Math.max(0, page - 1),
-        rects: rects.length ? rects : [[0, 0, 100, 100]],
-      }),
-      tags: (row.tags || []).map((tag: string) => ({ tag })),
-    };
+    if (isEpub) {
+      const secMatch = row.locator?.match(/epub-section:(\d+)/);
+      const spineIndex = secMatch ? parseInt(secMatch[1], 10) : Math.max(0, page - 1);
+      const sortIndex = `${String(spineIndex).padStart(5, '0')}|00000000`;
+      zoteroAnnotation = {
+        itemType: 'annotation',
+        parentItem: attachmentKey,
+        annotationType: row.note_type === 'reading-mark' ? 'highlight' : (row.note_type || 'highlight'),
+        annotationText: row.quote,
+        annotationComment: row.note || '',
+        annotationColor: row.color || '#ffd400',
+        annotationPageLabel: '',
+        annotationSortIndex: sortIndex,
+        annotationPosition: JSON.stringify({
+          type: 'FragmentSelector',
+          conformsTo: 'http://www.idpf.org/epub/linking/cfi/epub-cfi.html',
+          value: `epubcfi(/6/${(spineIndex + 1) * 2}!/4/2)`,
+        }),
+        tags: (row.tags || []).map((tag: string) => ({ tag })),
+      };
+    } else {
+      const rects = (Array.isArray(row.rects) ? row.rects : []).map((r: any) => [
+        r.x1 ?? r.x ?? 0,
+        r.y1 ?? r.y ?? 0,
+        r.x2 ?? ((r.x ?? 0) + (r.width ?? 0)),
+        r.y2 ?? ((r.y ?? 0) + (r.height ?? 0)),
+      ]);
+      zoteroAnnotation = {
+        itemType: 'annotation',
+        parentItem: attachmentKey,
+        annotationType: row.note_type === 'reading-mark' ? 'highlight' : (row.note_type || 'highlight'),
+        annotationText: row.quote,
+        annotationComment: row.note || '',
+        annotationColor: row.color || '#ffd400',
+        annotationPageLabel: String(page),
+        annotationPosition: JSON.stringify({
+          pageIndex: Math.max(0, page - 1),
+          rects: rects.length ? rects : [[0, 0, 100, 100]],
+        }),
+        tags: (row.tags || []).map((tag: string) => ({ tag })),
+      };
+    }
 
     try {
       const created = await input.provider.createItem(zoteroAnnotation);

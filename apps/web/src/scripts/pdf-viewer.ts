@@ -116,24 +116,36 @@ export async function mountPdfViewer(
     layer.replaceChildren(); const page = Number(pageElement.dataset.page);
     const pw = Number(pageElement.dataset.pageWidth) || 612;
     const ph = Number(pageElement.dataset.pageHeight) || 792;
-    annotations.filter((item) => item.sourceKind === 'pdf' && item.page === page).forEach((annotation) => {
-      annotation.rects.forEach((rect: any) => {
-        let left = Number(rect.x || 0), top = Number(rect.y || 0), width = Number(rect.width || 0), height = Number(rect.height || 0);
-        if (rect.pdfPoints || left > 1 || top > 1 || width > 1 || rect.x1 !== undefined) {
-          const x1 = Number(rect.x1 ?? rect.x ?? 0);
-          const y1 = Number(rect.y1 ?? rect.y ?? 0);
-          const x2 = Number(rect.x2 ?? (x1 + width));
-          const y2 = Number(rect.y2 ?? (y1 + height));
-          left = Math.min(x1, x2) / pw;
-          top = (ph - Math.max(y1, y2)) / ph;
-          width = Math.abs(x2 - x1) / pw;
-          height = Math.abs(y2 - y1) / ph;
-        }
-        const highlight = document.createElement('button'); highlight.type = 'button'; highlight.className = 'pdf-annotation-highlight';
-        highlight.style.cssText = `--annotation-color:${annotation.color};left:${left * 100}%;top:${top * 100}%;width:${width * 100}%;height:${height * 100}%`;
-        highlight.title = annotation.note || annotation.quote; highlight.setAttribute('aria-label', `Annotation: ${annotation.quote.slice(0, 80)}`);
-        highlight.addEventListener('click', () => { shell.classList.add('annotations-open'); toggle.setAttribute('aria-expanded', 'true'); }); layer.appendChild(highlight);
-      });
+    const pageAnnotations = annotations.filter((item) => (item.sourceKind === 'pdf' || !item.sourceKind || item.sourceKind === 'markdown') && Number(item.page) === page);
+    pageAnnotations.forEach((annotation) => {
+      const color = annotation.color || '#ffd400';
+      const validRects = (annotation.rects || []).filter((r: any) => r && (r.width > 0 || r.height > 0 || r.x1 !== undefined || r.x !== undefined));
+      if (validRects.length > 0) {
+        validRects.forEach((rect: any) => {
+          let left = Number(rect.x || 0), top = Number(rect.y || 0), width = Number(rect.width || 0), height = Number(rect.height || 0);
+          if (rect.pdfPoints || left > 1 || top > 1 || width > 1 || rect.x1 !== undefined) {
+            const x1 = Number(rect.x1 ?? rect.x ?? 0);
+            const y1 = Number(rect.y1 ?? rect.y ?? 0);
+            const x2 = Number(rect.x2 ?? (x1 + width));
+            const y2 = Number(rect.y2 ?? (y1 + height));
+            left = Math.min(x1, x2) / pw;
+            top = (ph - Math.max(y1, y2)) / ph;
+            width = Math.abs(x2 - x1) / pw;
+            height = Math.abs(y2 - y1) / ph;
+          }
+          const highlight = document.createElement('button'); highlight.type = 'button'; highlight.className = 'pdf-annotation-highlight';
+          highlight.dataset.annotationId = annotation.id;
+          highlight.style.cssText = `--annotation-color:${color};left:${left * 100}%;top:${top * 100}%;width:${width * 100}%;height:${height * 100}%`;
+          highlight.title = annotation.note || annotation.quote; highlight.setAttribute('aria-label', `Annotation: ${annotation.quote.slice(0, 80)}`);
+          highlight.addEventListener('click', (e) => {
+            e.stopPropagation();
+            shell.classList.add('annotations-open');
+            toggle.setAttribute('aria-expanded', 'true');
+            window.dispatchEvent(new CustomEvent('seshat:request-edit-annotation', { detail: { referenceId, annotationId: annotation.id } }));
+          });
+          layer.appendChild(highlight);
+        });
+      }
     });
   };
 
@@ -464,6 +476,30 @@ export async function mountPdfViewer(
   window.addEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
   if (pendingPage) handleReferencePage(new CustomEvent('pending', { detail: { referenceId, page: pendingPage } }));
 
+  const handleNavigateToAnnotation = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    if (detail?.referenceId && detail.referenceId !== referenceId) return;
+    const ann = detail?.annotation;
+    if (!ann) return;
+    const targetPage = Number(ann.page);
+    if (Number.isFinite(targetPage) && targetPage >= 1 && targetPage <= total) {
+      handleGotoPage(new CustomEvent('goto', { detail: { page: targetPage } }));
+      window.setTimeout(() => {
+        const pageEl = pages.querySelector<HTMLElement>(`.seshat-pdf-page[data-page="${targetPage}"]`);
+        if (!pageEl) return;
+        const hl = pageEl.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(ann.id)}"]`);
+        if (hl) {
+          hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          hl.classList.add('pulse-highlight');
+          window.setTimeout(() => hl.classList.remove('pulse-highlight'), 2200);
+        } else {
+          pageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+    }
+  };
+  window.addEventListener('seshat:navigate-to-annotation', handleNavigateToAnnotation);
+
   // Active page change observer
   const releaseDistantDjVuPages=(center:number)=>{
     if(sourceKind!=='djvu')return;const radius=phoneResourceProfile?2:5;
@@ -574,6 +610,7 @@ export async function mountPdfViewer(
     parent.removeEventListener('seshat:doc-toggle-invert', handleToggleInvert);
     parent.removeEventListener('seshat:reader-search',handleReaderSearch);
     window.removeEventListener('seshat:pdf-goto-reference-page', handleReferencePage);
+    window.removeEventListener('seshat:navigate-to-annotation', handleNavigateToAnnotation);
     viewer.removeEventListener('click', handleMarginClicks);
     viewer.removeEventListener('dblclick', handleDoubleClicks);
     viewer.removeEventListener('keydown', readerKeyboard);

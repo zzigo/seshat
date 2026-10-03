@@ -114,12 +114,17 @@ export async function mountAnnotationWorkspace(
       card.append(quote, meta);
       if (annotation.note) { const note = document.createElement('p'); note.textContent = annotation.note; card.appendChild(note); }
       const toggleEditor = () => {
+        window.dispatchEvent(new CustomEvent('seshat:navigate-to-annotation', { detail: { referenceId, annotation } }));
         if (activeId === annotation.id && !editorHost.hidden) { closeEditor(); activeId = null; render(); return; }
         activeId = annotation.id; render();
         if (!options.indexOnly) surface.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         openEditor(annotation);
       };
       quote.addEventListener('click', (event) => { event.stopPropagation(); toggleEditor(); });
+      card.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('button,input,select,textarea,header')) return;
+        toggleEditor();
+      });
       card.addEventListener('contextmenu', (event) => { event.preventDefault(); activeId = annotation.id; render(); openEditor(annotation); });
       cards.appendChild(card);
       if (options.indexOnly && activeId === annotation.id) cards.appendChild(editorHost);
