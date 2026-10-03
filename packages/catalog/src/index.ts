@@ -608,6 +608,31 @@ const schema = `
     PRIMARY KEY(owner_key,zotero_key),
     UNIQUE(owner_key,reference_id)
   );
+  CREATE TABLE IF NOT EXISTS catalog_zotero_attachments (
+    owner_key text NOT NULL,
+    zotero_key text NOT NULL,
+    parent_item_key text NOT NULL,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    content_type text,
+    filename text,
+    synced_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,zotero_key)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_zotero_attachments_ref_idx
+    ON catalog_zotero_attachments(owner_key,reference_id);
+  CREATE TABLE IF NOT EXISTS catalog_zotero_annotations (
+    owner_key text NOT NULL,
+    zotero_key text NOT NULL,
+    annotation_id text NOT NULL REFERENCES catalog_annotations(id) ON DELETE CASCADE,
+    reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,
+    version bigint NOT NULL DEFAULT 0,
+    synced_hash text NOT NULL DEFAULT '',
+    synced_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(owner_key,zotero_key),
+    UNIQUE(owner_key,annotation_id)
+  );
+  CREATE INDEX IF NOT EXISTS catalog_zotero_annotations_ref_idx
+    ON catalog_zotero_annotations(owner_key,reference_id);
   CREATE TABLE IF NOT EXISTS catalog_annotations (
     id text PRIMARY KEY,
     reference_id text NOT NULL REFERENCES catalog_references(id) ON DELETE CASCADE,

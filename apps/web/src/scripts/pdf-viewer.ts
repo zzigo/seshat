@@ -114,10 +114,23 @@ export async function mountPdfViewer(
   const renderHighlights = (pageElement: HTMLElement) => {
     const layer = pageElement.querySelector<HTMLElement>('.pdf-highlight-layer'); if (!layer) return;
     layer.replaceChildren(); const page = Number(pageElement.dataset.page);
+    const pw = Number(pageElement.dataset.pageWidth) || 612;
+    const ph = Number(pageElement.dataset.pageHeight) || 792;
     annotations.filter((item) => item.sourceKind === 'pdf' && item.page === page).forEach((annotation) => {
-      annotation.rects.forEach((rect) => {
+      annotation.rects.forEach((rect: any) => {
+        let left = Number(rect.x || 0), top = Number(rect.y || 0), width = Number(rect.width || 0), height = Number(rect.height || 0);
+        if (rect.pdfPoints || left > 1 || top > 1 || width > 1 || rect.x1 !== undefined) {
+          const x1 = Number(rect.x1 ?? rect.x ?? 0);
+          const y1 = Number(rect.y1 ?? rect.y ?? 0);
+          const x2 = Number(rect.x2 ?? (x1 + width));
+          const y2 = Number(rect.y2 ?? (y1 + height));
+          left = Math.min(x1, x2) / pw;
+          top = (ph - Math.max(y1, y2)) / ph;
+          width = Math.abs(x2 - x1) / pw;
+          height = Math.abs(y2 - y1) / ph;
+        }
         const highlight = document.createElement('button'); highlight.type = 'button'; highlight.className = 'pdf-annotation-highlight';
-        highlight.style.cssText = `--annotation-color:${annotation.color};left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.width * 100}%;height:${rect.height * 100}%`;
+        highlight.style.cssText = `--annotation-color:${annotation.color};left:${left * 100}%;top:${top * 100}%;width:${width * 100}%;height:${height * 100}%`;
         highlight.title = annotation.note || annotation.quote; highlight.setAttribute('aria-label', `Annotation: ${annotation.quote.slice(0, 80)}`);
         highlight.addEventListener('click', () => { shell.classList.add('annotations-open'); toggle.setAttribute('aria-expanded', 'true'); }); layer.appendChild(highlight);
       });
@@ -187,6 +200,9 @@ export async function mountPdfViewer(
     try{
     const pageNumber = Number(pageElement.dataset.page); const page = await pdf.getPage(pageNumber); if (disposed) return;
     const viewport = page.getViewport({ scale: Number(pageElement.dataset.scale) });
+    const pageScale = Number(pageElement.dataset.scale) || 1;
+    pageElement.dataset.pageWidth = String(viewport.width / pageScale);
+    pageElement.dataset.pageHeight = String(viewport.height / pageScale);
     pageElement.style.width = `${viewport.width}px`; pageElement.style.height = `${viewport.height}px`;
     const canvas = pageElement.querySelector<HTMLCanvasElement>('canvas')!; const context = canvas.getContext('2d')!;
     const outputScale = phoneResourceProfile ? Math.min(window.devicePixelRatio || 1, 1.5) : window.devicePixelRatio || 1;
@@ -220,6 +236,8 @@ export async function mountPdfViewer(
     const page = phoneResourceProfile ? null : pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber);
     const viewport = page ? page.getViewport({ scale }) : phoneViewport;
     const pageElement = document.createElement('section'); pageElement.className = 'seshat-pdf-page'; pageElement.dataset.page = String(pageNumber); pageElement.dataset.scale = String(scale);
+    pageElement.dataset.pageWidth = String(viewport.width / scale);
+    pageElement.dataset.pageHeight = String(viewport.height / scale);
     pageElement.style.width = `${viewport.width}px`; pageElement.style.height = `${viewport.height}px`; pageElement.style.setProperty('--total-scale-factor', String(scale));
     const canvas = document.createElement('canvas'); const highlights = document.createElement('div'); highlights.className = 'pdf-highlight-layer';
     const textLayer = document.createElement('div'); textLayer.className = 'textLayer';

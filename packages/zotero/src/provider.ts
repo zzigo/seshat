@@ -82,11 +82,13 @@ export class ZoteroProvider implements BibliographyProvider {
     return response.json() as Promise<Record<string, unknown>>;
   }
 
-  private async objectPage<T>(path: string, start = 0, limit = 100): Promise<ZoteroObjectPage<T>> {
-    const response = await this.request(path, new URLSearchParams({
+  private async objectPage<T>(path: string, start = 0, limit = 100, params?: Record<string, string>): Promise<ZoteroObjectPage<T>> {
+    const searchParams = new URLSearchParams({
       format: 'json', start: String(Math.max(0, start)), limit: String(Math.min(100, Math.max(1, limit))),
       sort: 'dateModified', direction: 'asc',
-    }));
+      ...(params || {}),
+    });
+    const response = await this.request(path, searchParams);
     const objects = await response.json() as T[];
     const total = Number(response.headers.get('Total-Results') || objects.length);
     const nextStart = start + objects.length;
@@ -104,6 +106,46 @@ export class ZoteroProvider implements BibliographyProvider {
 
   itemPage(start = 0, limit = 100, topOnly = true): Promise<ZoteroObjectPage<ZoteroApiItem>> {
     return this.objectPage(topOnly ? '/items/top' : '/items', start, limit);
+  }
+
+  annotationPage(start = 0, limit = 100, sinceVersion?: number): Promise<ZoteroObjectPage<ZoteroApiItem>> {
+    const params: Record<string, string> = { itemType: 'annotation' };
+    if (sinceVersion) params.since = String(sinceVersion);
+    return this.objectPage('/items', start, limit, params);
+  }
+
+  notePage(start = 0, limit = 100, sinceVersion?: number): Promise<ZoteroObjectPage<ZoteroApiItem>> {
+    const params: Record<string, string> = { itemType: 'note' };
+    if (sinceVersion) params.since = String(sinceVersion);
+    return this.objectPage('/items', start, limit, params);
+  }
+
+  attachmentPage(start = 0, limit = 100): Promise<ZoteroObjectPage<ZoteroApiItem>> {
+    return this.objectPage('/items', start, limit, { itemType: 'attachment' });
+  }
+
+  async itemsByKeys(keys: string[]): Promise<ZoteroApiItem[]> {
+    if (!keys.length) return [];
+    const results: ZoteroApiItem[] = [];
+    const unique = [...new Set(keys.filter(Boolean))];
+    for (let i = 0; i < unique.length; i += 50) {
+      const chunk = unique.slice(i, i + 50);
+      const response = await this.request('/items', new URLSearchParams({
+        format: 'json', itemKey: chunk.join(','),
+      }));
+      const items = await response.json() as ZoteroApiItem[];
+      results.push(...items);
+    }
+    return results;
+  }
+
+  async deleteItem(key: string, version?: number): Promise<void> {
+    const headers: HeadersInit = {};
+    if (version !== undefined) headers['If-Unmodified-Since-Version'] = String(version);
+    await this.request(`/items/${encodeURIComponent(key)}`, undefined, {
+      method: 'DELETE',
+      headers,
+    });
   }
 
   async libraryChangedSince(libraryVersion: number): Promise<ZoteroLibraryChange> {
@@ -164,15 +206,17 @@ export class ZoteroProvider implements BibliographyProvider {
     return Number(response.headers.get('Last-Modified-Version')) || version;
   }
 
-  private async children(itemKey: string): Promise<ZoteroApiItem[]> {
-    if (!this.options.includeAttachments) return [];
-    const response = await this.request(`/items/${encodeURIComponent(itemKey)}/children`, new URLSearchParams({
-      format: 'json',
-      itemType: 'attachment',
-      limit: '100',
-    }));
+  async itemChildren(itemKey: string, itemType = 'attachment'): Promise<ZoteroApiItem[]> {
+    const params = new URLSearchParams({ format: 'json', limit: '100' });
+    if (itemType) params.set('itemType', itemType);
+    const response = await this.request(`/items/${encodeURIComponent(itemKey)}/children`, params);
     if (response.status === 404) return [];
     return response.json() as Promise<ZoteroApiItem[]>;
+  }
+
+  private async children(itemKey: string): Promise<ZoteroApiItem[]> {
+    if (!this.options.includeAttachments) return [];
+    return this.itemChildren(itemKey, 'attachment');
   }
 
   async list(query: BibliographyQuery = {}): Promise<BibliographyPage> {

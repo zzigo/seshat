@@ -41,6 +41,14 @@ export interface ZoteroItemData {
   filename?: string;
   linkMode?: string;
   collections?: string[];
+  annotationType?: 'highlight' | 'note' | 'image' | 'ink' | 'underline';
+  annotationText?: string;
+  annotationComment?: string;
+  annotationColor?: string;
+  annotationPageLabel?: string;
+  annotationSortIndex?: string;
+  annotationPosition?: string;
+  note?: string;
 }
 
 export interface ZoteroApiItem {

@@ -13,10 +13,10 @@ import { getZoteroConnection, updateZoteroSyncState, zoteroProviderFor } from '.
 
 export interface ZoteroSyncResult {
   mode: 'pull' | 'push' | 'bidirectional';
-  remote: { collections: number; items: number; libraryVersion: number };
-  pulled: { collections: number; items: number; merged: number };
-  pushed: { collections: number; items: number };
-  conflicts: Array<{ kind: 'collection' | 'item'; key: string; label: string }>;
+  remote: { collections: number; items: number; libraryVersion: number; annotations?: number };
+  pulled: { collections: number; items: number; merged: number; annotations?: number };
+  pushed: { collections: number; items: number; annotations?: number };
+  conflicts: Array<{ kind: 'collection' | 'item' | 'annotation'; key: string; label: string }>;
   rootLibraryId: string;
 }
 
@@ -142,9 +142,10 @@ export const previewZoteroSync = async (ownerKey: string) => {
   const connection = await getZoteroConnection(ownerKey);
   if (!connection?.libraryId || !connection.syncMode) throw new Error('ZOTERO_NOT_CONNECTED');
   const provider = await zoteroProviderFor(ownerKey);
-  const [collectionSnapshot, itemSnapshot, local, mapped] = await Promise.all([
+  const [collectionSnapshot, itemSnapshot, annotationSummary, local, mapped] = await Promise.all([
     fetchAll((start) => provider.collectionPage(start, 100)),
     fetchAll((start) => provider.itemPage(start, 100, true)),
+    provider.annotationPage(0, 1),
     getCatalog().pool.query('SELECT id,title,issued,identifiers,source FROM catalog_references WHERE owner_key=$1', [ownerKey]),
     getCatalog().pool.query('SELECT zotero_key,reference_id FROM catalog_zotero_items WHERE owner_key=$1', [ownerKey]),
   ]);
@@ -184,6 +185,7 @@ export const previewZoteroSync = async (ownerKey: string) => {
   return {
     remote: {
       collections: collectionSnapshot.objects.length, items: bibliographicItems,
+      annotations: annotationSummary.total,
       libraryVersion: Math.max(collectionSnapshot.libraryVersion, itemSnapshot.libraryVersion),
     },
     local: { items: local.rowCount || 0, mapped: alreadyMapped },
@@ -480,6 +482,379 @@ const pushItems = async (input: {
   return pushed;
 };
 
+const ZOTERO_COLOR_TO_CATEGORY: Record<string, string> = {
+  '#2ea8e5': 'concept',
+  '#5fb236': 'main-idea',
+  '#a28ae5': 'research-development',
+  '#ffd400': 'evidence',
+  '#ff6666': 'question-opposition',
+  '#f19837': 'methodology',
+  '#e56eee': 'connection',
+  '#aaaaaa': 'misc',
+};
+
+const categoryForZoteroColor = (color?: string): string => {
+  if (!color) return 'evidence';
+  return ZOTERO_COLOR_TO_CATEGORY[color.toLowerCase()] || 'misc';
+};
+
+const pullAnnotationsAndNotes = async (input: {
+  ownerKey: string;
+  provider: ZoteroProvider;
+  conflicts: ZoteroSyncResult['conflicts'];
+}): Promise<{ count: number; merged: number }> => {
+  const catalog = getCatalog();
+  const client = await catalog.pool.connect();
+  let count = 0;
+  let merged = 0;
+
+  try {
+    const [annotationSnapshot, noteSnapshot] = await Promise.all([
+      fetchAll((start) => input.provider.annotationPage(start, 100)),
+      fetchAll((start) => input.provider.notePage(start, 100)),
+    ]);
+
+    const [attachmentRows, itemRows, existingAnnotationRows] = await Promise.all([
+      catalog.pool.query('SELECT zotero_key, parent_item_key, reference_id FROM catalog_zotero_attachments WHERE owner_key=$1', [input.ownerKey]),
+      catalog.pool.query('SELECT zotero_key, reference_id FROM catalog_zotero_items WHERE owner_key=$1', [input.ownerKey]),
+      catalog.pool.query('SELECT zotero_key, annotation_id, version, synced_hash FROM catalog_zotero_annotations WHERE owner_key=$1', [input.ownerKey]),
+    ]);
+
+    const attachmentMap = new Map<string, { parentItemKey: string; referenceId: string }>(
+      attachmentRows.rows.map((row: any) => [String(row.zotero_key), { parentItemKey: String(row.parent_item_key), referenceId: String(row.reference_id) }])
+    );
+    const itemMap = new Map<string, string>(
+      itemRows.rows.map((row: any) => [String(row.zotero_key), String(row.reference_id)])
+    );
+    const existingAnnotations = new Map<string, { annotationId: string; version: number; syncedHash: string }>(
+      existingAnnotationRows.rows.map((row: any) => [String(row.zotero_key), {
+        annotationId: String(row.annotation_id),
+        version: Number(row.version || 0),
+        syncedHash: String(row.synced_hash || ''),
+      }])
+    );
+
+    const missingKeys = new Set<string>();
+    for (const ann of annotationSnapshot.objects) {
+      const parentKey = ann.data.parentItem;
+      if (parentKey && !attachmentMap.has(parentKey) && !itemMap.has(parentKey)) missingKeys.add(parentKey);
+    }
+    for (const note of noteSnapshot.objects) {
+      const parentKey = note.data.parentItem;
+      if (parentKey && !attachmentMap.has(parentKey) && !itemMap.has(parentKey)) missingKeys.add(parentKey);
+    }
+
+    if (missingKeys.size > 0) {
+      const fetchedParents = await input.provider.itemsByKeys([...missingKeys]);
+      for (const p of fetchedParents) {
+        if (p.data.parentItem) {
+          const topLevelKey = p.data.parentItem;
+          const refId = itemMap.get(topLevelKey);
+          if (refId) {
+            attachmentMap.set(p.key, { parentItemKey: topLevelKey, referenceId: refId });
+            await client.query(
+              `INSERT INTO catalog_zotero_attachments(owner_key, zotero_key, parent_item_key, reference_id, content_type, filename, synced_at)
+               VALUES($1, $2, $3, $4, $5, $6, now())
+               ON CONFLICT(owner_key, zotero_key) DO UPDATE SET
+                 parent_item_key=excluded.parent_item_key, reference_id=excluded.reference_id,
+                 content_type=excluded.content_type, filename=excluded.filename, synced_at=now()`,
+              [input.ownerKey, p.key, topLevelKey, refId, p.data.contentType || null, p.data.filename || null]
+            );
+          }
+        }
+      }
+    }
+
+    await client.query('BEGIN');
+
+    for (const ann of annotationSnapshot.objects) {
+      const parentKey = ann.data.parentItem;
+      if (!parentKey) continue;
+      const refId = attachmentMap.get(parentKey)?.referenceId || itemMap.get(parentKey);
+      if (!refId) continue;
+
+      let page = 1;
+      let rects: any[] = [];
+      if (ann.data.annotationPosition) {
+        try {
+          const parsed = JSON.parse(ann.data.annotationPosition);
+          if (typeof parsed.pageIndex === 'number') page = parsed.pageIndex + 1;
+          if (Array.isArray(parsed.rects)) {
+            rects = parsed.rects.map((r: any) => {
+              if (Array.isArray(r) && r.length >= 4) {
+                const [x1, y1, x2, y2] = r.map(Number);
+                return {
+                  x1, y1, x2, y2,
+                  x: Math.min(x1, x2),
+                  y: Math.min(y1, y2),
+                  width: Math.abs(x2 - x1),
+                  height: Math.abs(y2 - y1),
+                  pdfPoints: true,
+                };
+              }
+              return r;
+            });
+          }
+        } catch {
+          // fallback
+        }
+      } else if (ann.data.annotationPageLabel) {
+        const p = parseInt(ann.data.annotationPageLabel, 10);
+        if (Number.isFinite(p) && p > 0) page = p;
+      }
+
+      let quote = String(ann.data.annotationText || '').trim();
+      const comment = String(ann.data.annotationComment || '').trim();
+      if (!quote && comment) {
+        quote = comment.slice(0, 100);
+      } else if (!quote) {
+        quote = `(Annotation p. ${page})`;
+      }
+      const startOffset = 0;
+      const endOffset = Math.max(1, quote.length);
+      const color = ann.data.annotationColor || '#ffd400';
+      const category = categoryForZoteroColor(color);
+      const noteType = ann.data.annotationType || 'highlight';
+      const tags = (ann.data.tags || []).map((t: any) => String(t.tag || '').trim()).filter(Boolean);
+      const locator = `p. ${page}`;
+      const version = Number(ann.version ?? ann.data.version ?? 0);
+
+      const hash = createHash('sha256').update(JSON.stringify({
+        quote, comment, color, category, page, rects, tags,
+      })).digest('hex');
+
+      const existing = existingAnnotations.get(ann.key);
+      if (existing) {
+        if (existing.syncedHash === hash) continue;
+        await client.query(
+          `UPDATE catalog_annotations SET
+             quote=$3, start_offset=$4, end_offset=$5, source_kind='pdf',
+             rects=$6::jsonb, page=$7, locator=$8, color=$9, category=$10,
+             note_type=$11, note=$12, tags=$13::text[], updated_at=COALESCE($14::timestamptz, now())
+           WHERE id=$1 AND owner_key=$2`,
+          [existing.annotationId, input.ownerKey, quote, startOffset, endOffset,
+           JSON.stringify(rects), page, locator, color, category,
+           noteType, comment || null, tags, ann.data.dateModified || null]
+        );
+        await client.query(
+          `UPDATE catalog_zotero_annotations SET
+             version=$3, synced_hash=$4, synced_at=now()
+           WHERE owner_key=$1 AND zotero_key=$2`,
+          [input.ownerKey, ann.key, version, hash]
+        );
+        count += 1;
+      } else {
+        const annotationId = randomUUID();
+        await client.query(
+          `INSERT INTO catalog_annotations
+            (id, reference_id, owner_key, quote, start_offset, end_offset, source_kind,
+             rects, page, locator, color, category, note_type, note, tags, created_at, updated_at)
+           VALUES
+            ($1, $2, $3, $4, $5, $6, 'pdf',
+             $7::jsonb, $8, $9, $10, $11, $12, $13, $14::text[], COALESCE($15::timestamptz, now()), COALESCE($16::timestamptz, now()))`,
+          [annotationId, refId, input.ownerKey, quote, startOffset, endOffset,
+           JSON.stringify(rects), page, locator, color, category,
+           noteType, comment || null, tags, ann.data.dateAdded || null, ann.data.dateModified || null]
+        );
+        await client.query(
+          `INSERT INTO catalog_zotero_annotations
+            (owner_key, zotero_key, annotation_id, reference_id, version, synced_hash, synced_at)
+           VALUES
+            ($1, $2, $3, $4, $5, $6, now())`,
+          [input.ownerKey, ann.key, annotationId, refId, version, hash]
+        );
+        existingAnnotations.set(ann.key, { annotationId, version, syncedHash: hash });
+        count += 1;
+      }
+    }
+
+    for (const noteItem of noteSnapshot.objects) {
+      const parentKey = noteItem.data.parentItem;
+      if (!parentKey) continue;
+      const refId = attachmentMap.get(parentKey)?.referenceId || itemMap.get(parentKey);
+      if (!refId) continue;
+
+      const rawNoteHtml = String(noteItem.data.note || '').trim();
+      const plainText = rawNoteHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!plainText) continue;
+
+      const quote = plainText.slice(0, 120);
+      const startOffset = 0;
+      const endOffset = Math.max(1, quote.length);
+      const color = '#aaaaaa';
+      const category = 'misc';
+      const tags = (noteItem.data.tags || []).map((t: any) => String(t.tag || '').trim()).filter(Boolean);
+      const version = Number(noteItem.version ?? noteItem.data.version ?? 0);
+
+      const hash = createHash('sha256').update(JSON.stringify({
+        quote, rawNoteHtml, tags,
+      })).digest('hex');
+
+      const existing = existingAnnotations.get(noteItem.key);
+      if (existing) {
+        if (existing.syncedHash === hash) continue;
+        await client.query(
+          `UPDATE catalog_annotations SET
+             quote=$3, start_offset=$4, end_offset=$5, source_kind='markdown',
+             note_type='note', note=$6, tags=$7::text[], updated_at=COALESCE($8::timestamptz, now())
+           WHERE id=$1 AND owner_key=$2`,
+          [existing.annotationId, input.ownerKey, quote, startOffset, endOffset,
+           rawNoteHtml, tags, noteItem.data.dateModified || null]
+        );
+        await client.query(
+          `UPDATE catalog_zotero_annotations SET
+             version=$3, synced_hash=$4, synced_at=now()
+           WHERE owner_key=$1 AND zotero_key=$2`,
+          [input.ownerKey, noteItem.key, version, hash]
+        );
+        count += 1;
+      } else {
+        const annotationId = randomUUID();
+        await client.query(
+          `INSERT INTO catalog_annotations
+            (id, reference_id, owner_key, quote, start_offset, end_offset, source_kind,
+             rects, locator, color, category, note_type, note, tags, created_at, updated_at)
+           VALUES
+            ($1, $2, $3, $4, $5, $6, 'markdown',
+             '[]'::jsonb, 'Note', $7, $8, 'note', $9, $10::text[], COALESCE($11::timestamptz, now()), COALESCE($12::timestamptz, now()))`,
+          [annotationId, refId, input.ownerKey, quote, startOffset, endOffset,
+           color, category, rawNoteHtml, tags, noteItem.data.dateAdded || null, noteItem.data.dateModified || null]
+        );
+        await client.query(
+          `INSERT INTO catalog_zotero_annotations
+            (owner_key, zotero_key, annotation_id, reference_id, version, synced_hash, synced_at)
+           VALUES
+            ($1, $2, $3, $4, $5, $6, now())`,
+          [input.ownerKey, noteItem.key, annotationId, refId, version, hash]
+        );
+        existingAnnotations.set(noteItem.key, { annotationId, version, syncedHash: hash });
+        count += 1;
+      }
+    }
+
+    await client.query('COMMIT');
+    return { count, merged };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+const pushAnnotations = async (input: {
+  ownerKey: string;
+  provider: ZoteroProvider;
+  conflicts: ZoteroSyncResult['conflicts'];
+}): Promise<number> => {
+  const catalog = getCatalog();
+  let pushed = 0;
+
+  const rows = await catalog.pool.query(
+    `SELECT a.*, za.zotero_key, za.version AS zotero_version, za.synced_hash,
+            zat.zotero_key AS attachment_key
+     FROM catalog_annotations a
+     LEFT JOIN catalog_zotero_annotations za ON za.owner_key=$1 AND za.annotation_id=a.id
+     LEFT JOIN catalog_zotero_attachments zat ON zat.owner_key=$1 AND zat.reference_id=a.reference_id
+     JOIN catalog_zotero_items zi ON zi.owner_key=$1 AND zi.reference_id=a.reference_id
+     WHERE a.owner_key=$1`,
+    [input.ownerKey]
+  );
+
+  for (const row of rows.rows) {
+    const hash = createHash('sha256').update(JSON.stringify({
+      quote: row.quote, note: row.note || '', color: row.color, category: row.category,
+      page: row.page, rects: row.rects || [], tags: row.tags || [],
+    })).digest('hex');
+
+    if (row.zotero_key) {
+      if (hash === row.synced_hash) continue;
+      const remoteVersion = Number(row.zotero_version || 0);
+      const patch: Record<string, unknown> = {
+        tags: (row.tags || []).map((tag: string) => ({ tag })),
+      };
+      if (row.note_type === 'note') {
+        patch.note = row.note || row.quote;
+      } else {
+        patch.annotationText = row.quote;
+        patch.annotationComment = row.note || '';
+        patch.annotationColor = row.color;
+      }
+      try {
+        const version = await input.provider.updateItem(row.zotero_key, remoteVersion, patch);
+        await catalog.pool.query(
+          `UPDATE catalog_zotero_annotations SET version=$3, synced_hash=$4, synced_at=now()
+           WHERE owner_key=$1 AND zotero_key=$2`,
+          [input.ownerKey, row.zotero_key, version, hash]
+        );
+        pushed += 1;
+      } catch (err) {
+        input.conflicts.push({ kind: 'annotation' as any, key: row.zotero_key, label: row.quote.slice(0, 40) });
+      }
+      continue;
+    }
+
+    let attachmentKey = row.attachment_key;
+    if (!attachmentKey) {
+      const ziRow = (await catalog.pool.query(
+        'SELECT zotero_key FROM catalog_zotero_items WHERE owner_key=$1 AND reference_id=$2',
+        [input.ownerKey, row.reference_id]
+      )).rows[0];
+      if (ziRow) {
+        const children = await input.provider.itemChildren(ziRow.zotero_key, 'attachment');
+        if (children[0]) {
+          attachmentKey = children[0].key;
+          await catalog.pool.query(
+            `INSERT INTO catalog_zotero_attachments(owner_key, zotero_key, parent_item_key, reference_id, synced_at)
+             VALUES($1, $2, $3, $4, now()) ON CONFLICT DO NOTHING`,
+            [input.ownerKey, attachmentKey, ziRow.zotero_key, row.reference_id]
+          );
+        }
+      }
+    }
+
+    if (!attachmentKey) continue;
+
+    const page = Number(row.page) || 1;
+    const rects = (Array.isArray(row.rects) ? row.rects : []).map((r: any) => [
+      r.x1 ?? r.x ?? 0,
+      r.y1 ?? r.y ?? 0,
+      r.x2 ?? ((r.x ?? 0) + (r.width ?? 0)),
+      r.y2 ?? ((r.y ?? 0) + (r.height ?? 0)),
+    ]);
+
+    const zoteroAnnotation = {
+      itemType: 'annotation',
+      parentItem: attachmentKey,
+      annotationType: row.note_type === 'reading-mark' ? 'highlight' : (row.note_type || 'highlight'),
+      annotationText: row.quote,
+      annotationComment: row.note || '',
+      annotationColor: row.color || '#ffd400',
+      annotationPageLabel: String(page),
+      annotationPosition: JSON.stringify({
+        pageIndex: Math.max(0, page - 1),
+        rects: rects.length ? rects : [[0, 0, 100, 100]],
+      }),
+      tags: (row.tags || []).map((tag: string) => ({ tag })),
+    };
+
+    try {
+      const created = await input.provider.createItem(zoteroAnnotation);
+      const version = Number(created.version ?? created.data?.version ?? 0);
+      await catalog.pool.query(
+        `INSERT INTO catalog_zotero_annotations(owner_key, zotero_key, annotation_id, reference_id, version, synced_hash, synced_at)
+         VALUES($1, $2, $3, $4, $5, $6, now())`,
+        [input.ownerKey, created.key, row.id, row.reference_id, version, hash]
+      );
+      pushed += 1;
+    } catch (err) {
+      input.conflicts.push({ kind: 'annotation' as any, key: row.id, label: row.quote.slice(0, 40) });
+    }
+  }
+
+  return pushed;
+};
+
 export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: number): Promise<ZoteroSyncResult> => {
   const catalog = getCatalog(); const lockClient = await catalog.pool.connect(); const lockName = `seshat:zotero:${ownerKey}`;
   const locked = await lockClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [lockName]);
@@ -488,9 +863,10 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
     const connection = await getZoteroConnection(ownerKey);
     if (!connection?.libraryId || !connection.syncMode) throw new Error('ZOTERO_NOT_CONNECTED');
     const provider = await zoteroProviderFor(ownerKey);
-    const [collectionSnapshot, itemSnapshot] = await Promise.all([
+    const [collectionSnapshot, itemSnapshot, annotationSummary] = await Promise.all([
       fetchAll((start) => provider.collectionPage(start, 100)),
       fetchAll((start) => provider.itemPage(start, 100, true)),
+      provider.annotationPage(0, 1),
     ]);
     const bibliographicItems = itemSnapshot.objects.filter((item) => item.data.itemType !== 'attachment' && item.data.itemType !== 'note');
     const libraryVersion = Math.max(collectionSnapshot.libraryVersion, itemSnapshot.libraryVersion);
@@ -501,8 +877,8 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
     const conflicts: ZoteroSyncResult['conflicts'] = []; const skipPull = new Set<string>();
     const result: ZoteroSyncResult = {
       mode: connection.syncMode,
-      remote: { collections: collectionSnapshot.objects.length, items: bibliographicItems.length, libraryVersion },
-      pulled: { collections: 0, items: 0, merged: 0 }, pushed: { collections: 0, items: 0 },
+      remote: { collections: collectionSnapshot.objects.length, items: bibliographicItems.length, annotations: annotationSummary.total, libraryVersion },
+      pulled: { collections: 0, items: 0, merged: 0, annotations: 0 }, pushed: { collections: 0, items: 0, annotations: 0 },
       conflicts, rootLibraryId,
     };
     const remoteCollections = new Map(collectionSnapshot.objects.map((item) => [item.key, item]));
@@ -510,6 +886,7 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
     if (connection.syncMode === 'push' || connection.syncMode === 'bidirectional') {
       result.pushed.collections = await pushCollections({ ownerKey, rootLibraryId, provider, remote: remoteCollections, conflicts });
       result.pushed.items = await pushItems({ ownerKey, rootLibraryId, provider, remote: remoteItems, conflicts, skipPull });
+      result.pushed.annotations = await pushAnnotations({ ownerKey, provider, conflicts });
     }
     if (connection.syncMode === 'pull' || connection.syncMode === 'bidirectional') {
       const mirrored = await mirrorCollections(ownerKey, rootLibraryId, [...remoteCollections.values()]);
@@ -520,6 +897,8 @@ export const runZoteroSync = async (ownerKey: string, confirmedLibraryVersion?: 
         analyzeAutomatically: connection.analyzeAutomatically !== false, skip: skipPull, conflicts,
       });
       result.pulled.items = pulled.count; result.pulled.merged = pulled.merged;
+      const pulledAnns = await pullAnnotationsAndNotes({ ownerKey, provider, conflicts });
+      result.pulled.annotations = pulledAnns.count;
     }
     result.pulled.merged += await reconcileInboxZoteroDuplicates(ownerKey);
     const finalVersion = Math.max(libraryVersion,
