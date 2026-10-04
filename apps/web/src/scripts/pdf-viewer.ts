@@ -46,12 +46,21 @@ export async function mountPdfViewer(
   toggle.textContent = '☰'; toggle.title = 'Annotations'; toggle.setAttribute('aria-label', 'Toggle annotations'); toggle.setAttribute('aria-expanded', 'false');
   toggle.addEventListener('click', () => {
     const open = !shell.classList.contains('annotations-open'); shell.classList.toggle('annotations-open', open); toggle.setAttribute('aria-expanded', String(open));
-    if (open) window.dispatchEvent(new CustomEvent('seshat:close-reader-sidebars',{ detail:{ referenceId } }));
+    if (open) {
+      propertiesToggle.setAttribute('aria-expanded', 'false');
+      structureToggle.setAttribute('aria-expanded', 'false');
+      workspacesToggle.setAttribute('aria-expanded', 'false');
+      window.dispatchEvent(new CustomEvent('seshat:close-reader-sidebars',{ detail:{ referenceId } }));
+    }
   });
   const propertiesToggle = document.createElement('button'); propertiesToggle.type = 'button'; propertiesToggle.className = 'pdf-properties-toggle'; propertiesToggle.textContent = 'ⓘ'; propertiesToggle.title = 'Item properties'; propertiesToggle.setAttribute('aria-label','Toggle item properties'); propertiesToggle.setAttribute('aria-expanded','false');
-  propertiesToggle.addEventListener('click',() => { const open=propertiesToggle.getAttribute('aria-expanded')!=='true';propertiesToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId,open } })); });
+  propertiesToggle.addEventListener('click',() => { const open=propertiesToggle.getAttribute('aria-expanded')!=='true';propertiesToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');structureToggle.setAttribute('aria-expanded','false');workspacesToggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-properties',{ detail:{ referenceId,open } })); });
   const structureToggle = document.createElement('button'); structureToggle.type = 'button'; structureToggle.className = 'pdf-structure-toggle'; structureToggle.textContent = '§'; structureToggle.title = 'Document structure'; structureToggle.setAttribute('aria-label','Toggle document structure'); structureToggle.setAttribute('aria-expanded','false');
-  structureToggle.addEventListener('click',() => { const open=structureToggle.getAttribute('aria-expanded')!=='true';structureToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-structure',{ detail:{ referenceId,open } })); });
+  structureToggle.addEventListener('click',() => { const open=structureToggle.getAttribute('aria-expanded')!=='true';structureToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');propertiesToggle.setAttribute('aria-expanded','false');workspacesToggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-structure',{ detail:{ referenceId,open } })); });
+  const workspacesToggle = document.createElement('button'); workspacesToggle.type = 'button'; workspacesToggle.className = 'pdf-workspaces-toggle'; workspacesToggle.textContent = 'W'; workspacesToggle.title = 'Workspaces'; workspacesToggle.setAttribute('aria-label','Toggle workspaces'); workspacesToggle.setAttribute('aria-expanded','false');
+  workspacesToggle.addEventListener('click',() => { const open=workspacesToggle.getAttribute('aria-expanded')!=='true';workspacesToggle.setAttribute('aria-expanded',String(open));if(open){shell.classList.remove('annotations-open');toggle.setAttribute('aria-expanded','false');propertiesToggle.setAttribute('aria-expanded','false');structureToggle.setAttribute('aria-expanded','false');}window.dispatchEvent(new CustomEvent('seshat:toggle-workspaces',{ detail:{ referenceId,open } })); });
+  window.addEventListener('seshat:close-reader-sidebars', ((event: CustomEvent<{ referenceId?: string }>) => { if (event.detail?.referenceId && event.detail.referenceId !== referenceId) return; workspacesToggle.setAttribute('aria-expanded', 'false'); propertiesToggle.setAttribute('aria-expanded', 'false'); structureToggle.setAttribute('aria-expanded', 'false'); }) as EventListener);
+  window.addEventListener('seshat:workspaces-state-changed', ((event: CustomEvent<{ open?: boolean }>) => { workspacesToggle.setAttribute('aria-expanded', String(Boolean(event.detail?.open))); }) as EventListener);
   const setSidebarWidth = (width: number) => {
     const maximum = Math.max(280, Math.min(620, shell.getBoundingClientRect().width * .68));
     const next = Math.round(Math.max(240, Math.min(maximum, width)));
@@ -69,7 +78,7 @@ export async function mountPdfViewer(
     const current = sidebar.getBoundingClientRect().width || 340; setSidebarWidth(current + (event.key === 'ArrowLeft' ? 20 : -20));
   });
   const progress = document.createElement('div'); progress.className = 'pdf-loading'; progress.textContent = sourceKind === 'djvu' ? 'Loading DjVu…' : 'Loading PDF…';
-  pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle, structureToggle); element.replaceChildren(shell);
+  pages.appendChild(progress); shell.append(viewer, sidebar, toggle, propertiesToggle, structureToggle, workspacesToggle); element.replaceChildren(shell);
 
   let annotations: Annotation[] = [];
   let pending: PdfAnchor | null = null;
@@ -530,6 +539,7 @@ export async function mountPdfViewer(
   });
   const readerKeyboard = (event: KeyboardEvent) => {
     if ((event.target as HTMLElement)?.matches('input,textarea,select,[contenteditable="true"]')) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     let page: number | null = null;
     const doublePage = pages.classList.contains('double-page-view') && !pages.classList.contains('mosaic-page-view');
     if (event.key === 'ArrowLeft') page = adjacentPdfPage(currentPage, -1, total, doublePage);
@@ -539,6 +549,25 @@ export async function mountPdfViewer(
     else if (event.key === '1' && !pending) { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-zoom-reset')); return; }
     else if (event.key === 'g') { event.preventDefault();const grid=pages.classList.contains('mosaic-page-view');parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:grid?'page':'grid',page:selectedGridPage||currentPage } })); return; }
     else if (event.key === 'b') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-request-mode',{ detail:{ mode:'book' } })); return; }
+    else if (event.key === 'r') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:reader-command',{ detail:{ command:'read' } })); return; }
+    else if (event.key === 'a') { event.preventDefault(); toggle.click(); return; }
+    else if (event.key === 'u') { event.preventDefault(); structureToggle.click(); return; }
+    else if (event.key === 'w' || event.key === 'W') { event.preventDefault(); workspacesToggle.click(); return; }
+    else if (event.key === 's') { event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:reader-search-open')); return; }
+    else if (event.key === 'n') { event.preventDefault(); window.dispatchEvent(new CustomEvent('seshat:open-tool',{ detail:{ kind:'analysis', referenceId } })); return; }
+    else if (event.key === 'm') {
+      event.preventDefault();
+      if (pending) openComposer(pending);
+      else {
+        const sel = anchorFromSelection();
+        if (sel) openComposer(sel);
+        else {
+          const redColor = annotationColors.find((c) => c.name === 'red') || annotationColors[0];
+          void save({ quote: `Reading mark p. ${currentPage}`, prefix: '', suffix: '', startOffset: 0, endOffset: 0, sourceKind: 'pdf', page: currentPage, locator: `p. ${currentPage}`, rects: [] }, redColor);
+        }
+      }
+      return;
+    }
     if (page === null) return;
     event.preventDefault(); parent.dispatchEvent(new CustomEvent('seshat:pdf-goto-page', { detail: { page: Math.max(1, Math.min(total, page)) } }));
   };

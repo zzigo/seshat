@@ -6,6 +6,7 @@ import { registerAllModules } from 'handsontable/registry';
 import { createDockview, type DockviewApi, type IContentRenderer } from 'dockview-core';
 import { BIBLATEX_ENTRY_TYPE_OPTIONS, BIBLATEX_ENTRY_TYPE_VALUES, BIBLATEX_FIELD_KEYS, BIBLATEX_FIELD_OPTIONS, CONTRIBUTOR_ROLES, biblatexEntryTypeFor, biblatexFieldsFor, contributorSummary, fixAllCapsCase, normalizeBibliographicType, normalizeContributor, normalizeContributors, normalizeSmartFolderFilters, parsePublicationYear, potentialDuplicateFingerprint, referenceMatchesSmartFolder, smartFolderHasFilters, type Contributor, type SmartFolderFilters } from '@seshat/core';
 import { mountAnnotationWorkspace } from './annotations';
+import { mountWorkspacesPanel, type SavedWorkspace } from '../lib/workspaces-manager';
 import { mountPdfViewer, navigatePdfToPage } from './pdf-viewer';
 import { mountEpubReader } from './epub-reader';
 import { mountReaderPageInput } from '../lib/reader-page-input';
@@ -4368,25 +4369,14 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
     }
     if (!editing && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey) {
       if (shortcutPrefix) {
-        const chord=`${shortcutPrefix}${event.key}`; shortcutPrefix=''; window.clearTimeout(shortcutPrefixTimer);
+        const chord=`${shortcutPrefix}${event.key.toLowerCase()}`; shortcutPrefix=''; window.clearTimeout(shortcutPrefixTimer);
         if (chord === 'gc') { const id=[...selectedReferences][0] || activeReference; if (id) { event.preventDefault(); void searchForCandidate(id); } return; }
         if (chord === 'ya' || chord === 'yb') { event.preventDefault(); const ids=selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : []; copyReferences(ids,chord === 'ya' ? 'apa' : 'bibtex'); return; }
         return;
       }
-      if (event.key.toLowerCase() === 'a' || event.key.toLowerCase() === 'b') {
-        event.preventDefault(); const ids=selectedReferences.size ? [...selectedReferences] : activeReference ? [activeReference] : [];
-        copyReferences(ids,event.key.toLowerCase()==='a'?'apa':'bibtex'); return;
-      }
-      if (event.key === 'g' || event.key === 'y') {
-        event.preventDefault(); shortcutPrefix=event.key; window.clearTimeout(shortcutPrefixTimer); setSaveState(`${event.key} …`);
-        shortcutPrefixTimer=window.setTimeout(() => { shortcutPrefix=''; setSaveState('ready'); },1000); return;
-      }
-      if (event.key.toLowerCase() === 'w') {
-        if(event.repeat)return;
-        event.preventDefault();
-        const ids=selectedReferences.size?[...selectedReferences]:activeReference?[activeReference]:[];
-        void searchWasabiForSelection(ids,event.shiftKey);
-        return;
+      if (event.key === 'y') {
+        event.preventDefault(); shortcutPrefix='y'; window.clearTimeout(shortcutPrefixTimer); setSaveState('y (copy: a=APA, b=BibTeX) …');
+        shortcutPrefixTimer=window.setTimeout(() => { shortcutPrefix=''; setSaveState('ready'); },1200); return;
       }
       if (event.key.toLowerCase() === 'r') {
         const activePanelId=api.activePanel?.id;
@@ -4401,6 +4391,116 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
         if (!readButton) { setSaveState('open an item before using Read','error'); return; }
         event.preventDefault();
         readButton.dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:event.shiftKey}));
+        return;
+      }
+      if (event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        if (activeReference) {
+          const panelId = `tool-annotation-${activeReference}`;
+          const existing = api.getPanel(panelId);
+          if (existing && api.activePanel === existing) {
+            existing.api.close();
+          } else {
+            controller.openTool('annotation', activeReference);
+          }
+        } else {
+          setSaveState('select an item before toggling annotations', 'error');
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        const activePanelId=api.activePanel?.id;
+        const activePod=activePanelId
+          ? root.querySelector<HTMLElement>(`.document-pod[data-panel-id="${CSS.escape(activePanelId)}"]`)
+          : root.querySelector<HTMLElement>('.document-pod');
+        activePod?.dispatchEvent(new CustomEvent('seshat:pdf-request-mode', { detail: { mode: 'book' } }));
+        return;
+      }
+      if (event.key === 'g') {
+        event.preventDefault();
+        const activePanelId=api.activePanel?.id;
+        const activePod=activePanelId
+          ? root.querySelector<HTMLElement>(`.document-pod[data-panel-id="${CSS.escape(activePanelId)}"]`)
+          : null;
+        if (activePod?.querySelector('.seshat-pdf-pages')) {
+          const isGrid = Boolean(activePod.querySelector('.mosaic-page-view'));
+          activePod.dispatchEvent(new CustomEvent('seshat:pdf-request-mode', { detail: { mode: isGrid ? 'page' : 'grid' } }));
+        } else {
+          const existing = api.getPanel('tool-knowledge-graph') || api.getPanel('tool-graph');
+          if (existing && api.activePanel === existing) existing.api.close();
+          else controller.openTool('graph', null);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        const activePanelId=api.activePanel?.id;
+        const activePod=activePanelId
+          ? root.querySelector<HTMLElement>(`.document-pod[data-panel-id="${CSS.escape(activePanelId)}"]`)
+          : root.querySelector<HTMLElement>('.document-pod');
+        if (activePod) {
+          activePod.dispatchEvent(new CustomEvent('seshat:reader-search-open'));
+        } else {
+          openQuickfinder();
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'm') {
+        event.preventDefault();
+        const activePanelId=api.activePanel?.id;
+        const activePod=activePanelId
+          ? root.querySelector<HTMLElement>(`.document-pod[data-panel-id="${CSS.escape(activePanelId)}"]`)
+          : root.querySelector<HTMLElement>('.document-pod');
+        if (activePod) {
+          const commentBtn = activePod.querySelector<HTMLButtonElement>('.annotation-comment');
+          if (commentBtn) commentBtn.click();
+          else if (activeReference) controller.openTool('annotation', activeReference);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        if (activeReference) {
+          const panelId = `structure-${activeReference}`;
+          const existing = api.getPanel(panelId);
+          if (existing && api.activePanel === existing) existing.api.close();
+          else controller.openDerivative(activeReference, 'structure');
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        const suffix = activeReference || 'global';
+        const panelId = `tool-analysis-${suffix}`;
+        const existing = api.getPanel(panelId) || api.getPanel('tool-analysis-global');
+        if (existing && api.activePanel === existing) existing.api.close();
+        else controller.openTool('analysis', activeReference || undefined);
+        return;
+      }
+      if (event.key === '0') {
+        event.preventDefault();
+        if (activeReference) navigatePdfToPage(activeReference, 1);
+        return;
+      }
+      if (event.key === 'G') {
+        event.preventDefault();
+        if (activeReference) {
+          const pod = root.querySelector<HTMLElement>(`.document-pod[data-reference-id="${CSS.escape(activeReference)}"]`);
+          const pages = pod?.querySelectorAll('.seshat-pdf-page');
+          if (pages?.length) navigatePdfToPage(activeReference, pages.length);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'w') {
+        if(event.repeat)return;
+        event.preventDefault();
+        if (event.shiftKey) {
+          const ids=selectedReferences.size?[...selectedReferences]:activeReference?[activeReference]:[];
+          void searchWasabiForSelection(ids, true);
+        } else {
+          toggleWorkspaces();
+        }
         return;
       }
     }
@@ -4486,7 +4586,115 @@ export function mountSeshatWorkspace(root: HTMLElement): void {
   keywordFilter?.addEventListener('input', renderKeywordCloud);
   root.querySelector<HTMLButtonElement>('[data-workspace-help]')?.addEventListener('click',openHelp);
   root.querySelector<HTMLButtonElement>('[data-close-properties]')?.addEventListener('click',() => root.classList.remove('properties-open'));
-  window.addEventListener('seshat:toggle-properties',((event: CustomEvent<{referenceId?:string}>) => { const id = event.detail?.referenceId || activeReference; const willOpen = !root.classList.contains('properties-open'); root.classList.toggle('properties-open',willOpen); if (willOpen && id) { activeReference = id; renderProperties(id); } window.dispatchEvent(new Event('resize')); }) as EventListener);
+  const workspacesSidebar = root.querySelector<HTMLElement>('[data-workspaces-sidebar]');
+  const workspacesContent = root.querySelector<HTMLElement>('[data-workspaces-content]');
+  const closeWorkspacesBtn = root.querySelector<HTMLButtonElement>('[data-close-workspaces]');
+
+  const closeWorkspaces = () => {
+    if (workspacesSidebar) workspacesSidebar.hidden = true;
+    root.classList.remove('workspaces-open');
+    root.querySelectorAll('.pdf-workspaces-toggle').forEach((el) => el.setAttribute('aria-expanded', 'false'));
+    window.dispatchEvent(new CustomEvent('seshat:workspaces-state-changed', { detail: { open: false } }));
+    window.dispatchEvent(new Event('resize'));
+  };
+  closeWorkspacesBtn?.addEventListener('click', closeWorkspaces);
+
+  let workspacesMounted = false;
+  let workspacesController: ReturnType<typeof mountWorkspacesPanel> | null = null;
+  const toggleWorkspaces = (explicitOpen?: boolean) => {
+    if (!workspacesSidebar || !workspacesContent) return;
+    const willOpen = typeof explicitOpen === 'boolean' ? explicitOpen : workspacesSidebar.hidden;
+    if (willOpen) {
+      root.classList.remove('properties-open');
+      workspacesSidebar.hidden = false;
+      root.classList.add('workspaces-open');
+      root.querySelectorAll('.pdf-workspaces-toggle').forEach((el) => el.setAttribute('aria-expanded', 'true'));
+      window.dispatchEvent(new CustomEvent('seshat:workspaces-state-changed', { detail: { open: true } }));
+      if (!workspacesMounted) {
+        workspacesMounted = true;
+        workspacesController = mountWorkspacesPanel(workspacesContent, {
+          onSave: () => {
+            const openDocIds = api.panels
+              .filter((p) => p.id.startsWith('document:') || p.id === 'document-preview' || p.id.startsWith('document-split-'))
+              .map((p) => p.id);
+            return {
+              layout: api.toJSON(),
+              activeReferenceId: activeReference || undefined,
+              openDocumentIds: openDocIds,
+              sidebars: {
+                propertiesOpen: root.classList.contains('properties-open'),
+                sidebarCollapsed: root.classList.contains('collapsed-sidebar'),
+                consoleOpen: !consoleDrawer?.hidden,
+              },
+              variableOptions: {
+                theme: localStorage.getItem('seshat-theme') || undefined,
+                themePreset: localStorage.getItem('seshat-theme-preset') || undefined,
+                treeOrder,
+                activeLibraryId: activeLibrary,
+                activeSmartFolder,
+                activeVirtualFolder,
+                treeSearch: search?.value || '',
+              },
+            };
+          },
+          onRecall: (ws) => {
+            recallWorkspace(ws);
+          },
+        });
+      } else {
+        workspacesController?.refresh();
+      }
+    } else {
+      closeWorkspaces();
+    }
+    window.dispatchEvent(new Event('resize'));
+  };
+
+  const recallWorkspace = (ws: SavedWorkspace) => {
+    try {
+      if (ws.layout) {
+        api.fromJSON(ws.layout);
+      }
+    } catch (err) {
+      console.warn('Dockview layout restore warning:', err);
+    }
+    if (ws.activeReferenceId && references.has(ws.activeReferenceId)) {
+      activeReference = ws.activeReferenceId;
+      renderProperties(activeReference);
+    }
+    if (ws.sidebars) {
+      if (typeof ws.sidebars.sidebarCollapsed === 'boolean') {
+        window.dispatchEvent(new CustomEvent('seshat:set-sidebar', { detail: { collapsed: ws.sidebars.sidebarCollapsed } }));
+      }
+      if (typeof ws.sidebars.propertiesOpen === 'boolean') {
+        root.classList.toggle('properties-open', ws.sidebars.propertiesOpen);
+      }
+    }
+    if (ws.variableOptions) {
+      if (ws.variableOptions.treeOrder) {
+        treeOrder = ws.variableOptions.treeOrder as any;
+        if (treeOrderControl) treeOrderControl.value = treeOrder;
+      }
+      activeLibrary = ws.variableOptions.activeLibraryId ?? null;
+      activeSmartFolder = ws.variableOptions.activeSmartFolder ?? null;
+      activeVirtualFolder = (ws.variableOptions.activeVirtualFolder as any) ?? null;
+      if (ws.variableOptions.treeSearch !== undefined && search) {
+        search.value = ws.variableOptions.treeSearch;
+      }
+      refreshTable();
+      renderTree(search?.value || '');
+    }
+    setSaveState(`Workspace "${ws.name}" recalled`);
+  };
+
+  window.addEventListener('seshat:toggle-workspaces', ((event: CustomEvent<{ open?: boolean }>) => {
+    toggleWorkspaces(event.detail?.open);
+  }) as EventListener);
+  window.addEventListener('seshat:workspace-recall', ((event: CustomEvent<{ workspace?: SavedWorkspace }>) => {
+    if (event.detail?.workspace) recallWorkspace(event.detail.workspace);
+  }) as EventListener);
+  root.querySelector<HTMLButtonElement>('[data-open-workspaces]')?.addEventListener('click', () => toggleWorkspaces());
+  window.addEventListener('seshat:toggle-properties',((event: CustomEvent<{referenceId?:string}>) => { const id = event.detail?.referenceId || activeReference; const willOpen = !root.classList.contains('properties-open'); if (willOpen) closeWorkspaces(); root.classList.toggle('properties-open',willOpen); if (willOpen && id) { activeReference = id; renderProperties(id); } window.dispatchEvent(new Event('resize')); }) as EventListener);
   root.querySelector<HTMLButtonElement>('[data-new-library]')?.addEventListener('click', async () => {
     const name = await requestText(activeLibrary ? 'Create folder' : 'Create library', 'Name', '', 'Create');
     if (!name) return;

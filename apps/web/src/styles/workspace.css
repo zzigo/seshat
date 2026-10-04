@@ -553,6 +553,8 @@ html { max-width: 100%; overflow: hidden; }
 .pdf-properties-toggle:hover, .pdf-properties-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
 .pdf-structure-toggle { position: absolute; z-index: 12; top: 79px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 12%,transparent); font: 14px/1 ui-serif,serif; cursor: pointer; }
 .pdf-structure-toggle:hover, .pdf-structure-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
+.pdf-workspaces-toggle { position: absolute; z-index: 12; top: 113px; right: 10px; width: 34px; height: 29px; padding: 0; border: 1px solid var(--hairline); color: var(--ink); background: color-mix(in srgb,var(--paper) 94%,transparent); box-shadow: 2px 3px 10px color-mix(in srgb,var(--ink) 12%,transparent); font: 12px/1 ui-monospace,monospace; font-weight: 600; cursor: pointer; }
+.pdf-workspaces-toggle:hover, .pdf-workspaces-toggle[aria-expanded="true"] { color: #f4f1e8; background: var(--green); }
 .seshat-pdf-annotations { position: relative; min-width: 0; height: 100%; overflow: visible; border-left: 0 solid var(--ink); background: var(--chrome); }
 .seshat-pdf-annotations > .annotation-body { overflow: hidden; }
 .annotations-open .seshat-pdf-annotations { border-left-width: 1px; }
@@ -1302,3 +1304,291 @@ html { max-width: 100%; overflow: hidden; }
   .tree-reference .tree-spinner { animation: tree-pulse 1.6s ease-in-out infinite; }
   @keyframes tree-pulse { 50% { opacity: .15; } }
 }
+
+/* Workspaces Sidebar & Panel */
+.workspaces-open .workspace-shell {
+  grid-template-columns: var(--sidebar-width) minmax(0,1fr) var(--properties-width);
+}
+.collapsed-sidebar.workspaces-open .workspace-shell {
+  grid-template-columns: 0px minmax(0,1fr) var(--properties-width);
+}
+.workspace-workspaces {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--hairline);
+  background: var(--chrome);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s;
+}
+.workspaces-open .workspace-workspaces {
+  opacity: 1;
+  pointer-events: auto;
+}
+.workspace-workspaces > header {
+  height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 9px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  font: 9px monospace;
+  text-transform: uppercase;
+}
+.workspace-workspaces > header button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.workspace-workspaces > div {
+  height: calc(100% - 35px);
+  overflow: auto;
+  padding: 0;
+}
+
+.seshat-workspaces-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--ink);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.workspaces-top-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspaces-save-quick-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--green);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green-bright);
+  font: 11px/1 ui-monospace, monospace;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.workspaces-save-quick-btn:hover {
+  background: var(--green);
+  color: #f4f1e8;
+  border-color: var(--green);
+}
+.workspaces-plus-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.workspaces-create-form,
+.workspace-inline-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  background: var(--paper-deep);
+}
+
+.workspaces-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  background: var(--paper);
+  color: var(--ink);
+  font: 11px ui-monospace, monospace;
+  outline: none;
+}
+.workspaces-name-input:focus {
+  border-color: var(--green);
+}
+
+.workspaces-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workspaces-btn-primary {
+  padding: 4px 10px;
+  border: 1px solid var(--green);
+  background: var(--green);
+  color: #f4f1e8;
+  font: 10px ui-monospace, monospace;
+  cursor: pointer;
+}
+.workspaces-btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.workspaces-btn-cancel {
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--muted);
+  font: 10px ui-monospace, monospace;
+  cursor: pointer;
+}
+.workspaces-btn-cancel:hover {
+  color: var(--ink);
+}
+
+.workspaces-list-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.workspaces-empty-state {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.workspaces-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-item-shell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--paper);
+  user-select: none;
+}
+
+.workspace-swipe-actions-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  pointer-events: auto;
+}
+
+.workspace-swipe-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 14px;
+  font: 10px/1 ui-monospace, monospace;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-swipe-action.workspace-action-edit {
+  background: var(--green);
+  color: #f4f1e8;
+}
+.workspace-swipe-action.workspace-action-erase {
+  background: #a33;
+  color: #fff;
+  margin-left: auto;
+}
+
+.workspace-card {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 11px;
+  background: var(--paper);
+  cursor: pointer;
+  touch-action: pan-y;
+  will-change: transform;
+}
+.workspace-card:hover {
+  background: color-mix(in srgb, var(--paper) 92%, var(--ink));
+}
+.workspace-card.is-active-workspace {
+  border-left: 3px solid var(--green);
+  background: color-mix(in srgb, var(--green) 8%, var(--paper));
+}
+
+.workspace-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-card-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.workspace-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-active-badge {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--green-bright);
+}
+
+.workspace-card-meta {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.workspace-card-desktop-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.workspace-card:hover .workspace-card-desktop-btns {
+  opacity: 1;
+}
+
+.workspace-card-action-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 2px;
+  display: grid;
+  place-items: center;
+}
+.workspace-card-action-btn:hover {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.workspace-card-action-btn.erase-btn:hover {
+  background: rgba(170, 51, 51, 0.15);
+}
+
